@@ -81,6 +81,9 @@ class Task:
     updated_at: int | None = None
     priority: int = 2
     queue_rank: int = 0
+    # When the task entered agent-resolved (None otherwise); maintained by
+    # task_store.update on state transitions. Drives GC auto-archive.
+    resolved_at: int | None = None
 
 
 @dataclass
@@ -226,6 +229,9 @@ class Worker:
     target_id: str | None = None
     state: str = "uninitialized"
     needs_response: bool = False
+    # Manager-maintained short label describing recent work; falls back to
+    # provider_name in UI when unset.
+    title: str | None = None
     provider_name: str | None = None
     provider_configuration: str | None = None
     failure_reason: str | None = None
@@ -278,6 +284,8 @@ class TaskAsset:
     created_at: int
     url: str | None = None
     category: str = "other"
+    # Worker lane this asset was harvested from; None = human-added.
+    source_worker_id: str | None = None
 
 
 @dataclass

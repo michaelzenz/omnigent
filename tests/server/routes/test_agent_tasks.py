@@ -92,6 +92,11 @@ def _patch_workspace_validation(monkeypatch: pytest.MonkeyPatch) -> None:
                 "host_id": host_id,
                 "pending_launches": _AutoResolveDict(),
                 "pending_stats": {},
+                # The launch path reads these for the server-proxied Pi gate:
+                # an empty owner never matches RESERVED_USER_LOCAL, and a
+                # hello with inference_proxy=False skips the proxy config.
+                "owner": "someone-else",
+                "hello": type("FakeHello", (), {"inference_proxy": False})(),
             },
         )()
         return HostLaunchTarget(
@@ -276,6 +281,47 @@ async def test_patch_task(client: httpx.AsyncClient) -> None:
     body = patch_resp.json()
     assert body["title"] == "Renamed task"
     assert body["state"] == "pending"
+
+
+async def test_patch_task_state_bumps_queue_rank(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """Resolve sends the task to the queue end; unresolve brings it to the front."""
+    resolved = (
+        await client.post(
+            "/v1/agent-tasks",
+            json=_create_payload(title="Resolved", goal="g1"),
+        )
+    ).json()
+    revived = (
+        await client.post(
+            "/v1/agent-tasks",
+            json=_create_payload(title="Revived", goal="g2"),
+        )
+    ).json()
+
+    # Resolve → queue END (lowest rank, sorts last).
+    patched = (
+        await client.patch(
+            f"/v1/agent-tasks/{resolved['id']}",
+            json={"state": "agent-resolved"},
+        )
+    ).json()
+    listed = (await client.get("/v1/agent-tasks?limit=100")).json()["data"]
+    assert listed[-1]["id"] == resolved["id"], [t["id"] for t in listed[-2:]]
+    assert patched["queue_rank"] is not None
+
+    # Unresolve (→ pending) → queue START (highest rank, sorts first).
+    revived_patch = (
+        await client.patch(
+            f"/v1/agent-tasks/{revived['id']}",
+            json={"state": "pending"},
+        )
+    ).json()
+    listed = (await client.get("/v1/agent-tasks?limit=100")).json()["data"]
+    assert listed[0]["id"] == revived["id"], [t["id"] for t in listed[:2]]
+    assert revived_patch["queue_rank"] is not None
 
 
 async def test_put_tags_replaces_all(client: httpx.AsyncClient) -> None:
@@ -514,7 +560,7 @@ async def test_spawn_manager_notice_collects_unmanaged_tasks(
         [[unmanaged_a, "Unmanaged A"], [unmanaged_b, "Unmanaged\nB"]]
     )
     lines = payload["notice"].split("\n")
-    assert lines[0] == "Please spin up manager(s) and assign following tasks to the new managers"
+    assert lines[0] == "Assign following tasks to active managers or spin up new managers"
     # Multi-line titles are flattened onto one line; list order is store order.
     assert sorted(lines[1:]) == sorted(
         [f"[{unmanaged_a}, Unmanaged A]", f"[{unmanaged_b}, Unmanaged B]"]
@@ -593,6 +639,68 @@ async def test_create_manager_registers_top_level_manager_role(
     assert stored.owner_user_id == "__anonymous__"
     assert stored.role_key == "manager:default"
     assert stored.conversation_id == body["conversation_id"]
+
+
+async def test_create_manager_honors_host_and_workspace_overrides(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit host_id/workspace pin the manager's execution placement.
+
+    This is how a manager is created for a second dev box whose events are
+    host-incompatible with managers pinned to the caller's default host.
+    """
+    _patch_workspace_validation(monkeypatch)
+    host_id = _seed_live_host(db_uri, "override-manager-host")
+    profile = await client.get(agent_role_profile_url("manager:default"))
+    assert profile.status_code == 200
+
+    resp = await client.post(
+        "/v1/agent-tasks/managers",
+        json={
+            "role_key": "manager:default",
+            "description": "Owns arca-universe maintenance work.",
+            "title": "Arca manager",
+            "host_id": host_id,
+            "workspace": "/tmp/arca-workspace",
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["host_id"] == host_id
+    assert body["workspace"] == "/tmp/arca-workspace"
+    conversation = SqlAlchemyConversationStore(db_uri).get_conversation(body["conversation_id"])
+    assert conversation is not None
+    assert conversation.host_id == host_id
+    stored = SqlAlchemyManagerStore(db_uri).get(body["id"])
+    assert stored is not None
+    assert stored.host_id == host_id
+    assert stored.workspace == "/tmp/arca-workspace"
+
+
+async def test_create_manager_rejects_unknown_host(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unregistered host_id fails fast instead of creating an unlaunchable manager."""
+    _patch_workspace_validation(monkeypatch)
+    _seed_live_host(db_uri, "create-manager-host-2")
+    profile = await client.get(agent_role_profile_url("manager:default"))
+    assert profile.status_code == 200
+
+    resp = await client.post(
+        "/v1/agent-tasks/managers",
+        json={
+            "role_key": "manager:default",
+            "description": "Points at a host that does not exist.",
+            "host_id": _uid("no-such-host"),
+        },
+    )
+
+    assert resp.status_code == 404, resp.text
 
 
 async def test_update_manager_self_updates_only_owned_caller(
@@ -907,6 +1015,22 @@ async def test_create_and_delete_custom_manager_role(
     assert delete_resp.status_code == 200
     assert delete_resp.json()["deleted"] is True
 
+    # The delete must stick: fetching the deleted role's profile must not
+    # lazily re-provision it (that resurrected deleted manager roles).
+    fetch_resp = await client.get(
+        f"/v1/agent-tasks/roles/{quote('manager:research', safe='')}/profile",
+    )
+    assert fetch_resp.status_code == 404, fetch_resp.text
+    list_resp = await client.get("/v1/agent-tasks/roles/profiles", params={"prefix": "manager:"})
+    assert list_resp.status_code == 200
+    listed = [profile["role"] for profile in list_resp.json()["data"]]
+    assert "manager:research" not in listed
+    # System roles are still lazily provisioned on fetch.
+    default_resp = await client.get(
+        f"/v1/agent-tasks/roles/{quote('manager:default', safe='')}/profile",
+    )
+    assert default_resp.status_code == 200
+
 
 async def test_patch_manager_role_key_pending_only(
     client: httpx.AsyncClient,
@@ -1124,16 +1248,23 @@ async def test_create_and_delete_task_asset(client: httpx.AsyncClient) -> None:
 
     create_resp = await client.post(
         f"/v1/agent-tasks/{task_id}/assets",
-        json={"kind": "url", "title": "PR #123", "url": "https://example.com/pr/123"},
+        json={
+            "kind": "url",
+            "title": "PR #123",
+            "url": "https://example.com/pr/123",
+            "source_worker_id": "w_harvester",
+        },
     )
     assert create_resp.status_code == 200
     asset = create_resp.json()
     assert asset["object"] == "agent.task.asset"
     assert asset["title"] == "PR #123"
+    assert asset["source_worker_id"] == "w_harvester"
     asset_id = asset["id"]
 
     dashboard = (await client.get(f"/v1/agent-tasks/{task_id}/dashboard")).json()
     assert [a["id"] for a in dashboard["assets"]] == [asset_id]
+    assert dashboard["assets"][0]["source_worker_id"] == "w_harvester"
 
     delete_resp = await client.delete(f"/v1/agent-tasks/{task_id}/assets/{asset_id}")
     assert delete_resp.status_code == 200

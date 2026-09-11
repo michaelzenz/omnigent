@@ -29,6 +29,7 @@ from sqlalchemy.orm import QueryableAttribute, Session, aliased, load_only
 from sqlalchemy.sql.selectable import Subquery
 
 from omnigent._wrapper_labels import UI_MODE_LABEL_KEY, WRAPPER_LABEL_KEY
+from omnigent.db.compression import decode as decode_compressed_text
 from omnigent.db.converters import sql_agent_to_entity
 from omnigent.db.db_models import (
     LABEL_VALUE_MAX_LEN,
@@ -186,17 +187,23 @@ def _encode_session_overrides(overrides: dict[str, str | None]) -> str | None:
     return json.dumps(data, separators=(",", ":")) if data else None
 
 
-def _decode_session_overrides(raw: str | None) -> dict[str, str | None]:
+def _decode_session_overrides(
+    raw: str | bytes | memoryview | None,
+) -> dict[str, str | None]:
     """Unpack the ``session_overrides`` blob to a full override dict.
 
     Every one of the :data:`_SESSION_OVERRIDE_KEYS` is present in the
     result (unset keys read back as ``None``) so read-modify-write callers can
     treat the dict uniformly regardless of which overrides were stored.
 
-    :param raw: The stored JSON blob, or ``None``.
+    Legacy writers may have stored the same JSON using the shared compressed-text
+    framing, so decode that representation before parsing.
+
+    :param raw: The stored JSON text or compressed bytes, or ``None``.
     :returns: Dict keyed by every override name, value ``None`` when unset.
     """
-    data: dict[str, Any] = json.loads(raw) if raw else {}
+    decoded = decode_compressed_text(raw)
+    data: dict[str, Any] = json.loads(decoded) if decoded else {}
     return {key: data.get(key) for key in _SESSION_OVERRIDE_KEYS}
 
 
@@ -3860,6 +3867,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         terminal_launch_args: list[str] | None = None,
         archived: bool | None = None,
         reported_model: str | None = None,
+        _unset_reported_model: bool = False,
         prompt_profile_mode: str | None = None,
         prompt_profile_id: str | None = None,
         _unset_prompt_profile: bool = False,
@@ -3882,7 +3890,10 @@ class SqlAlchemyConversationStore(ConversationStore):
         :param reported_model: The model the harness last reported the
             session is actually on, verbatim, e.g.
             ``"claude-opus-4-8[1m]"``. ``None`` leaves unchanged.
-            No ``_unset`` variant — reports only ever move forward.
+        :param _unset_reported_model: When ``True``, clear
+            ``reported_model`` to ``None`` — used when the runner is
+            released, since the report described the released harness.
+            (Reports otherwise only ever move forward.)
         :param cost_control_mode_override: Per-session cost-control
             switch, ``"on"`` or ``"off"``. ``None`` leaves unchanged.
         :param _unset_cost_control_mode_override: When ``True``, clear
@@ -3946,6 +3957,9 @@ class SqlAlchemyConversationStore(ConversationStore):
                 overrides_changed = True
             if reported_model is not None:
                 overrides["reported_model"] = reported_model
+                overrides_changed = True
+            if _unset_reported_model:
+                overrides["reported_model"] = None
                 overrides_changed = True
             if _unset_cost_control_mode_override:
                 overrides["cost_control_mode_override"] = None

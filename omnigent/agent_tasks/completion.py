@@ -21,7 +21,11 @@ from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
-from omnigent.stores.worker_store import WORKER_KIND_MANAGED, WorkerStore
+from omnigent.stores.worker_store import (
+    WORKER_KIND_INTERNAL,
+    WORKER_KIND_MANAGED,
+    WorkerStore,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -62,11 +66,16 @@ async def observe_worker_session_status(
     needs_response: bool = False,
     failure_reason: str | None = None,
 ) -> bool:
-    """Mirror target activity onto the durable Worker without completing a dispatch."""
+    """Mirror target activity onto the durable Worker without completing a dispatch.
+
+    Covers managed lanes and adopted internal sessions — both live in this
+    server's conversation store, so their status transitions are visible here.
+    External (harness) lanes are updated by the watcher plugin instead.
+    """
     if _context is None:
         return False
     worker = _context.worker_store.get_by_target_id(session_id)
-    if worker is None or worker.kind != WORKER_KIND_MANAGED:
+    if worker is None or worker.kind not in {WORKER_KIND_MANAGED, WORKER_KIND_INTERNAL}:
         return False
     if status == "idle":
         state = "idle"

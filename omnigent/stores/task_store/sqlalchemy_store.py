@@ -14,7 +14,11 @@ from omnigent.db.db_models import (
     SqlWorker,
     current_workspace_id,
 )
-from omnigent.db.enum_codecs import decode_task_state, encode_task_state
+from omnigent.db.enum_codecs import (
+    AGENT_RESOLVED_STATE_CODE,
+    decode_task_state,
+    encode_task_state,
+)
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
 from omnigent.entities import Task, TaskTag
 from omnigent.stores.task_store import TaskStore
@@ -41,6 +45,7 @@ def _to_entity(row: SqlTask) -> Task:
         updated_at=row.updated_at,
         priority=row.priority,
         queue_rank=row.queue_rank,
+        resolved_at=row.resolved_at,
     )
 
 
@@ -82,6 +87,11 @@ class SqlAlchemyTaskStore(TaskStore):
             queue_rank=0,
             created_at=now_epoch(),
             updated_at=None,
+            # A task born resolved (e.g. a package accepted straight into
+            # agent-resolved) starts its auto-archive clock immediately.
+            resolved_at=(
+                now_epoch() if encode_task_state(state) == AGENT_RESOLVED_STATE_CODE else None
+            ),
         )
         with self._session() as session:
             next_rank = session.scalar(
@@ -148,6 +158,23 @@ class SqlAlchemyTaskStore(TaskStore):
             )
             rows = session.execute(stmt).scalars().all()
             return [_to_entity(row) for row in rows]
+
+    def archive_expired_resolved(self, *, before_ts: int) -> int:
+        """Archive agent-resolved tasks whose resolved_at is older than
+        ``before_ts``. Returns the number archived. Only touches rows in the
+        agent-resolved state — live tasks are never swept by the GC.
+        """
+        with self._session() as session:
+            result = session.execute(
+                update(SqlTask)
+                .where(SqlTask.workspace_id == current_workspace_id())
+                .where(SqlTask.state == AGENT_RESOLVED_STATE_CODE)
+                .where(SqlTask.resolved_at.is_not(None))
+                .where(SqlTask.resolved_at < before_ts)
+                .values(state=encode_task_state("archived"), resolved_at=None)
+            )
+            session.commit()
+            return int(result.rowcount or 0)
 
     def list_by_manager_id(self, manager_id: str) -> builtin_list[Task]:
         with self._session() as session:
@@ -230,6 +257,13 @@ class SqlAlchemyTaskStore(TaskStore):
                 if row.state != encoded_state:
                     row.state = encoded_state
                     changed = True
+                    # Track when the task entered agent-resolved so the GC can
+                    # auto-archive it after the retention window. Entering the
+                    # state stamps the time; leaving it clears the clock.
+                    if encoded_state == AGENT_RESOLVED_STATE_CODE:
+                        row.resolved_at = now_epoch()
+                    else:
+                        row.resolved_at = None
             if changed:
                 row.updated_at = now_epoch()
             session.flush()
@@ -250,16 +284,76 @@ class SqlAlchemyTaskStore(TaskStore):
             return _to_entity(row)
 
     def move_to_queue_end(self, task_id: str) -> Task | None:
+        """Move a task toward the end of the board queue.
+
+        State-aware: a resolved (``agent-resolved``) card sinks to the
+        absolute end; a live card parks directly above the first resolved
+        card — the end of the work section — so it stays visible instead of
+        burying itself under resolved cards.
+        """
         with self._session() as session:
             row = session.get(SqlTask, (current_workspace_id(), task_id))
             if row is None:
                 return None
-            next_rank = session.scalar(
-                select(func.coalesce(func.min(SqlTask.queue_rank), 0) - 1).where(
-                    SqlTask.workspace_id == current_workspace_id()
+            resolved_state = encode_task_state("agent-resolved")
+            if row.state == resolved_state:
+                next_rank = session.scalar(
+                    select(func.coalesce(func.min(SqlTask.queue_rank), 0) - 1).where(
+                        SqlTask.workspace_id == current_workspace_id()
+                    )
+                )
+                row.queue_rank = int(next_rank if next_rank is not None else -1)
+                session.flush()
+                return _to_entity(row)
+            # Live card: target the slot directly above the first resolved
+            # card (board order is queue_rank DESC, so the first resolved
+            # item carries the highest rank among resolved tasks).
+            resolved_max = session.scalar(
+                select(func.max(SqlTask.queue_rank)).where(
+                    SqlTask.workspace_id == current_workspace_id(),
+                    SqlTask.state == resolved_state,
                 )
             )
-            row.queue_rank = int(next_rank if next_rank is not None else -1)
+            if resolved_max is None:
+                # No resolved cards: absolute end, unchanged behavior.
+                next_rank = session.scalar(
+                    select(func.coalesce(func.min(SqlTask.queue_rank), 0) - 1).where(
+                        SqlTask.workspace_id == current_workspace_id()
+                    )
+                )
+                row.queue_rank = int(next_rank if next_rank is not None else -1)
+                session.flush()
+                return _to_entity(row)
+            resolved_max = int(resolved_max)
+            # Excluding the moved task: when it already sits directly above
+            # the resolved block the assignment below reuses its own rank —
+            # a no-op instead of pointless renumbering.
+            next_above = session.scalar(
+                select(func.min(SqlTask.queue_rank)).where(
+                    SqlTask.workspace_id == current_workspace_id(),
+                    SqlTask.queue_rank > resolved_max,
+                    SqlTask.id != task_id,
+                )
+            )
+            if next_above is None or int(next_above) - resolved_max >= 2:
+                # A free slot exists directly above the resolved block
+                # (nothing occupies resolved_max + 1, or a gap leaves room).
+                row.queue_rank = resolved_max + 1
+            else:
+                # Adjacent ranks leave no integer between them: renumber the
+                # tail at or below the insertion point down by one — an
+                # order-preserving bijection — freeing resolved_max for the
+                # moved card. The moved task is included in the shift (it may
+                # sit inside the tail) and re-pinned afterwards.
+                session.execute(
+                    update(SqlTask)
+                    .where(
+                        SqlTask.workspace_id == current_workspace_id(),
+                        SqlTask.queue_rank <= resolved_max,
+                    )
+                    .values(queue_rank=SqlTask.queue_rank - 1)
+                )
+                row.queue_rank = resolved_max
             session.flush()
             return _to_entity(row)
 

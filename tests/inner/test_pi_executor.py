@@ -32,9 +32,11 @@ from omnigent.inner.executor import (
     TurnComplete,
 )
 from omnigent.inner.pi_executor import (
-    PiExecutor,
     _PI_COMPACTION_HEADROOM_TOKENS,
     _PI_COMPACTION_RESERVE_TOKENS,
+    _PI_NATIVE_TOOL_NAMES,
+    PiExecutor,
+    PiLaunchOptions,
     _build_models_json,
     _build_onih_models_json,
     _databricks_model_wire_catalog,
@@ -1622,6 +1624,83 @@ class TestPiExecutorConstructor(unittest.TestCase):
             executor = PiExecutor()
         self.assertIn("--no-tools", executor._extra_args)
 
+    @staticmethod
+    def _make_executor(**launch_options):
+        with patch("omnigent.inner.pi_executor._find_pi_cli", return_value="/usr/bin/pi"):
+            return PiExecutor(launch_options=PiLaunchOptions(**launch_options))
+
+    def test_native_tools_disabled_keeps_bridged_only_allowlist(self):
+        """Default: the allowlist is bridged names (+ read when skills on)."""
+        executor = self._make_executor(native_tools=False)
+        schemas = [
+            {
+                "name": "sys_os_shell",
+                "description": "d",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "upload_file",
+                "description": "d",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        ]
+        config = executor._build_env_and_dir(
+            schemas, tool_server_port=12345, tool_server_token="tok", model=None
+        )
+        tools_arg = config.extra_args[config.extra_args.index("--tools") + 1]
+        self.assertEqual(tools_arg, "sys_os_shell,upload_file,read")
+
+    def test_native_tools_enabled_adds_pi_builtins(self):
+        """native_tools opt-in appends pi's native builtins to the allowlist."""
+        executor = self._make_executor(native_tools=True)
+        schemas = [
+            {
+                "name": "sys_os_shell",
+                "description": "d",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        ]
+        config = executor._build_env_and_dir(
+            schemas, tool_server_port=12345, tool_server_token="tok", model=None
+        )
+        tools_arg = config.extra_args[config.extra_args.index("--tools") + 1]
+        names = tools_arg.split(",")
+        for native in ("read", "bash", "edit", "write", "grep", "find", "ls"):
+            self.assertIn(native, names)
+        self.assertIn("sys_os_shell", names)
+        self.assertNotIn("powershell", names)
+
+    def test_native_tools_native_wins_over_colliding_bridged_tools(self):
+        """Native wins: a colliding bridged tool is dropped from the bridge.
+
+        pi's registry lets extension tools shadow same-named builtins, so a
+        bridged ``bash`` would override the native implementation even with
+        natives allowlisted. The colliding bridged tool must therefore be
+        excluded from the generated extension entirely — native ``bash`` then
+        serves the name, gated through the extension's ``tool_call`` hook.
+        """
+        executor = self._make_executor(native_tools=True)
+        schemas = [
+            {
+                "name": "bash",
+                "description": "bridged bash marker",
+                "parameters": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "sys_os_shell",
+                "description": "d",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        ]
+        config = executor._build_env_and_dir(
+            schemas, tool_server_port=12345, tool_server_token="tok", model=None
+        )
+        tools_arg = config.extra_args[config.extra_args.index("--tools") + 1]
+        self.assertEqual(tools_arg.split(",").count("bash"), 1)
+        ext_js = (Path(config.tmp_dir) / "omnigent_tools.js").read_text()
+        self.assertNotIn("bridged bash marker", ext_js)
+        self.assertIn("sys_os_shell", ext_js)
+
 
 # ---------------------------------------------------------------------------
 # PiExecutor._gate_native_tool tests
@@ -1762,9 +1841,7 @@ class TestBuildEnvAndDir(unittest.TestCase):
             executor = PiExecutor(gateway=True)
 
         tools = [{"name": f"tool_{i}", "description": "d" * 400} for i in range(40)]
-        config = executor._build_env_and_dir(
-            tools, None, None, None, system_prompt="s" * 20000
-        )
+        config = executor._build_env_and_dir(tools, None, None, None, system_prompt="s" * 20000)
         try:
             settings_path = Path(config.env["PI_CODING_AGENT_DIR"]) / "settings.json"
             with open(settings_path) as f:
@@ -1906,25 +1983,49 @@ def test_gateway_seeds_managed_settings_from_global_agent(
 # ---------------------------------------------------------------------------
 
 
-def test_pi_extra_args_disable_native_tools_by_default() -> None:
+def test_pi_extra_args_expose_native_tools_with_no_bridged_tools() -> None:
     """
-    A turn with no bridged tools must still pass ``--no-tools`` so
-    pi's native read/bash/edit/write stay disabled. ``--tools`` is
-    intentionally absent — passing an empty allowlist would be a
-    no-op, but pi parses ``--tools `` as an error in some flag
-    parsers, so we just omit it.
+    ``--no-tools`` is always passed (pi 0.68+ disables everything by
+    default), and ``--tools`` re-enables exactly what should be exposed.
+    With no bridged tools the allowlist is still emitted — pi's native
+    builtins are default-on (``native_tools``), so a tools-less agent
+    still gets read/bash/edit/write/grep/find/ls. Passing an empty
+    allowlist would be a no-op, and pi parses ``--tools `` as an error
+    in some flag parsers, so the list is only emitted when non-empty.
     """
     with patch("omnigent.inner.pi_executor._find_pi_cli", return_value="/usr/bin/pi"):
         executor = PiExecutor()
     config = executor._build_env_and_dir([], None, None, None)
     try:
-        # Native tools off by default.
-        assert "--no-tools" in config.extra_args, (
-            "--no-tools missing → pi's native read/bash/edit/write would be exposed"
+        assert "--no-tools" in config.extra_args
+        assert "--tools" in config.extra_args, (
+            "--tools missing → a tools-less agent would expose no native builtins"
         )
-        # No allowlist when no tools are bridged.
+        names_arg = config.extra_args[config.extra_args.index("--tools") + 1]
+        assert set(names_arg.split(",")) == set(_PI_NATIVE_TOOL_NAMES), (
+            f"unexpected --tools allowlist with no bridged tools: {names_arg!r}"
+        )
+    finally:
+        import shutil
+
+        shutil.rmtree(config.tmp_dir, ignore_errors=True)
+
+
+def test_pi_extra_args_omit_tools_when_natives_disabled_and_no_bridged() -> None:
+    """
+    Opt-out path (``native_tools=False``) with no bridged tools and no
+    skills: the allowlist would be empty, and pi parses ``--tools `` as
+    an error in some flag parsers — so it is omitted entirely.
+    """
+    with patch("omnigent.inner.pi_executor._find_pi_cli", return_value="/usr/bin/pi"):
+        executor = PiExecutor(
+            launch_options=PiLaunchOptions(native_tools=False, native_skills=False)
+        )
+    config = executor._build_env_and_dir([], None, None, None)
+    try:
+        assert "--no-tools" in config.extra_args
         assert "--tools" not in config.extra_args, (
-            "--tools should not appear when there are no bridged tools to allowlist"
+            "--tools should not appear when the allowlist would be empty"
         )
     finally:
         import shutil
@@ -1955,15 +2056,14 @@ def test_pi_tools_arg_allowlists_bridged_tool_names() -> None:
             "won't see calculate/get_current_time"
         )
         names_arg = config.extra_args[config.extra_args.index("--tools") + 1]
-        # Comma-separated, both bridged names + ``read`` (injected
-        # by the skills layer so Pi's ``formatSkillsForPrompt``
-        # sees it and injects the skill index into the system
-        # prompt — Pi gates skill-prompt injection on
-        # ``selectedTools.includes("read")``).
-        actual = sorted(names_arg.split(","))
-        assert actual == ["calculate", "get_current_time", "read"], (
+        # Comma-separated: bridged names + ``read`` (injected by the
+        # skills layer so Pi's ``formatSkillsForPrompt`` injects the
+        # skill index) + pi's native builtins (``native_tools`` defaults
+        # on; neither bridged name collides with a native here).
+        actual = set(names_arg.split(","))
+        assert actual == {"calculate", "get_current_time", "read", *_PI_NATIVE_TOOL_NAMES}, (
             f"unexpected --tools allowlist: {names_arg!r}; expected the "
-            f"two bridged tool names + 'read' (for skills)"
+            f"bridged names + 'read' (skills) + pi's native builtins"
         )
     finally:
         import shutil
@@ -1994,8 +2094,9 @@ def test_pi_tools_arg_skips_unnamed_entries() -> None:
         assert "--tools" in config.extra_args
         names_arg = config.extra_args[config.extra_args.index("--tools") + 1]
         # ``read`` is also present (injected by the skills layer for
-        # Pi's skill-prompt gating — see ``_build_env_and_dir``).
-        assert sorted(names_arg.split(",")) == ["good", "read"], (
+        # Pi's skill-prompt gating — see ``_build_env_and_dir``), and
+        # pi's native builtins (``native_tools`` defaults on).
+        assert set(names_arg.split(",")) == {"good", "read", *_PI_NATIVE_TOOL_NAMES}, (
             f"unnamed / non-string-named tools must be filtered; got {names_arg!r}"
         )
     finally:

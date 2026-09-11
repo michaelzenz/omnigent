@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from sqlalchemy import event, text
 
+from omnigent.db.compression import encode as encode_compressed_text
 from omnigent.db.utils import get_or_create_engine
 from omnigent.entities import (
     CompactionData,
@@ -28,10 +29,27 @@ from omnigent.session_lifecycle import SPAWN_PARENT_RESPONSE_ID_LABEL_KEY
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import (
     SqlAlchemyConversationStore,
+    _decode_session_overrides,
 )
 from omnigent.stores.host_store import HostStore
 
 # ── CRUD ──────────────────────────────────────────────
+
+
+def test_decode_session_overrides_accepts_legacy_compressed_blob() -> None:
+    raw = encode_compressed_text(
+        json.dumps(
+            {
+                "reasoning_effort": "high",
+                "model_override": "databricks-glm-5-3-flash",
+            }
+        )
+    )
+
+    overrides = _decode_session_overrides(raw)
+
+    assert overrides["reasoning_effort"] == "high"
+    assert overrides["model_override"] == "databricks-glm-5-3-flash"
 
 
 def test_fork_drops_import_provenance_labels(
@@ -391,6 +409,35 @@ def test_reported_model_round_trips_beside_the_request(
     fetched = conversation_store.get_conversation(conv.id)
     assert fetched is not None
     assert fetched.reported_model == "claude-opus-4-8[1m]"
+
+
+def test_update_conversation_clears_reported_model_on_unset(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    """``_unset_reported_model`` voids the harness report.
+
+    The switch-host flow uses this when it releases the runner: the report
+    described the released harness, so keeping it would make the picker show
+    a model the next turn will not use.
+    """
+    conv = conversation_store.create_conversation()
+    reported = conversation_store.update_conversation(
+        conv.id, reported_model="claude-opus-4-8[1m]"
+    )
+    assert reported is not None
+    assert reported.reported_model == "claude-opus-4-8[1m]"
+
+    cleared = conversation_store.update_conversation(conv.id, _unset_reported_model=True)
+    assert cleared is not None
+    assert cleared.reported_model is None
+
+    # Idempotent: clearing again is a no-op, and it never touches the request.
+    pinned = conversation_store.update_conversation(conv.id, model_override="sonnet")
+    assert pinned is not None and pinned.model_override == "sonnet"
+    again = conversation_store.update_conversation(conv.id, _unset_reported_model=True)
+    assert again is not None
+    assert again.reported_model is None
+    assert again.model_override == "sonnet"
 
 
 def test_update_archived_round_trip(

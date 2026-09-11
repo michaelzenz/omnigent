@@ -464,7 +464,10 @@ class LaunchRunnerRequest(BaseModel):
     :param git: Optional git worktree options. In create mode the
         server creates a worktree for a new branch off ``workspace`` on
         the host and binds the runner to it (the fork-resume path;
-        mirrors ``POST /v1/sessions``). In bind mode
+        mirrors ``POST /v1/sessions``). With ``auto_create=True`` the
+        server also names the branch itself (the same bounded,
+        fail-open AI call the create flow uses) and creates a leased,
+        auto-reusable managed worktree. In bind mode
         (``existing_worktree=True``) ``workspace`` already IS a
         worktree — no worktree is created; ``branch_name`` is recorded
         as the session's ``git_branch`` for display and opt-in cleanup.
@@ -817,6 +820,9 @@ def create_hosts_router(
         # (create mode). Left None in bind mode so the rollback below never
         # force-removes the user's pre-existing worktree.
         worktree = None
+        # Auto mode rewrites ``workspace`` into the fresh worktree below, so
+        # the source repo has to be captured first (the label points at it).
+        source_repo = workspace
         if body.git is not None:
             from omnigent.host.git_worktree import (
                 WorktreeError,
@@ -824,20 +830,37 @@ def create_hosts_router(
             )
 
             if body.git.auto_create:
-                raise HTTPException(
-                    status_code=400,
-                    detail="auto worktree creation is supported only by POST /v1/sessions",
+                # Auto mode (fork-resume / switch-host): the server names the
+                # branch itself — the same bounded, fail-open AI call the
+                # create flow uses — then creates a leased, auto-reusable
+                # worktree so a later session can adopt it instead of
+                # spawning a duplicate. Requires a host that speaks managed
+                # worktree leases.
+                from omnigent.server.routes._sessions.orchestration import (
+                    _generate_auto_worktree_branch,
                 )
-            branch_name = body.git.branch_name
-            if branch_name is None:  # pragma: no cover - schema rejects this shape
-                raise HTTPException(status_code=400, detail="branch_name is required")
 
-            # Shared by both modes — the host never runs git in bind mode, so
-            # the server is the only gate on the name there.
-            try:
-                validate_branch_name(branch_name)
-            except WorktreeError as exc:
-                raise HTTPException(status_code=400, detail=exc.message) from exc
+                if not conn.hello.managed_worktree_leases:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="host must be upgraded before auto worktree creation can be used",
+                    )
+                branch_name = await _generate_auto_worktree_branch(
+                    session_id=body.session_id,
+                    initial_prompt=body.git.branch_name_prompt,
+                    conversation_store=conversation_store,
+                )
+            else:
+                branch_name = body.git.branch_name
+                if branch_name is None:  # pragma: no cover - schema rejects this shape
+                    raise HTTPException(status_code=400, detail="branch_name is required")
+
+                # Shared by both modes — the host never runs git in bind mode, so
+                # the server is the only gate on the name there.
+                try:
+                    validate_branch_name(branch_name)
+                except WorktreeError as exc:
+                    raise HTTPException(status_code=400, detail=exc.message) from exc
 
             if body.git.existing_worktree:
                 # Binding to a pre-existing worktree: no worktree is created,
@@ -852,6 +875,11 @@ def create_hosts_router(
                 )
 
                 try:
+                    auto_options: dict[str, Any] = (
+                        {"auto_reuse": True, "lease_owner": body.session_id}
+                        if body.git.auto_create
+                        else {}
+                    )
                     worktree = await create_worktree_on_host(
                         host_registry=host_registry,
                         host_conn=conn,
@@ -860,6 +888,7 @@ def create_hosts_router(
                         base_branch=body.git.base_branch,
                         existing_branch=body.git.existing_branch,
                         auto_fetch_base=body.git.auto_fetch_base,
+                        **auto_options,
                     )
                 except WorktreeHostUnavailableError as exc:
                     # Host offline / unresponsive — infra, not user input.
@@ -960,6 +989,19 @@ def create_hosts_router(
             workspace,
             git_branch,
         )
+        if body.git is not None and body.git.auto_create:
+            # Same label set the create flow stamps: the sidebar reads the
+            # managed-worktree marker and the delete flow offers to remove
+            # the worktree it points at.
+            await asyncio.to_thread(
+                conversation_store.set_labels,
+                body.session_id,
+                {
+                    "omnigent.auto_worktree": "1",
+                    "omnigent.auto_worktree.source_repo": source_repo,
+                    "omnigent.auto_worktree.base_ref": body.git.base_branch or "",
+                },
+            )
 
         request_id = secrets.token_hex(8)
         future: asyncio.Future[dict[str, str | None]] = asyncio.get_running_loop().create_future()

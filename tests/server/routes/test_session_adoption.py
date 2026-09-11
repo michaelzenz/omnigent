@@ -13,7 +13,7 @@ from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.host_store import HostStore
-from omnigent.stores.worker_store import WORKER_KIND_EXTERNAL
+from omnigent.stores.worker_store import WORKER_KIND_INTERNAL
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 from tests.server.routes.agent_task_api import patch_host_session_launch
 
@@ -116,7 +116,7 @@ async def test_adopt_session_directly(
 
     adopt_resp = await client.post(
         f"/v1/agent-tasks/sessions/{conv.id}/adopt",
-        json={"task_id": task_id},
+        json={"task_id": task_id, "title": "Investigating upload retries"},
     )
     assert adopt_resp.status_code == 200, adopt_resp.text
     body = adopt_resp.json()
@@ -128,4 +128,30 @@ async def test_adopt_session_directly(
     worker = worker_store.get_by_target_id(conv.id)
     assert worker is not None
     assert worker.task_id == task_id
-    assert worker.kind == WORKER_KIND_EXTERNAL
+    assert worker.kind == WORKER_KIND_INTERNAL
+    assert worker.title == "Investigating upload retries"
+
+    readopt_resp = await client.post(
+        f"/v1/agent-tasks/sessions/{conv.id}/adopt",
+        json={"task_id": task_id, "title": "Verifying upload retry fix"},
+    )
+    assert readopt_resp.status_code == 200, readopt_resp.text
+    assert readopt_resp.json()["worker_id"] == worker.id
+    assert readopt_resp.json()["already_bound"] is True
+
+    updated_worker = worker_store.get_worker(worker.id)
+    assert updated_worker is not None
+    assert updated_worker.title == "Verifying upload retry fix"
+
+    listed = await client.get(f"/v1/agent-tasks/{task_id}/workers")
+    assert listed.status_code == 200, listed.text
+    listed_worker = next(
+        candidate for candidate in listed.json()["data"] if candidate["worker_id"] == worker.id
+    )
+    assert listed_worker["title"] == "Verifying upload retry fix"
+
+    blank_title = await client.post(
+        f"/v1/agent-tasks/sessions/{conv.id}/adopt",
+        json={"task_id": task_id, "title": "   "},
+    )
+    assert blank_title.status_code == 422

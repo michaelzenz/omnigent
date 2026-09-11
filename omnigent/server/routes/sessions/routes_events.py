@@ -648,9 +648,14 @@ def register_events_routes(
                 host_conn=host_conn,
                 repo_path=source_repo,
                 branch_name=conv.git_branch,
-                base_branch=None,
+                # Fallback base when the session branch is gone from the
+                # host repo's refs (renamed, or created on another host).
+                base_branch=conv.labels.get("omnigent.auto_worktree.base_ref"),
                 auto_reuse=True,
                 reuse_existing_branch=True,
+                # Re-acquire the session's own worktree when no other live
+                # session holds it — creation is the last resort.
+                reuse_path=conv.workspace,
                 lease_owner=conv.id,
                 on_log=_on_log,
             )
@@ -1483,6 +1488,13 @@ def register_events_routes(
                 conv,
                 agent_store,
                 agent_cache,
+            await _run_compact_locked(
+                session_id,
+                conv,
+                agent_store,
+                agent_cache,
+                wake_runner=_wake_bound_runner_for_control,
+            )
             )
             return {"queued": False}
         if body.type == "compaction":

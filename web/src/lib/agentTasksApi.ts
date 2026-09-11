@@ -88,6 +88,8 @@ export interface TaskWorkerLane {
     | "initialization_failed"
     | "terminated";
   needs_response?: boolean;
+  /** Manager-maintained label of recent work; falls back to provider_name. */
+  title?: string | null;
   provider_name?: string | null;
   host_id?: string | null;
   workspace?: string | null;
@@ -97,14 +99,17 @@ export interface TaskWorkerLane {
   executions: TaskExecutionSummary[];
 }
 
-export type TaskAssetCategory = "code" | "tests" | "documents" | "logs" | "other";
+export type TaskAssetCategory = "code" | "tests" | "documents" | "logs" | "other" | "workspace";
 
 export interface TaskAssetSummary {
   id: number;
-  kind: "url";
+  kind: "url" | "workspace";
   category?: TaskAssetCategory;
   title: string;
+  /** URL for ``kind=url``; absolute workspace path for ``kind=workspace``. */
   url: string | null;
+  /** Worker lane this asset was harvested from; null = human-added. */
+  source_worker_id?: string | null;
   created_at: number;
 }
 
@@ -152,15 +157,27 @@ export const MANAGER_DEFAULT_ROLE_KEY = "manager:default";
 export const MANAGER_ROLE_PREFIX = "manager:";
 
 // Conversation label marking a PuppyGarden role session. Mirrors the backend
-// ``omnigent.agent_tasks.session_labels`` constants. ``task_broker`` is a
-// background agent whose chat is not a reading surface, so the sidebar never
-// shows its unread dot and excludes it from the unread badge count.
+// ``omnigent.agent_tasks.session_labels`` constants. ``task_broker`` and
+// ``task_manager`` are background agents whose chat is not a reading surface
+// (their output lands on the PuppyGarden board), so the sidebar never shows
+// their unread dot and excludes them from the unread badge count.
 export const ROLE_LABEL_KEY = "omnigent.role";
 export const BROKER_ROLE_VALUE = "task_broker";
 export const SECRETARY_ROLE_VALUE = "task_secretary";
+export const MANAGER_ROLE_VALUE = "task_manager";
 
 export function isBrokerSession(labels: Record<string, string> | undefined): boolean {
   return labels?.[ROLE_LABEL_KEY] === BROKER_ROLE_VALUE;
+}
+
+export function isManagerSession(labels: Record<string, string> | undefined): boolean {
+  return labels?.[ROLE_LABEL_KEY] === MANAGER_ROLE_VALUE;
+}
+
+/** Broker + manager sessions: board-driven background roles, never a badge target. */
+export function isBackgroundRoleSession(labels: Record<string, string> | undefined): boolean {
+  const role = labels?.[ROLE_LABEL_KEY];
+  return role === BROKER_ROLE_VALUE || role === MANAGER_ROLE_VALUE;
 }
 
 function agentRolePath(role: string, suffix: string): string {

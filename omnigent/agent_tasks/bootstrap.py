@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from omnigent.agent_tasks.constants import DEFAULT_TASK_WORKSPACE
+from omnigent.agent_tasks.session_labels import MANAGER_ROLE_VALUE, ROLE_LABEL
 from omnigent.entities import Manager, Task
 from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
@@ -254,7 +255,11 @@ async def _session_request_for_manager(
     agent/prompt profiles) is the single source of truth for re-creation —
     immune to role-profile edits and independent of any task.
     """
-    from omnigent.agent_tasks.session_labels import presentation_labels_for_harness
+    from omnigent.agent_tasks.session_labels import (
+        MANAGER_ROLE_VALUE,
+        ROLE_LABEL,
+        presentation_labels_for_harness,
+    )
     from omnigent.server.schemas import SessionCreateRequest
 
     if not manager.agent_profile_id:
@@ -269,7 +274,13 @@ async def _session_request_for_manager(
         workspace=manager.workspace,
         harness_override=manager.harness,
         model_override=manager.model,
-        labels=presentation_labels_for_harness(manager.harness),
+        # The role label marks the session as a PuppyGarden background role:
+        # the web sidebar suppresses its unread dot and keeps it out of the
+        # dock badge, exactly like the broker's.
+        labels={
+            ROLE_LABEL: MANAGER_ROLE_VALUE,
+            **presentation_labels_for_harness(manager.harness),
+        },
         prompt_profile=(
             {"mode": "fixed", "profile_id": manager.prompt_profile_id}
             if manager.prompt_profile_id
@@ -373,6 +384,10 @@ async def spawn_manager_session(
         workspace=params.workspace,
         harness_override=params.harness,
         model_override=params.model,
+        # Same role label as the heal path: marks the session as a PuppyGarden
+        # background role so the web sidebar suppresses its unread dot and
+        # keeps it out of the dock badge.
+        labels={ROLE_LABEL: MANAGER_ROLE_VALUE},
         prompt_profile=(
             {"mode": "fixed", "profile_id": params.prompt_profile_id}
             if params.prompt_profile_id

@@ -606,6 +606,47 @@ def _announce_session_added(user_id: str | None, session_id: str) -> None:
     )
 
 
+async def _renew_auto_worktree_lease_on_turn_end(session_id: str) -> None:
+    """Renew a session's managed worktree lease when a turn ends.
+
+    Auto-worktree sessions lease their worktree for 24h at creation, and
+    without periodic renewal the lease lapses while a long-lived session is
+    still active — another session's relocation can then reclaim the
+    worktree out from under it. Every terminal turn edge (idle/failed)
+    renews, keeping the lease alive for the session's lifetime.
+
+    Fire-and-forget: renewal is best-effort. A failed renewal (host offline,
+    registry entry lost) is retried at the next turn, and the
+    reconnect/relocate path still recovers the worktree.
+    """
+    try:
+        from omnigent.agent_tasks.adoption import get_session_adoption_context
+        from omnigent.server.routes._host_worktree import renew_worktree_lease_on_host
+
+        ctx = get_session_adoption_context()
+        if ctx is None:
+            return
+        conv = await asyncio.to_thread(ctx.conversation_store.get_conversation, session_id)
+        if conv is None or conv.labels.get("omnigent.auto_worktree") != "1":
+            return
+        if conv.host_id is None or conv.workspace is None:
+            return
+        host_registry = get_server_host_registry()
+        if host_registry is None:
+            return
+        host_conn = host_registry.get(conv.host_id)
+        if host_conn is None or not host_conn.hello.managed_worktree_leases:
+            return
+        await renew_worktree_lease_on_host(
+            host_registry=host_registry,
+            host_conn=host_conn,
+            worktree_path=conv.workspace,
+            lease_owner=session_id,
+        )
+    except Exception:  # noqa: BLE001
+        _logger.debug("worktree lease renewal failed for %s", session_id, exc_info=True)
+
+
 async def _maybe_adopt_session(session_id: str) -> None:
     """Check if a finished-turn session needs adoption or turn-finish routing.
 
@@ -4451,6 +4492,10 @@ def _publish_status(
             adoption_task.add_done_callback(
                 lambda task: task.exception() if not task.cancelled() else None
             )
+            lease_task = asyncio.create_task(_renew_auto_worktree_lease_on_turn_end(session_id))
+            lease_task.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
     elif status == "failed":
         # Canonical server-side broken-turn signal: every server-originated
         # failed turn (runner disconnect mid-turn, setup/dispatch failure,
@@ -4469,6 +4514,11 @@ def _publish_status(
             error_code=error.code if error is not None else None,
             error=error.message if error is not None else None,
         )
+        with contextlib.suppress(RuntimeError):
+            lease_task = asyncio.create_task(_renew_auto_worktree_lease_on_turn_end(session_id))
+            lease_task.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
     # Track the in-flight response id for snapshot-based reconnect (see
     # _session_active_response_cache). A running/waiting edge that names a
     # turn opens it; any idle/failed edge closes it.
@@ -7774,6 +7824,8 @@ async def _run_compact_locked(
     conv: Conversation,
     agent_store: AgentStore,
     agent_cache: AgentCache | None,
+    *,
+    wake_runner: Any | None = None,
 ) -> None:
     """
     Run explicit compaction while holding the per-session compact lock.
@@ -7782,6 +7834,9 @@ async def _run_compact_locked(
     :param conv: Conversation row.
     :param agent_store: Agent store for spec lookup.
     :param agent_cache: Agent cache for bundle loading.
+    :param wake_runner: Optional async callable ``(conv) -> (conv, runner_client | None)``
+        that relaunches a disconnected-but-wakeable runner (same semantics as the
+        control-event wake). Used by the Pi branch when no runner is currently bound.
     """
     lock = _compact_lock(session_id)
     async with lock:
@@ -7812,7 +7867,22 @@ async def _run_compact_locked(
 
         if spec.name == ONIH_PI_TARGET:
             runner_client = await _get_runner_client_for_resource_access(session_id)
-            if runner_client is None:
+            if runner_client is None and wake_runner is not None:
+                # No runner bound (e.g. the transport dropped since the last
+                # turn). Wake it the same way the control-event path does,
+                # then compact against the fresh binding.
+                _conv, runner_client = await wake_runner(conv)
+                if runner_client is None:
+                    raise OmnigentError(
+                        "Can't compact this session while its runner is offline. "
+                        "Reconnect the session (send a message to wake it), then "
+                        "run /compact again.",
+                        code=ErrorCode.RUNNER_UNAVAILABLE,
+                    )
+                # The wake may have healed the session pointer; refresh conv
+                # so the compaction reads current state.
+                conv = _conv
+            elif runner_client is None:
                 raise OmnigentError(
                     "Native Pi compaction requires a live runner",
                     code=ErrorCode.CONFLICT,

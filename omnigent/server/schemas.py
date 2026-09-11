@@ -1878,6 +1878,20 @@ class CreatedSessionResponse(BaseModel):
     agent_name: str
 
 
+class SessionGitBranchResponse(BaseModel):
+    """The live git branch of a session's workspace.
+
+    ``git_branch`` is ``None`` when the workspace is not a git
+    checkout (or the host could not be asked). The value is refreshed
+    from the host on every read — it is not the recorded
+    ``conversations.git_branch`` column, which is write-once at
+    session creation.
+    """
+
+    session_id: str
+    git_branch: str | None = None
+
+
 class SessionLabelsResponse(BaseModel):
     """
     Lightweight response body for ``GET /v1/sessions/{id}/labels``.

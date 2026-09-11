@@ -9,10 +9,15 @@ from sqlalchemy import asc, select, update
 from omnigent.db.db_models import SqlWorker, current_workspace_id
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
 from omnigent.entities import Worker
-from omnigent.stores.worker_store import WORKER_KIND_MANAGED, WorkerStore
+from omnigent.stores.worker_store import (
+    WORKER_KIND_EXTERNAL,
+    WORKER_KIND_INTERNAL,
+    WORKER_KIND_MANAGED,
+    WorkerStore,
+)
 
 _UNSET: Any = object()
-_WORKER_KINDS = frozenset({WORKER_KIND_MANAGED, "external"})
+_WORKER_KINDS = frozenset({WORKER_KIND_MANAGED, WORKER_KIND_INTERNAL, WORKER_KIND_EXTERNAL})
 
 
 def _worker_to_entity(row: SqlWorker) -> Worker:
@@ -23,6 +28,7 @@ def _worker_to_entity(row: SqlWorker) -> Worker:
         target_id=row.target_id,
         state=row.state,
         needs_response=row.needs_response,
+        title=row.title,
         provider_name=row.provider_name,
         provider_configuration=row.provider_configuration,
         failure_reason=row.failure_reason,
@@ -49,6 +55,7 @@ class SqlAlchemyWorkerStore(WorkerStore):
         target_id: str | None = None,
         state: str = "uninitialized",
         needs_response: bool = False,
+        title: str | None = None,
         provider_name: str | None = None,
         provider_configuration: str | None = None,
     ) -> Worker:
@@ -61,6 +68,7 @@ class SqlAlchemyWorkerStore(WorkerStore):
             target_id=target_id,
             state=state,
             needs_response=needs_response,
+            title=title,
             provider_name=provider_name,
             provider_configuration=provider_configuration,
             created_at=now_epoch(),
@@ -134,6 +142,7 @@ class SqlAlchemyWorkerStore(WorkerStore):
         needs_response: bool | None = None,
         failure_reason: str | None = _UNSET,
         last_observed_at: int | None = _UNSET,
+        title: str | None = _UNSET,
     ) -> Worker | None:
         if kind is not None and kind not in _WORKER_KINDS:
             raise ValueError(f"unknown worker kind: {kind!r}")
@@ -155,6 +164,8 @@ class SqlAlchemyWorkerStore(WorkerStore):
                 row.failure_reason = failure_reason
             if last_observed_at is not _UNSET:
                 row.last_observed_at = last_observed_at
+            if title is not _UNSET:
+                row.title = title
             row.updated_at = now_epoch()
             session.flush()
             return _worker_to_entity(row)

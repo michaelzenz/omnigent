@@ -129,3 +129,117 @@ def test_list_recent_respects_limit(store: SqlAlchemyTaskStore) -> None:
     for i in range(5):
         store.create(task_id=_uid(f"task_lim_{i}"), title=f"T{i}", goal="g")
     assert len(store.list_recent(3)) == 3
+
+
+
+
+# ---------------------------------------------------------------------------
+# move_to_queue_end — state-aware placement
+# ---------------------------------------------------------------------------
+
+
+def _board_order(store: SqlAlchemyTaskStore, tasks: list[str]) -> list[str]:
+    """Board visual order for *tasks* (queue_rank desc, id desc)."""
+    ranked = [(t.id, t.queue_rank) for t in (store.get(tid) for tid in tasks) if t]
+    return [tid for tid, _ in sorted(ranked, key=lambda p: (p[1], p[0]), reverse=True)]
+
+
+def _mk(store: SqlAlchemyTaskStore, seed: str, state: str = "idle") -> str:
+    # Creation order assigns ascending ranks, so the board order starts as
+    # the reverse of creation order.
+    return store.create(
+        task_id=_uid(seed),
+        title=seed,
+        goal="goal",
+        owner_user_id="alice@example.com",
+        state=state,
+    ).id
+
+
+def test_move_to_queue_end_live_card_parks_above_resolved_block(
+    store: SqlAlchemyTaskStore,
+) -> None:
+    # Board: moved(live), a(live), res_2, res_1 — first resolved is res_2.
+    res_1 = _mk(store, "res_1", state="agent-resolved")
+    res_2 = _mk(store, "res_2", state="agent-resolved")
+    a = _mk(store, "a")
+    moved = _mk(store, "moved")
+    assert _board_order(store, [moved, a, res_2, res_1]) == [moved, a, res_2, res_1]
+
+    store.move_to_queue_end(moved)
+
+    # moved parks directly above the FIRST resolved card (res_2), not under
+    # the whole block. Adjacent ranks trigger the order-preserving tail
+    # renumber; ranks stay unique.
+    assert _board_order(store, [moved, a, res_2, res_1]) == [a, moved, res_2, res_1]
+    ranks = [store.get(t).queue_rank for t in _board_order(store, [moved, a, res_2, res_1])]
+    assert len(set(ranks)) == len(ranks)
+
+
+def test_move_to_queue_end_free_slot_above_resolved_block(
+    store: SqlAlchemyTaskStore,
+) -> None:
+    # A hole between the resolved block and the card above it (from a
+    # deletion) is filled directly — no renumbering needed.
+    res_1 = _mk(store, "res_1", state="agent-resolved")
+    hole = _mk(store, "hole")
+    live_a = _mk(store, "live_a")
+    live_b = _mk(store, "live_b")
+    store.delete(hole)
+    assert _board_order(store, [live_b, live_a, res_1]) == [live_b, live_a, res_1]
+
+    store.move_to_queue_end(live_b)
+
+    assert _board_order(store, [live_b, live_a, res_1]) == [live_a, live_b, res_1]
+
+
+def test_move_to_queue_end_already_above_resolved_is_stable(
+    store: SqlAlchemyTaskStore,
+) -> None:
+    res_1 = _mk(store, "res_1", state="agent-resolved")
+    moved = _mk(store, "moved")
+    assert _board_order(store, [moved, res_1]) == [moved, res_1]
+
+    # Already directly above the resolved block: rank is reused, order holds.
+    store.move_to_queue_end(moved)
+    assert _board_order(store, [moved, res_1]) == [moved, res_1]
+
+
+def test_move_to_queue_end_interleaved_live_card_escapes_resolved_block(
+    store: SqlAlchemyTaskStore,
+) -> None:
+    # A live card sitting between resolved cards moves to the top of the
+    # resolved block (directly above the first resolved card).
+    res_1 = _mk(store, "res_1", state="agent-resolved")
+    moved = _mk(store, "moved")
+    res_2 = _mk(store, "res_2", state="agent-resolved")
+    assert _board_order(store, [moved, res_2, res_1]) == [res_2, moved, res_1]
+
+    store.move_to_queue_end(moved)
+
+    assert _board_order(store, [moved, res_2, res_1]) == [moved, res_2, res_1]
+
+
+def test_move_to_queue_end_resolved_card_sinks_to_absolute_end(
+    store: SqlAlchemyTaskStore,
+) -> None:
+    a = _mk(store, "a")
+    b = _mk(store, "b")
+    resolved = _mk(store, "res", state="agent-resolved")
+    assert _board_order(store, [a, b, resolved]) == [resolved, b, a]
+
+    store.move_to_queue_end(resolved)
+
+    assert _board_order(store, [a, b, resolved]) == [b, a, resolved]
+
+
+def test_move_to_queue_end_without_resolved_cards_sinks_to_absolute_end(
+    store: SqlAlchemyTaskStore,
+) -> None:
+    a = _mk(store, "a")
+    b = _mk(store, "b")
+    assert _board_order(store, [a, b]) == [b, a]
+
+    store.move_to_queue_end(a)
+
+    assert _board_order(store, [a, b]) == [b, a]

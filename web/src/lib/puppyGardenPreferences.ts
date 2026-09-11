@@ -38,3 +38,32 @@ export function writeAdoptExternalSessions(value: boolean): void {
     // localStorage quota or access errors shouldn't break the app.
   }
 }
+
+// Default desktop app for opening ``kind=workspace`` task assets. Like the
+// other PuppyGarden preferences this is device-local (localStorage); the
+// editor still must be detected by the desktop shell at launch time.
+export type WorkspaceEditor = "vscode" | "cursor";
+
+const EDITOR_STORAGE_KEY = "omnigent:workspace-editor";
+export const DEFAULT_WORKSPACE_EDITOR: WorkspaceEditor = "vscode";
+
+/** Read the persisted default workspace editor. */
+export function readWorkspaceEditor(): WorkspaceEditor {
+  if (typeof window === "undefined") return DEFAULT_WORKSPACE_EDITOR;
+  try {
+    const raw = window.localStorage.getItem(EDITOR_STORAGE_KEY);
+    return raw === "cursor" ? "cursor" : DEFAULT_WORKSPACE_EDITOR;
+  } catch {
+    return DEFAULT_WORKSPACE_EDITOR;
+  }
+}
+
+/** Persist the default workspace editor. Swallows storage errors. */
+export function writeWorkspaceEditor(value: WorkspaceEditor): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(EDITOR_STORAGE_KEY, value);
+  } catch {
+    // localStorage quota or access errors shouldn't break the app.
+  }
+}

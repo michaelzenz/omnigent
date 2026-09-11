@@ -1001,6 +1001,7 @@ class ConversationStore(ABC):
         terminal_launch_args: list[str] | None = None,
         archived: bool | None = None,
         reported_model: str | None = None,
+        _unset_reported_model: bool = False,
         prompt_profile_mode: str | None = None,
         prompt_profile_id: str | None = None,
         _unset_prompt_profile: bool = False,
@@ -1058,6 +1059,9 @@ class ConversationStore(ABC):
             ``None`` leaves unchanged.
         :param reported_model: Model last reported by the harness.
             ``None`` leaves unchanged.
+        :param _unset_reported_model: When ``True``, clear the reported
+            model — used when the runner is released, since the report
+            described the released harness.
         :param prompt_profile_mode: Prompt-profile selection mode.
             A non-``None`` value updates the profile configuration.
         :param prompt_profile_id: Profile id required by ``fixed``

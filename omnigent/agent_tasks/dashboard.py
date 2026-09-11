@@ -206,6 +206,7 @@ def _worker_lane(
         "target_id": worker.target_id,
         "needs_response": worker.needs_response,
         "provider_name": worker.provider_name,
+        "title": worker.title,
         "host_id": launch.get("host_id"),
         "workspace": launch.get("workspace"),
         "failure_reason": worker.failure_reason,
@@ -286,6 +287,7 @@ def _asset_summary(asset: TaskAsset) -> dict[str, Any]:
         "category": asset.category,
         "title": asset.title,
         "url": asset.url,
+        "source_worker_id": asset.source_worker_id,
         "created_at": asset.created_at,
     }
 

@@ -247,7 +247,9 @@ def _resolve_provider_request_log() -> str:
         from omnigent.config import load_effective_config
 
         cfg = load_effective_config()
-        value = (cfg.get("harness") or {}).get("pi") if isinstance(cfg.get("harness"), dict) else None
+        value = (
+            (cfg.get("harness") or {}).get("pi") if isinstance(cfg.get("harness"), dict) else None
+        )
         value = value.get("provider_request_log") if isinstance(value, dict) else None
         if isinstance(value, str) and value.strip():
             return _Path(value.strip()).expanduser().as_posix()

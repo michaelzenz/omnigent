@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useEffect, useRef, useState } from "react";
+import { Highlight, HighlightedMarkdown } from "./boardSearchHighlight";
 import { CheckIcon, Loader2Icon, MessageSquareIcon, PencilIcon, XIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,14 +18,6 @@ import { TaskCardManagerRolePicker } from "./TaskCardManagerRolePicker";
 import { TaskCardSidebar } from "./TaskCardAssets";
 import { TaskItemsPanel } from "./TaskCardWorkers";
 import { TaskActionsMenu } from "./TaskActionsMenu";
-
-const MARKDOWN_COMPONENTS: Components = {
-  a: ({ children, ...props }) => (
-    <a {...props} target="_blank" rel="noopener noreferrer">
-      {children}
-    </a>
-  ),
-};
 
 // Task-state badge palette ("tinted outline"): hue-matched border + translucent
 // fill, darker text in light mode and brighter tinted text in dark mode.
@@ -94,7 +85,9 @@ function EditableGoal({ taskId, goal }: { taskId: string; goal: string }) {
         }}
       >
         <span className="shrink-0 font-medium">Goal:</span>
-        <span className="min-w-0 text-muted-foreground">{goal || "Add a goal"}</span>
+        <span className="min-w-0 text-muted-foreground">
+          {goal ? <Highlight text={goal} /> : "Add a goal"}
+        </span>
         <PencilIcon
           className="mt-0.5 size-3.5 shrink-0 opacity-0 group-hover:opacity-100"
           aria-hidden
@@ -159,12 +152,40 @@ export function TaskCard({
   isLast = false,
   onMovedToEnd,
 }: TaskCardProps) {
-  const { data: dashboard, isLoading, error } = useTaskDashboard(taskId);
+  // Off-screen cards skip the dashboard fetch/poll (the heaviest per-card
+  // work: an aggregate query per card, refetched every 10s for every card on
+  // the board). The observer preloads slightly ahead of the viewport so a
+  // card is ready before it scrolls in.
+  const cardRef = useRef<HTMLElement | null>(null);
+  const [inView, setInView] = useState(false);
+  const isPending = state === "pending";
+
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setInView(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => setInView(entries.some((entry) => entry.isIntersecting)),
+      { rootMargin: "400px 0px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const {
+    data: dashboard,
+    isLoading,
+    error,
+  } = useTaskDashboard(taskId, {
+    enabled: inView && !isPending,
+  });
   const { target, openManager, isManagerSelected, dismissToRole } = usePuppyGardenChat();
   const moveToEnd = useMoveTaskToQueueEnd(taskId);
   const acceptPackage = useAcceptAgentTaskPackage(taskId);
   const rejectPackage = useRejectAgentTaskPackage(taskId);
-  const isPending = state === "pending";
   const managerSelected = !isPending && isManagerSelected(taskId);
   const selectedWorkerId =
     target.kind === "worker" && target.taskId === taskId ? target.workerId : null;
@@ -183,6 +204,7 @@ export function TaskCard({
 
   return (
     <article
+      ref={cardRef}
       className={cn(
         "puppy-task-card @container flex min-w-0 flex-col rounded-xl border-2 border-[#888] bg-card shadow-[0_2px_4px_rgba(0,0,0,0.12)]",
         managerSelected && "ring-2 ring-primary ring-offset-1",
@@ -196,7 +218,9 @@ export function TaskCard({
         <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <h2 className="min-w-0 text-lg leading-tight font-semibold">{title}</h2>
+              <h2 className="min-w-0 text-lg leading-tight font-semibold">
+                <Highlight text={title} />
+              </h2>
               <Badge
                 variant="outline"
                 className={cn(
@@ -229,7 +253,13 @@ export function TaskCard({
               variant="outline"
               size="sm"
               disabled={isLast || moveToEnd.isPending}
-              title={isLast ? "This task is already last" : "Move task to queue end"}
+              title={
+                isLast
+                  ? "This task is already last"
+                  : state === "agent-resolved"
+                    ? "Move task to queue end"
+                    : "Move below other open tasks (stays above resolved)"
+              }
               onClick={async (event) => {
                 event.stopPropagation();
                 event.currentTarget.blur();
@@ -258,9 +288,7 @@ export function TaskCard({
             </h3>
             {effectiveDescription ? (
               <div className="prose prose-sm dark:prose-invert max-w-none break-words">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-                  {effectiveDescription}
-                </ReactMarkdown>
+                <HighlightedMarkdown>{effectiveDescription}</HighlightedMarkdown>
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">No overview yet.</p>
@@ -316,9 +344,7 @@ export function TaskCard({
               </h3>
               {effectiveDescription ? (
                 <div className="prose prose-sm dark:prose-invert max-w-none break-words">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-                    {effectiveDescription}
-                  </ReactMarkdown>
+                  <HighlightedMarkdown>{effectiveDescription}</HighlightedMarkdown>
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">No overview yet.</p>
@@ -398,6 +424,7 @@ export function TaskCard({
             taskId={taskId}
             assets={dashboard.assets ?? []}
             workers={dashboard.workers}
+            hostId={dashboard.workers.find((w) => w.host_id)?.host_id ?? null}
           />
         </div>
       ) : null}

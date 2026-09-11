@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangleIcon } from "lucide-react";
+import { AlertTriangleIcon, WandSparklesIcon } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -23,9 +23,13 @@ import { HostLabel } from "./HostLabel";
 import { isValidWorkspace, normalizeWorkspacePath } from "./NewChatDialog";
 import { useHosts } from "@/hooks/useHosts";
 import { useHostFilesystem } from "@/hooks/useHostFilesystem";
+import { useHostRepository } from "@/hooks/useHostWorktrees";
 import { useRecentWorkspaces } from "@/hooks/useRecentWorkspaces";
+import { useSession } from "@/hooks/useSession";
 import { launchRunner, updateSession } from "@/lib/sessionsApi";
 import { useChatStore } from "@/store/chatStore";
+import { cn } from "@/lib/utils";
+import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 /**
  * Move an existing session onto a different host, from the composer's
@@ -45,6 +49,11 @@ import { useChatStore } from "@/store/chatStore";
  *
  * A directory is always required: workspaces are per-machine, so the
  * old path means nothing on the new host even when it reads the same.
+ *
+ * When the chosen directory is a git folder on a lease-capable host, an
+ * "Auto new worktree" toggle appears: on, the server names a branch from
+ * the session title and starts the runner in a fresh managed worktree
+ * off that directory instead of binding the directory itself.
  *
  * The first available host is selected on open and its directory
  * defaulted, so the common "just move it over there" case is one click.
@@ -73,6 +82,7 @@ export function SwitchHostDialog({
 }) {
   const queryClient = useQueryClient();
   const { data: hosts } = useHosts({ enabled: open });
+  const { session } = useSession(sessionId);
   const markRunnerLaunched = useChatStore((s) => s.markRunnerLaunched);
 
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
@@ -81,6 +91,7 @@ export function SwitchHostDialog({
   const [browseNonce, setBrowseNonce] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [autoWorktree, setAutoWorktree] = useState(false);
   // Set when step 1 succeeded but step 2 failed: the session is now
   // unbound, so the retry copy has to say so rather than implying the
   // old host is still serving it.
@@ -145,6 +156,27 @@ export function SwitchHostDialog({
     if (preferred) setWorkspace(preferred);
   }, [open, selectedHostId, workspace, recent, resolvedHome]);
 
+  // Only offer auto worktree when the chosen directory is a git folder on
+  // a host that speaks managed worktree leases — anything else is a
+  // guaranteed server rejection, so the toggle never shows for it.
+  const workspaceTrimmed = normalizeWorkspacePath(workspace) ?? "";
+  const workspaceValid = isValidWorkspace(workspace);
+  const { data: repoInfo } = useHostRepository(
+    selectedHostId,
+    workspaceTrimmed !== "" && workspaceValid ? workspaceTrimmed : null,
+  );
+  const autoWorktreeAvailable =
+    selectedHostId !== null &&
+    workspaceValid &&
+    repoInfo?.isGitRepository === true &&
+    repoInfo.autoWorktreesSupported === true;
+  // The gate follows the directory; when it drops (host changed to a
+  // non-git path, field cleared) the toggle must not silently stay armed —
+  // the next submit would try to branch a directory that isn't a repo.
+  useEffect(() => {
+    if (!autoWorktreeAvailable) setAutoWorktree(false);
+  }, [autoWorktreeAvailable]);
+
   function handleWorkspaceChange(next: string): void {
     userEditedRef.current = true;
     setWorkspace(next);
@@ -158,14 +190,12 @@ export function SwitchHostDialog({
       setError(null);
       setStranded(false);
       setSubmitting(false);
+      setAutoWorktree(false);
       prevHostId.current = null;
       userEditedRef.current = false;
     }
     onOpenChange(next);
   }
-
-  const workspaceTrimmed = normalizeWorkspacePath(workspace) ?? "";
-  const workspaceValid = isValidWorkspace(workspace);
 
   function commitWorkspacePath(path: string): void {
     handleWorkspaceChange(path);
@@ -187,7 +217,18 @@ export function SwitchHostDialog({
       await updateSession(sessionId, { runnerId: "", modelOverride: null, silent: true });
       // From here the session is unbound until the launch lands.
       setStranded(true);
-      await launchRunner(selectedHostId, sessionId, workspaceTrimmed);
+      // Auto worktree: the server names the branch from the session title
+      // and starts the runner in a fresh managed worktree off the chosen
+      // directory instead of binding the directory itself.
+      const gitOptions = autoWorktree
+        ? ({ autoCreate: true, branchNamePrompt: session?.title ?? undefined } as const)
+        : undefined;
+      await launchRunner(
+        selectedHostId,
+        sessionId,
+        workspaceTrimmed,
+        ...(gitOptions ? [gitOptions] : []),
+      );
       // The new runner is booting but nothing on the wire says so yet, and
       // no turn is in flight to imply it — without this the session reads as
       // idle and the move lands on a silent, empty chat.
@@ -281,6 +322,35 @@ export function SwitchHostDialog({
                       and the agent picks up in this directory instead.
                     </span>
                   </p>
+                  {autoWorktreeAvailable && (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            aria-pressed={autoWorktree}
+                            aria-label="Auto new worktree"
+                            onClick={() => setAutoWorktree((enabled) => !enabled)}
+                            className={cn(
+                              "flex h-6 cursor-pointer items-center gap-1.5 self-start rounded-full px-2 text-xs font-medium transition-colors",
+                              autoWorktree
+                                ? "bg-primary text-primary-foreground"
+                                : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground",
+                            )}
+                            data-testid="switch-host-auto-worktree-toggle"
+                          >
+                            <WandSparklesIcon className="size-3.5" />
+                            <span>Auto new worktree</span>
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {autoWorktree
+                            ? "On — the session starts in a fresh managed worktree of this directory."
+                            : "Start in a fresh worktree of this directory instead of binding it directly."}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
                 </>
               ) : (
                 <p className="text-xs text-muted-foreground">

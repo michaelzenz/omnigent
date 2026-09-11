@@ -301,12 +301,13 @@ async def test_batch_route_manager_conflict_does_not_partially_route(
     assert untouched.manager_id is None
 
 
-async def test_batch_route_manager_rejects_host_mismatch(
+async def test_batch_route_manager_allows_cross_host(
     client: httpx.AsyncClient,
     db_uri: str,
     manager_agent_profile_id: str,
     task_event_store: SqlAlchemyTaskEventStore,
 ) -> None:
+    """Host is a routing preference, not a requirement: cross-host routes succeed."""
     manager_id = _uid("host-manager")
     _register_manager(
         db_uri,
@@ -329,7 +330,11 @@ async def test_batch_route_manager_rejects_host_mismatch(
         json={"event_ids": [event_id], "manager_id": manager_id},
     )
 
-    assert resp.status_code == 409
+    assert resp.status_code == 200, resp.text
+    routed = resp.json()["data"][0]
+    assert routed["id"] == event_id
+    assert routed["state"] == "routed"
+    assert routed["manager_id"] == manager_id
 
 
 async def test_dismiss_event(

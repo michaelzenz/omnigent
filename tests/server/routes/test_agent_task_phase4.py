@@ -567,3 +567,12 @@ async def test_initialize_worker_route(
     dashboard = await client.get(f"/v1/agent-tasks/{task_id}/dashboard")
     lane = next(w for w in dashboard.json()["workers"] if w["worker_id"] == worker_id)
     assert lane["target_id"] == worker.target_id
+
+
+async def test_worker_title_route_is_removed(client: httpx.AsyncClient) -> None:
+    response = await client.patch(
+        "/v1/task-workers/unused/title",
+        json={"title": "Use session adoption instead"},
+    )
+
+    assert response.status_code == 404

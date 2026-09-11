@@ -13,6 +13,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
+  readWorkspaceEditor,
+  writeWorkspaceEditor,
+  type WorkspaceEditor,
+} from "@/lib/puppyGardenPreferences";
+import {
   TASK_BROKER_ROLE,
   type TaskManagerSummary,
   deleteManager,
@@ -85,20 +90,25 @@ export function BoardConfigPanel({ disabled = false }: { disabled?: boolean }) {
     label: string;
     count: number;
   } | null>(null);
-  // Mirror the server's spawn-manager-notice eligibility (live_tasks = active +
-  // idle with no manager) so the count and the button enablement match what
-  // the endpoint would collect.
+  // Mirror the server's spawn-manager-notice eligibility (live_tasks = active
+  // + pending + idle + agent-resolved with no manager) so the count and the
+  // button enablement match what the endpoint would collect.
   const { data: unmanagedTasks = [] } = useQuery({
     queryKey: ["agent-tasks", "unmanaged"],
     queryFn: async () => {
-      const [active, idle] = await Promise.all([
+      const [pending, active, idle, agentResolved] = await Promise.all([
+        fetchAgentTasks("pending"),
         fetchAgentTasks("active"),
         fetchAgentTasks("idle"),
+        fetchAgentTasks("agent-resolved"),
       ]);
-      return [...active, ...idle].filter((task) => !task.manager_id);
+      return [...pending, ...active, ...idle, ...agentResolved].filter((task) => !task.manager_id);
     },
     enabled,
   });
+  const [workspaceEditor, setWorkspaceEditor] = useState<WorkspaceEditor>(() =>
+    readWorkspaceEditor(),
+  );
   const spawnNotice = useMutation({
     mutationFn: spawnManagerNotice,
     onSuccess: async () => {
@@ -329,6 +339,35 @@ export function BoardConfigPanel({ disabled = false }: { disabled?: boolean }) {
                 : ""}
             </p>
           ) : null}
+        </section>
+
+        <section className="space-y-2 border-t pt-3">
+          <p className="text-sm font-medium">Workspace editor</p>
+          <p className="text-xs text-muted-foreground">
+            App used to open workspace assets on task cards.
+          </p>
+          <div
+            className="flex gap-2"
+            role="radiogroup"
+            aria-label="Default workspace editor"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {(["vscode", "cursor"] as const).map((editor) => (
+              <Button
+                key={editor}
+                type="button"
+                variant={workspaceEditor === editor ? "default" : "outline"}
+                size="sm"
+                aria-pressed={workspaceEditor === editor}
+                onClick={() => {
+                  setWorkspaceEditor(editor);
+                  writeWorkspaceEditor(editor);
+                }}
+              >
+                {editor === "vscode" ? "VS Code" : "Cursor"}
+              </Button>
+            ))}
+          </div>
         </section>
       </DialogContent>
 

@@ -11,7 +11,6 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
 from omnigent.agent_tasks.constants import UNRECONCILED_EVENT_STATES
-from omnigent.agent_tasks.event_host import event_host
 from omnigent.agent_tasks.event_types import is_session_internal_event
 from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.agent_tasks.resolve import (
@@ -419,17 +418,6 @@ def create_task_events_router(
             event = events_by_id.get(event_id)
             if event is None or (event.owner_user_id or "__anonymous__") != owner:
                 raise OmnigentError("Task event not found", code=ErrorCode.NOT_FOUND)
-            source_host = event_host(event)
-            if (
-                source_host is not None
-                and conversation is not None
-                and conversation.host_id is not None
-                and source_host != conversation.host_id
-            ):
-                raise OmnigentError(
-                    f"Event {event.id} is not compatible with the manager host",
-                    code=ErrorCode.CONFLICT,
-                )
             if event.state == "routed" and (event.manager_id == body.manager_id):
                 events.append(event)
                 continue

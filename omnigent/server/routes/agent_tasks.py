@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from typing import Any, Literal
 
@@ -88,7 +89,6 @@ from omnigent.agent_tasks.role_keys import (
 from omnigent.agent_tasks.task_match import (
     _LIVE_TASK_STATES,
     collect_event_tags,
-    live_tasks,
     load_events,
     rank_tasks_for_events,
     ranked_task_payload,
@@ -112,7 +112,6 @@ from omnigent.db.enum_codecs import TASK_STATE
 from omnigent.db.utils import now_epoch
 from omnigent.entities import (
     FyiCluster,
-    Manager,
     Task,
     TaskAsset,
     TaskEventExecution,
@@ -126,7 +125,7 @@ from omnigent.entities.task_role_profile import TaskRoleProfile
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
 from omnigent.runner.routing import RunnerRouter
-from omnigent.server.auth import LEVEL_OWNER, AuthProvider
+from omnigent.server.auth import LEVEL_OWNER, RESERVED_USER_LOCAL, AuthProvider
 from omnigent.server.routes._auth_helpers import get_user_id, require_access, require_user
 from omnigent.server.routes.task_events import _event_to_response
 from omnigent.stores.agent_queue_store import AgentQueueStore
@@ -136,6 +135,7 @@ from omnigent.stores.host_store import HostStore
 from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.prompt_profile_store import PromptProfileStore
+from omnigent.stores.scheduled_task_store import ScheduledTaskStore
 from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
@@ -143,8 +143,10 @@ from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.user_role_session_store import UserRoleSessionStore
 from omnigent.stores.worker_provider_store import WorkerProviderStore
-from omnigent.stores.worker_store import WORKER_KIND_EXTERNAL, WorkerStore
+from omnigent.stores.worker_store import WORKER_KIND_MANAGED, WorkerStore
 from omnigent.tools.builtins.puppygarden_api import PUPPYGARDEN_CALLER_CONVERSATION_HEADER
+
+_logger = logging.getLogger(__name__)
 
 _VALID_TASK_STATES = frozenset(TASK_STATE)
 
@@ -176,6 +178,17 @@ class AdoptSessionRequest(BaseModel):
     """Request body for ``POST /v1/agent-tasks/sessions/{session_id}/adopt``."""
 
     task_id: str
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @field_validator("title")
+    @classmethod
+    def _title_non_empty(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("title must be a non-empty string")
+        return stripped
 
 
 class ProposeExternalAdoptionRequest(BaseModel):
@@ -354,6 +367,12 @@ class CreateManagerRequest(BaseModel):
     role_key: str = MANAGER_DEFAULT_ROLE_KEY
     description: str = Field(max_length=512)
     title: str | None = Field(default=None, max_length=200)
+    # Execution-snapshot overrides: let the caller pin the manager to a host
+    # other than the role profile's default (e.g. a second dev box whose
+    # events are host-incompatible with Mac-pinned managers). Stored on the
+    # durable row, so later heals re-create the session on the same host.
+    host_id: str | None = Field(default=None, min_length=1)
+    workspace: str | None = Field(default=None, min_length=1)
 
     @field_validator("role_key", "description")
     @classmethod
@@ -413,12 +432,19 @@ class CreateTaskItemRequest(BaseModel):
 
 
 class CreateTaskAssetRequest(BaseModel):
-    """Request body for ``POST /v1/agent-tasks/{task_id}/assets``."""
+    """Request body for ``POST /v1/agent-tasks/{task_id}/assets``.
 
-    kind: Literal["url"] = "url"
-    category: Literal["code", "tests", "documents", "logs", "other"] = "other"
+    ``kind="workspace"`` assets reference a working directory (``url`` holds
+    the absolute path); the card opens them in the user's configured editor.
+    """
+
+    kind: Literal["url", "workspace"] = "url"
+    category: Literal["code", "tests", "documents", "logs", "other", "workspace"] = "other"
     title: str
     url: str
+    # Worker lane the asset was harvested from (harvesters stamp it; human
+    # adds omit it).
+    source_worker_id: str | None = None
 
     @field_validator("title", "url")
     @classmethod
@@ -769,6 +795,7 @@ def _worker_to_response(worker: Worker) -> dict[str, Any]:
         "state": worker.state,
         "needs_response": worker.needs_response,
         "provider_name": worker.provider_name,
+        "title": worker.title,
         "host_id": launch.get("host_id"),
         "workspace": launch.get("workspace"),
         "failure_reason": worker.failure_reason,
@@ -967,6 +994,7 @@ def _asset_to_response(asset: TaskAsset) -> dict[str, Any]:
         "category": asset.category,
         "title": asset.title,
         "url": asset.url,
+        "source_worker_id": asset.source_worker_id,
         "created_at": asset.created_at,
     }
 
@@ -1013,6 +1041,7 @@ def create_agent_tasks_router(
     agent_store: AgentStore,
     conversation_store: ConversationStore | None = None,
     manager_store: ManagerStore | None = None,
+    scheduled_task_store: ScheduledTaskStore | None = None,
     task_role_profile_store: TaskRoleProfileStore | None = None,
     user_role_session_store: UserRoleSessionStore | None = None,
     host_store: HostStore | None = None,
@@ -1621,8 +1650,9 @@ def create_agent_tasks_router(
         def _collect() -> list[Task]:
             return [
                 task
-                for task in live_tasks(task_store)
-                if not task.manager_id
+                for task in task_store.list()
+                if task.state != "archived"
+                and not task.manager_id
                 and (task.owner_user_id is None or task.owner_user_id == owner)
             ]
 
@@ -1715,9 +1745,16 @@ def create_agent_tasks_router(
                 f"Role is not a manager role: {body.role_key}",
                 code=ErrorCode.INVALID_INPUT,
             )
+        if body.host_id is not None and host_store is not None:
+            host = await asyncio.to_thread(host_store.get_host, body.host_id)
+            if host is None:
+                raise OmnigentError(
+                    f"Host not found: {body.host_id}",
+                    code=ErrorCode.NOT_FOUND,
+                )
         params = resolve_bootstrap_params(
-            host_id=None,
-            workspace=None,
+            host_id=body.host_id,
+            workspace=body.workspace,
             model=None,
             role_profile=profile,
         )
@@ -1732,6 +1769,25 @@ def create_agent_tasks_router(
             app_state=request.app.state,
             user_id=user_id,
         )
+        # Create the manager's daily task-sweep automation. Best-effort: a
+        # failed sweep create must not fail the manager create (the manager
+        # works without it; the sweep is portfolio hygiene).
+        if scheduled_task_store is not None:
+            try:
+                from omnigent.server.scheduled.manager_sweep import ensure_manager_sweep_task
+
+                ensure_manager_sweep_task(
+                    manager_id=manager.id,
+                    manager_conversation_id=manager.conversation_id,
+                    manager_agent_id=manager.agent_profile_id or manager.id,
+                    owner_user_id=None if owner == RESERVED_USER_LOCAL else owner,
+                    store=scheduled_task_store,
+                )
+            except Exception:
+                _logger.exception(
+                    "manager sweep automation create failed for manager %s (non-fatal)",
+                    manager.id,
+                )
         row = await asyncio.to_thread(manager_store.get, manager.id)
         if row is None:
             raise OmnigentError(
@@ -1810,6 +1866,22 @@ def create_agent_tasks_router(
 
         if conversation_store is not None and manager.conversation_id is not None:
             await conversation_store.delete_conversation(manager.conversation_id)
+        # Remove the manager's daily sweep automation — with the manager row
+        # gone, the scheduled fire would find no session to sweep.
+        if scheduled_task_store is not None:
+            try:
+                from omnigent.server.scheduled.manager_sweep import delete_manager_sweep_task
+
+                delete_manager_sweep_task(
+                    manager_id=manager.id,
+                    owner_user_id=None if owner == RESERVED_USER_LOCAL else owner,
+                    store=scheduled_task_store,
+                )
+            except Exception:
+                _logger.exception(
+                    "manager sweep automation delete failed for manager %s (non-fatal)",
+                    manager.id,
+                )
         deleted = await asyncio.to_thread(manager_store.delete, manager.id)
         if not deleted:
             raise OmnigentError("Manager not found", code=ErrorCode.NOT_FOUND)
@@ -2020,12 +2092,25 @@ def create_agent_tasks_router(
         task = await asyncio.to_thread(task_store.update, task_id, **update_kwargs)
         if task is None:
             raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
+        # Manager resolve/unresolve moves the card within the queue:
+        # → agent-resolved sends it to the queue END (lowest rank);
+        # → any other state (pending/active/idle) brings it to the queue
+        #   START (highest rank), surfacing revived work.
+        if "state" in update_kwargs:
+            if update_kwargs["state"] == "agent-resolved":
+                await asyncio.to_thread(task_store.move_to_queue_end, task_id)
+            else:
+                await asyncio.to_thread(task_store.bump_queue_rank, task_id)
         tags = await asyncio.to_thread(task_store.get_tags, task_id)
         return _task_to_response(task, tags=tags)
 
     @router.post("/agent-tasks/{task_id}/move-to-queue-end")
     async def move_task_to_queue_end(request: Request, task_id: str) -> dict[str, Any]:
-        """Move one task to the end of the stable board ordering."""
+        """Move one task toward the end of the stable board ordering.
+
+        A live task parks directly above the first resolved card (the end of
+        the work section); a resolved task sinks to the absolute end.
+        """
         user_id = require_user(request, auth_provider)
         await _get_task_or_404(task_id, user_id)
         task = await asyncio.to_thread(task_store.move_to_queue_end, task_id)
@@ -2559,8 +2644,10 @@ def create_agent_tasks_router(
                     continue
                 await asyncio.to_thread(task_item_store.update_item, item.id, state="cancelled")
 
-            # Stop managed workers; external sessions keep running.
-            if worker.kind != WORKER_KIND_EXTERNAL and worker.target_id is not None:
+            # Stop only managed workers — the system owns their sessions.
+            # Internal (adopted omnigent) and external (harness) sessions are
+            # the user's own; adoption must not grant the right to kill them.
+            if worker.kind == WORKER_KIND_MANAGED and worker.target_id is not None:
                 await _control_worker(worker, "stop_session", request)
 
             updated = await asyncio.to_thread(
@@ -2642,20 +2729,23 @@ def create_agent_tasks_router(
             task_id: str,
             body: CreateTaskAssetRequest,
         ) -> dict[str, Any]:
-            """Attach a URL or other asset reference to one managed task."""
+            """Attach a URL, workspace, or other asset reference to one task.
+
+            Idempotent: a re-post of an identical asset returns the existing
+            row instead of duplicating it.
+            """
             user_id = require_user(request, auth_provider)
             await _get_task_or_404(task_id, user_id)
 
-            def _create() -> TaskAsset:
-                return task_asset_store.create_asset(
-                    task_id,
-                    kind=body.kind,
-                    category=body.category,
-                    title=body.title,
-                    url=body.url,
-                )
-
-            created = await asyncio.to_thread(_create)
+            created = await asyncio.to_thread(
+                task_asset_store.upsert_asset,
+                task_id,
+                kind=body.kind,
+                category=body.category,
+                title=body.title,
+                url=body.url,
+                source_worker_id=body.source_worker_id,
+            )
             return _asset_to_response(created)
 
         @router.delete("/agent-tasks/{task_id}/assets/{asset_id}")
@@ -3575,9 +3665,7 @@ def create_agent_tasks_router(
 
             def _existing_binding() -> Worker | None:
                 worker = (
-                    worker_store.get_by_target_id(session_id)
-                    if worker_store is not None
-                    else None
+                    worker_store.get_by_target_id(session_id) if worker_store is not None else None
                 )
                 if worker is None or worker.task_id != task.id:
                     return None
@@ -3585,6 +3673,15 @@ def create_agent_tasks_router(
 
             existing = await asyncio.to_thread(_existing_binding)
             if existing is not None:
+                if body.title is not None and body.title != existing.title:
+                    updated = await asyncio.to_thread(
+                        worker_store.update_worker,
+                        existing.id,
+                        title=body.title,
+                    )
+                    if updated is None:
+                        raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
+                    existing = updated
                 return {
                     "object": "agent.task.session_adoption",
                     "session_id": session_id,
@@ -3602,6 +3699,7 @@ def create_agent_tasks_router(
                     session_id=session_id,
                     task=task,
                     conv=conv,
+                    title=body.title,
                     owner_user_id=_effective_user_id(user_id),
                 )
 
@@ -3646,7 +3744,7 @@ def create_agent_tasks_router(
         ) -> dict[str, Any]:
             """Bind a watcher-discovered external session to a task."""
             user_id = require_user(request, auth_provider)
-            task = await _get_task_or_404(body.task_id, user_id)
+            await _get_task_or_404(body.task_id, user_id)
             proposal = await asyncio.to_thread(
                 find_open_external_adoption_proposal,
                 task_event_store,

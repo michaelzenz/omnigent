@@ -66,3 +66,33 @@ def test_missing_agent_profile_is_rejected() -> None:
     with pytest.raises(OmnigentError) as exc:
         _resolve(None)
     assert exc.value.code == ErrorCode.INVALID_INPUT
+
+
+def test_manager_session_request_carries_role_label() -> None:
+    """Manager sessions are labeled as background roles for badge suppression."""
+    import asyncio
+
+    from omnigent.agent_tasks.bootstrap import _session_request_for_manager
+    from omnigent.agent_tasks.session_labels import MANAGER_ROLE_VALUE, ROLE_LABEL
+
+    manager = type(
+        "Manager",
+        (),
+        {
+            "id": "mgr1",
+            "owner_user_id": "__anonymous__",
+            "role_key": "manager:default",
+            "agent_profile_id": "agent-1",
+            "prompt_profile_id": None,
+            "title": "Release manager",
+            "host_id": "host-1",
+            "workspace": "~/",
+            "harness": "codex-native",
+            "model": None,
+        },
+    )()
+
+    request = asyncio.run(
+        _session_request_for_manager(manager, app_state=type("S", (), {"project_store": None})())
+    )
+    assert request.labels[ROLE_LABEL] == MANAGER_ROLE_VALUE

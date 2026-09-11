@@ -87,7 +87,20 @@ class TaskStore(ABC):
 
     @abstractmethod
     def move_to_queue_end(self, task_id: str) -> Task | None:
-        """Move a task to the end of the board queue."""
+        """Move a task toward the end of the board queue.
+
+        A resolved (``agent-resolved``) task sinks to the absolute end; a
+        live task parks directly above the first resolved task — the end of
+        the work section — instead of sinking under resolved cards.
+        """
+
+    @abstractmethod
+    def archive_expired_resolved(self, *, before_ts: int) -> int:
+        """Archive agent-resolved tasks resolved before ``before_ts``.
+
+        Returns the number archived. Only agent-resolved rows are touched —
+        live tasks are never swept by the GC.
+        """
 
     @abstractmethod
     def count_by_manager_role_key(

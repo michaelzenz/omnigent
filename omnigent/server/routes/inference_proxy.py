@@ -74,6 +74,67 @@ def _profile_auth(profile: str, workspace_origin: str) -> tuple[_RefreshingAuth,
     return _resolve_databricks_auth(profile)
 
 
+def _decode_error_body(
+    raw: bytes, response_headers: dict[str, str]
+) -> tuple[bytes, dict[str, str]]:
+    """Decode a gzipped upstream error body; drop the content-encoding header.
+
+    The gateway compresses error responses when the client offers
+    ``accept-encoding: gzip`` (httpx always does). Clients decode it
+    themselves, but the proxy needs the plaintext to log it and to detect the
+    body shape, and the re-wrapped body returned below is plain JSON.
+    """
+    encoding = ""
+    for key, value in response_headers.items():
+        if key.lower() == "content-encoding":
+            encoding = value.strip().lower()
+            break
+    if encoding in ("gzip", "x-gzip"):
+        try:
+            import gzip as _gzip
+
+            raw = _gzip.decompress(raw)
+        except Exception:  # noqa: BLE001 — undecodable body is forwarded as-is
+            return raw, response_headers
+    elif encoding == "deflate":
+        try:
+            import zlib as _zlib
+
+            raw = _zlib.decompress(raw)
+        except Exception:  # noqa: BLE001
+            return raw, response_headers
+    else:
+        return raw, response_headers
+    return raw, {
+        key: value for key, value in response_headers.items() if key.lower() != "content-encoding"
+    }
+
+
+def _rewrap_openai_error(surface: str, body_text: str) -> bytes | None:
+    """Re-wrap a gateway error body into the OpenAI error envelope.
+
+    OpenAI-family SDKs (which drive pi) read only ``body['error']`` from an
+    error response and discard everything else — a Databricks gateway body
+    shaped ``{"error_code": ..., "message": ...}`` therefore surfaces to the
+    model harness as ``"<status> status code (no body)"``, hiding the real
+    reason. Worse, pi's context-overflow auto-compaction keys off the error
+    text, so hiding it turns a recoverable overflow into a dead turn. Returns
+    the re-wrapped body, or ``None`` when the body already carries an
+    ``error`` object (OpenAI surfaces) or is not a JSON object.
+    """
+    if surface not in ("completions", "responses"):
+        return None
+    try:
+        parsed = json.loads(body_text)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, dict) or "error" in parsed:
+        return None
+    return json.dumps(
+        {"error": {"message": body_text, "type": "upstream_error", "code": "upstream_error"}}
+    ).encode()
+
+
 def create_inference_proxy_router(
     conversation_store: ConversationStore,
     *,
@@ -193,7 +254,10 @@ def create_inference_proxy_router(
                 _logger.warning("inference upstream error body read failed", exc_info=True)
             await response.aclose()
             await client.aclose()
-            body_text = bytes(error_body).decode("utf-8", errors="replace")
+            raw_error_body, response_headers = _decode_error_body(
+                bytes(error_body), response_headers
+            )
+            body_text = raw_error_body.decode("utf-8", errors="replace")
             _logger.warning(
                 "inference upstream error: status=%s surface=%s model=%s request_bytes=%s body=%s",
                 response.status_code,
@@ -202,6 +266,14 @@ def create_inference_proxy_router(
                 len(body),
                 body_text[:_ERROR_LOG_BODY_CHARS] or "<empty>",
             )
+            wrapped = _rewrap_openai_error(surface, body_text)
+            if wrapped is not None:
+                return Response(
+                    content=wrapped,
+                    status_code=response.status_code,
+                    headers=response_headers,
+                    media_type="application/json",
+                )
             if not body_text.strip():
                 # Say so explicitly rather than letting the client SDK report a
                 # bodyless error with no context.
@@ -227,7 +299,7 @@ def create_inference_proxy_router(
                     media_type="application/json",
                 )
             return Response(
-                content=bytes(error_body),
+                content=raw_error_body,
                 status_code=response.status_code,
                 headers=response_headers,
             )

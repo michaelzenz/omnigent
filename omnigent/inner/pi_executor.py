@@ -52,12 +52,12 @@ from typing import Any, Literal, NotRequired, Protocol, TypeAlias, TypedDict, ca
 from urllib.parse import urlparse as _urlparse
 
 from omnigent import model_catalog
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.inference_proxy import inference_surface_for_model
 from omnigent.inner.agent_env import clean_agent_env
 from omnigent.inner.native_attachments import parse_data_uri
 from omnigent.json_types import JsonObject as _JsonObject
 from omnigent.json_types import JsonValue
-from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.llms._usage_observer import notify_from_dict as _notify_usage_from_dict
 from omnigent.llms.context_window import lookup_model_context_window
 from omnigent.model_metadata import ModelWireAPI
@@ -174,11 +174,15 @@ class ToolExecutor(Protocol):
     ) -> Awaitable[dict[str, Any]] | dict[str, Any]: ...
 
 
-# Native-tool policy gate wired by :class:`PiExecutor`. Invoked with a native
-# (non-bridged) tool name + argument dict; returns ``{"block": bool, "reason":
-# str}``. Pi's native tools (e.g. ``read``, enabled for skill loading) execute
-# inside the Pi process and never traverse the bridged ``/mcp`` path, so the
-# ``tool_call`` extension hook routes them here for a TOOL_CALL policy verdict.
+# pi native built-ins exposed by default (``PiLaunchOptions.native_tools`` /
+# executor.config ``native_tools``; agents may opt out per config).
+# Mirrors pi's ``ToolName`` union minus ``powershell`` (Windows shell — spawns
+# pwsh, which does not exist on mac/linux runners). Colliding bridged tools
+# are dropped from the bridge extension (native wins); the bridged Pi-style
+# file tools were removed from the builtin catalog entirely.
+_PI_NATIVE_TOOL_NAMES = ("read", "bash", "edit", "write", "grep", "find", "ls")
+
+
 NativePolicyGate: TypeAlias = Callable[  # type: ignore[explicit-any]
     [str, dict[str, Any]],
     Awaitable[dict[str, Any]] | dict[str, Any],
@@ -1812,9 +1816,7 @@ def _split_pi_prompt(blocks: list[_JsonObject]) -> tuple[str, list[dict[str, str
     return "\n".join(text_parts), images
 
 
-def _window_history_tail(
-    messages: list[Message], window: int
-) -> list[Message]:
+def _window_history_tail(messages: list[Message], window: int) -> list[Message]:
     """Keep the last *window* turns, counted at user-message boundaries.
 
     A turn is the user message PLUS everything it triggers: the assistant
@@ -1825,7 +1827,7 @@ def _window_history_tail(
     user_indexes = [i for i, m in enumerate(messages) if m.get("role") == "user"]
     if window < 1 or len(user_indexes) <= window:
         return messages
-    return messages[user_indexes[-window]:]
+    return messages[user_indexes[-window] :]
 
 
 def _build_pi_prompt(
@@ -2686,7 +2688,7 @@ class PiExecutor(Executor):
                 workspace_url,
                 self._databricks_token,
             )
-        except Exception:  # noqa: BLE001 — catalog outage uses conservative routing
+        except Exception:
             logger.warning(
                 "Pi could not fetch Databricks model metadata; "
                 "the picker will show only the selected model",
@@ -2700,7 +2702,7 @@ class PiExecutor(Executor):
                 model_catalog.catalog_model_entries,
                 "databricks",
             )
-        except Exception:  # noqa: BLE001 — live availability remains authoritative
+        except Exception:
             logger.info(
                 "Pi could not enrich the live Databricks model list with MLflow metadata",
                 exc_info=True,
@@ -2780,6 +2782,9 @@ class PiExecutor(Executor):
         :param system_prompt: The system prompt this run will send, used to
             size the auto-compaction reserve alongside the tool schemas.
         """
+        if self._launch_options.native_tools:
+            # Native wins
+            tools = [t for t in tools if t.get("name") not in _PI_NATIVE_TOOL_NAMES]
         compaction_settings = {
             "compaction": {
                 "enabled": True,
@@ -2955,30 +2960,23 @@ class PiExecutor(Executor):
                     )
                 )
             extra_args.extend(["--extension", ext_path])
-            # Allowlist the bridged tool names. ``--no-tools`` (set in
-            # __init__) disables every tool by default in pi 0.68+;
-            # ``--tools`` adds specific names back. Without this pass
-            # the bridge extension's tools register but pi never
-            # exposes them to the LLM — symptom: model replies "I
-            # don't have a calculate tool available."
-            tool_names = [
-                name for name in (s.get("name") for s in tools) if isinstance(name, str) and name
-            ]
-            # Pi's ``formatSkillsForPrompt`` (system-prompt.js:33,112)
-            # gates skill-index injection on ``selectedTools`` including
-            # ``"read"``. Pi's native ``read`` is a local filesystem read
-            # that runs in-process and never traverses the bridged /mcp
-            # path — so enabling it lets the model see (and load) the skills
-            # we wired via ``--skill <path>``. As a native tool it would
-            # otherwise escape all guardrails, so the generated extension's
-            # ``tool_call`` hook routes it (and any other native tool) through
-            # an Omnigent TOOL_CALL policy verdict; see
-            # :func:`_generate_extension_js` and
-            # :meth:`PiExecutor._gate_native_tool`.
-            if self._skills_filter != "none":
-                tool_names.append("read")
-            if tool_names:
-                extra_args.extend(["--tools", ",".join(tool_names)])
+
+        # Allowlist the exposed tool names. ``--no-tools`` (set in __init__)
+        # disables every tool by default in pi 0.68+; ``--tools`` adds specific
+        # names back. Without this pass the bridge extension's tools register
+        # but pi never exposes them to the LLM — symptom: model replies "I
+        # don't have a calculate tool available."
+        tool_names = [
+            name for name in (s.get("name") for s in tools) if isinstance(name, str) and name
+        ]
+        if self._launch_options.native_tools:
+            tool_names.extend(_PI_NATIVE_TOOL_NAMES)
+        elif self._skills_filter != "none":
+            tool_names.append("read")
+        # Defensive dedupe, order-preserving.
+        tool_names = list(dict.fromkeys(tool_names))
+        if tool_names:
+            extra_args.extend(["--tools", ",".join(tool_names)])
 
         return PiSubprocessConfig(env=env, tmp_dir=tmp_dir, extra_args=extra_args)
 
@@ -2993,7 +2991,7 @@ class PiExecutor(Executor):
                 {"type": "get_available_thinking_levels", "id": "thinking_levels"},
                 "get_available_thinking_levels",
             )
-        except Exception:  # noqa: BLE001 — a probe failure must not sink the turn
+        except Exception:
             logger.debug("PiExecutor: get_available_thinking_levels failed", exc_info=True)
             return None
         data = response.get("data") if response else None
