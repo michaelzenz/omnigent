@@ -149,6 +149,7 @@ async def create_worktree_on_host(
     on_log: Callable[[str], None] | None = None,
     auto_reuse: bool = False,
     reuse_existing_branch: bool = False,
+    reuse_path: str | None = None,
     lease_owner: str | None = None,
     lease_seconds: int = 86_400,
 ) -> CreatedWorktree:
@@ -189,6 +190,7 @@ async def create_worktree_on_host(
                 auto_fetch_base=auto_fetch_base,
                 auto_reuse=auto_reuse,
                 reuse_existing_branch=reuse_existing_branch,
+                reuse_path=reuse_path,
                 lease_owner=lease_owner,
                 lease_seconds=lease_seconds,
             )

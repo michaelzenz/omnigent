@@ -547,6 +547,7 @@ class HostCreateWorktreeFrame:
     auto_fetch_base: bool = False
     auto_reuse: bool = False
     reuse_existing_branch: bool = False
+    reuse_path: str | None = None
     lease_owner: str | None = None
     lease_seconds: int = 86_400
 
@@ -1363,6 +1364,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "auto_fetch_base": frame.auto_fetch_base,
                 "auto_reuse": frame.auto_reuse,
                 "reuse_existing_branch": frame.reuse_existing_branch,
+                "reuse_path": frame.reuse_path,
                 "lease_owner": frame.lease_owner,
                 "lease_seconds": frame.lease_seconds,
             }
@@ -2095,6 +2097,7 @@ def _decode_create_worktree(msg: _JsonObject) -> HostCreateWorktreeFrame:
         auto_fetch_base=auto_fetch_base,
         auto_reuse=auto_reuse,
         reuse_existing_branch=reuse_existing_branch,
+        reuse_path=_optional_nullable_str(msg, "reuse_path"),
         lease_owner=_optional_nullable_str(msg, "lease_owner"),
         lease_seconds=lease_seconds,
     )

@@ -3432,6 +3432,7 @@ class HostProcess:
                         lease_owner=frame.lease_owner,
                         lease_seconds=frame.lease_seconds,
                         reuse_existing_branch=frame.reuse_existing_branch,
+                        reuse_path=frame.reuse_path,
                         on_log=_on_log,
                         on_reclaim=_on_reclaim,
                     )
