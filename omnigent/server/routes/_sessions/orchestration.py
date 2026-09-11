@@ -10824,6 +10824,43 @@ async def _fetch_model_options(
     return cached or []
 
 
+async def _refresh_session_git_branch(
+    *,
+    host_registry: Any,
+    conv: Any,
+) -> str | None:
+    """Best-effort current git branch for a session's workspace, from its host.
+
+    The conversation row's ``git_branch`` is written once at session
+    creation, so the composer status line goes stale the moment anyone
+    switches branches inside the worktree. This re-asks the host — the
+    ``host.stat`` frame already detects the branch (``git rev-parse
+    --abbrev-ref HEAD``) on directory paths — and returns the live branch,
+    or ``None`` when the session isn't host-bound, has no workspace, the
+    host is offline, or anything fails. Purely advisory: callers persist
+    the result opportunistically and must not block on it.
+    """
+    host_id = conv.host_id
+    workspace = conv.workspace
+    if host_id is None or not workspace:
+        return None
+    try:
+        from omnigent.server.routes._workspace_validation import _ask_host_stat
+
+        host_conn = host_registry.get(host_id)
+        if host_conn is None:
+            return None
+        result = await _ask_host_stat(
+            host_registry=host_registry, host_conn=host_conn, path=workspace
+        )
+    except Exception:  # noqa: BLE001 — advisory refresh must never break the snapshot
+        return None
+    if result.get("exists") is not True or result.get("type") != "directory":
+        return None
+    branch = result.get("git_branch")
+    return branch if isinstance(branch, str) and branch else None
+
+
 async def _get_session_snapshot(
     conv_store: ConversationStore,
     session_id: str,
@@ -10936,6 +10973,34 @@ async def _get_session_snapshot(
                 runner_client is not None and wrapper != _CURSOR_NATIVE_WRAPPER_LABEL_VALUE
             ),
         )
+
+    # Refresh the recorded git branch from the host. The row's value is
+    # written once at session creation, so it goes stale the moment anyone
+    # switches branches inside the worktree — and the composer status line
+    # reads it verbatim. On ``refresh_state`` fetches (browser bind/reload,
+    # the useSession hook) re-ask the host for the workspace's current
+    # branch; when it differs from the row, persist the correction (and
+    # mirror it onto ``conv`` so this snapshot reflects it immediately).
+    # Best-effort on every path: an offline host or a stat failure just
+    # leaves the recorded value alone.
+    live_git_branch: str | None = None
+    if refresh_state and conv.workspace:
+        from omnigent.server.routes._sessions.common import get_server_host_registry
+
+        _host_registry = get_server_host_registry()
+        if _host_registry is not None:
+            live_git_branch = await _refresh_session_git_branch(
+                host_registry=_host_registry, conv=conv
+            )
+            if live_git_branch is not None and live_git_branch != conv.git_branch:
+                await asyncio.to_thread(
+                    conv_store.set_host_id,
+                    session_id,
+                    conv.host_id,
+                    workspace=conv.workspace,
+                    git_branch=live_git_branch,
+                )
+                conv.git_branch = live_git_branch
 
     status = _session_status_from_cache(session_id)
     if status == "idle":

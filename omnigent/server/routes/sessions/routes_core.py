@@ -176,6 +176,7 @@ from omnigent.server.routes._sessions.orchestration import (
     _persist_model_change_note,
     _persist_routing_enabled_note,
     _publish_runner_recovered_status,
+    _refresh_session_git_branch,
     _run_managed_launch,
     _spawn_archive_stop,
     _spawn_worktree_creation_task,
@@ -192,6 +193,7 @@ from omnigent.server.schemas import (
     SessionAgentChangedEvent,
     SessionCreateRequest,
     SessionForkRequest,
+    SessionGitBranchResponse,
     SessionLabelsResponse,
     SessionList,
     SessionListItem,
@@ -1125,6 +1127,61 @@ def register_core_routes(
         )
 
     # ── GET /sessions ───────────────────────────────────────────
+
+    @router.get(
+        "/sessions/{session_id}/git-branch",
+        response_model=SessionGitBranchResponse,
+    )
+    async def get_session_git_branch(
+        request: Request,
+        response: Response,
+        session_id: str,
+    ) -> SessionGitBranchResponse:
+        """
+        Return the session workspace's current git branch, read live.
+
+        The conversation row's ``git_branch`` is written once at session
+        creation; this endpoint re-asks the session's host (the
+        ``host.stat`` frame detects the branch of a directory path) so a
+        branch switched *inside* the worktree is reflected. Best-effort:
+        an offline host or a non-git workspace returns the recorded value
+        (or ``None``) rather than erroring. When the live branch differs
+        from the recorded one, the correction is persisted.
+
+        :param request: The incoming FastAPI request (for auth).
+        :param session_id: Session/conversation identifier,
+            e.g. ``"conv_abc123"``.
+        :returns: ``SessionGitBranchResponse`` with the live branch (or
+            the recorded one when the host can't be asked).
+        """
+        response.headers["Cache-Control"] = "no-store"
+        user_id = _get_user_id(request, auth_provider)
+        access = await _require_access_and_level(
+            user_id, session_id, LEVEL_READ, permission_store, conversation_store
+        )
+        conv = access.conversation
+        if conv is None:
+            conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
+        if conv is None:
+            raise _session_not_found()
+
+        branch = conv.git_branch
+        from omnigent.server.routes._sessions.common import get_server_host_registry
+
+        host_registry = get_server_host_registry()
+        if host_registry is not None:
+            live = await _refresh_session_git_branch(host_registry=host_registry, conv=conv)
+            if live is not None and live != conv.git_branch:
+                await asyncio.to_thread(
+                    conversation_store.set_host_id,
+                    session_id,
+                    conv.host_id,
+                    workspace=conv.workspace,
+                    git_branch=live,
+                )
+                branch = live
+
+        return SessionGitBranchResponse(session_id=session_id, git_branch=branch)
 
     @router.get(
         "/sessions",

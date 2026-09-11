@@ -3135,9 +3135,11 @@ function setterForState(conversationId: string): ChatState | null {
  * Late-settling send work (a denied POST, a failure) must land on the
  * conversation it was sent to — not on whatever the user has since switched to.
  * `setActive` would write the visible conversation, which is how a stale
- * failure could clobber an unrelated chat's composer state.
+ * failure could clobber an unrelated chat's composer state. Exported for the
+ * same reason: out-of-band refreshers (the live git-branch poll) must write
+ * the conversation they fetched, not whatever is on screen.
  */
-function setterFor(conversationId: string | null): Setter {
+export function setterFor(conversationId: string | null): Setter {
   if (conversationId === null) return () => {};
   const entry = conversationRegistry.peek(conversationId);
   if (entry === undefined) return () => {};

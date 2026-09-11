@@ -6164,3 +6164,112 @@ async def test_sibling_environment_routes_are_not_gzipped(
 
     assert resp.status_code == 200
     assert "content-encoding" not in resp.headers
+
+
+# ---------------------------------------------------------------------------
+# GET /sessions/{id}/git-branch — live branch read from the host
+# ---------------------------------------------------------------------------
+
+
+class _FakeHostConnection:
+    """Minimal host connection for the git-branch endpoint tests."""
+
+    def __init__(self, stat_result: dict[str, object] | None = None) -> None:
+        self.stat_result = stat_result
+
+
+class _FakeHostRegistry:
+    """Host registry stub that serves canned ``host.stat`` results.
+
+    The endpoint imports ``_ask_host_stat`` lazily from
+    ``_workspace_validation``; that function needs a live registry with a
+    real frame round-trip, so the tests monkeypatch
+    ``_refresh_session_git_branch``'s dependency instead — see the fake
+    below. This stub exists for the direct-registry lookup contract.
+    """
+
+    def __init__(self, conn: _FakeHostConnection | None) -> None:
+        self._conn = conn
+
+    def get(self, host_id: str) -> _FakeHostConnection | None:
+        if host_id is None:
+            return None
+        return self._conn
+
+
+@pytest.mark.asyncio
+async def test_git_branch_returns_recorded_value_without_host(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No host registry (or offline host): fall back to the recorded branch."""
+    from omnigent.server.routes._sessions import common as sessions_common
+
+    monkeypatch.setattr(sessions_common, "get_server_host_registry", lambda: None)
+
+    resp = await client.get("/v1/sessions/79b22ebd2309e48fdeb450c65611d51b/git-branch")
+
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "no-store"
+    assert resp.json() == {"session_id": "79b22ebd2309e48fdeb450c65611d51b", "git_branch": None}
+
+
+@pytest.mark.asyncio
+async def test_git_branch_refreshes_and_persists_changed_branch(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A live branch different from the recorded one wins and is persisted."""
+    from omnigent.server.routes._sessions import common as sessions_common
+    from omnigent.server.routes.sessions import routes_core
+
+    store: _ConversationStore = app.state.test_conversation_store
+    conv = store._conversations["79b22ebd2309e48fdeb450c65611d51b"]
+    conv.host_id = "host_1"
+    conv.workspace = "/repo/worktree"
+    conv.git_branch = "old-branch"
+
+    async def fake_refresh(*, host_registry: object, conv: object) -> str:
+        return "switched-branch"
+
+    monkeypatch.setattr(routes_core, "_refresh_session_git_branch", fake_refresh)
+    monkeypatch.setattr(sessions_common, "get_server_host_registry", lambda: object())
+
+    resp = await client.get("/v1/sessions/79b22ebd2309e48fdeb450c65611d51b/git-branch")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "session_id": "79b22ebd2309e48fdeb450c65611d51b",
+        "git_branch": "switched-branch",
+    }
+    # The correction is persisted onto the conversation row.
+    assert conv.git_branch == "switched-branch"
+
+
+@pytest.mark.asyncio
+async def test_git_branch_unchanged_keeps_recorded_value(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live branch equal to the recorded one: no write, value returned."""
+    from omnigent.server.routes._sessions import common as sessions_common
+    from omnigent.server.routes.sessions import routes_core
+
+    store: _ConversationStore = app.state.test_conversation_store
+    conv = store._conversations["79b22ebd2309e48fdeb450c65611d51b"]
+    conv.host_id = "host_1"
+    conv.workspace = "/repo/worktree"
+    conv.git_branch = "same-branch"
+
+    async def fake_refresh(*, host_registry: object, conv: object) -> str:
+        return "same-branch"
+
+    monkeypatch.setattr(routes_core, "_refresh_session_git_branch", fake_refresh)
+    monkeypatch.setattr(sessions_common, "get_server_host_registry", lambda: object())
+
+    resp = await client.get("/v1/sessions/79b22ebd2309e48fdeb450c65611d51b/git-branch")
+
+    assert resp.status_code == 200
+    assert resp.json()["git_branch"] == "same-branch"
