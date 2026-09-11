@@ -723,8 +723,11 @@ def open_server_client(
         flow that re-mints on the Databricks Apps OAuth login redirect — keep it
         ``False``.
     :param transport: An httpx ``AsyncBaseTransport`` to substitute for the
-        default network transport. Its one production-adjacent use is injecting a
-        test transport (e.g. ``httpx.MockTransport``); ``None`` uses the default.
+        default network transport (e.g. ``httpx.MockTransport`` in tests). When
+        ``None`` and ``OMNIGENT_SERVER_UNIX_SOCKET`` is set (runner/host-daemon
+        contexts), the client dials the server through that unix socket —
+        remote hosts reach the server only via the forwarded socket, so a
+        plain TCP dial to the server URL is refused there.
     :param host_id: The host a request is scoped to, forwarded to
         :func:`databricks_request_headers` (which emits it as the slice-key only
         on a host-sharded mount and otherwise falls back to the runner's own
@@ -743,6 +746,13 @@ def open_server_client(
         kwargs["timeout"] = timeout
     if transport is not None:
         kwargs["transport"] = transport
+    else:
+        # Runner/host-daemon processes reach the server only through the
+        # forwarded unix socket (OMNIGENT_SERVER_UNIX_SOCKET); a raw TCP dial
+        # to the server URL is refused on remote hosts. No-op when unset.
+        from omnigent.server_transport import server_async_http_transport_kwargs
+
+        kwargs.update(server_async_http_transport_kwargs())
     return httpx.AsyncClient(
         base_url=server_url,
         headers=pinned,
