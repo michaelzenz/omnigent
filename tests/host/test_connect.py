@@ -1802,6 +1802,52 @@ def test_handle_stat_returns_directory_for_existing_dir(
     assert result.error is None
 
 
+def test_handle_stat_detects_git_branch_for_git_repo(tmp_path: Path) -> None:
+    """A directory inside a git repo returns its checked-out branch.
+
+    The host detects the branch during the stat round-trip (git
+    rev-parse on directory paths) so session create and the live
+    git-branch refresh learn it without a second round-trip. An
+    unborn ``HEAD`` must NOT leak as the literal name "HEAD" — the
+    handler treats it as "no branch".
+    """
+    import subprocess
+
+    host = _make_host_process()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            env={
+                **os.environ,
+                "GIT_AUTHOR_NAME": "t",
+                "GIT_AUTHOR_EMAIL": "t@t",
+                "GIT_COMMITTER_NAME": "t",
+                "GIT_COMMITTER_EMAIL": "t@t",
+            },
+        )
+
+    git("init", "-b", "feature/detected-branch")
+    git("commit", "--allow-empty", "-m", "init")
+
+    result = host._handle_stat(HostStatFrame(request_id="r_branch", path=str(repo)))
+
+    assert result.exists is True
+    assert result.git_branch == "feature/detected-branch"
+
+    # Non-git directories carry no branch rather than a junk value.
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    result = host._handle_stat(HostStatFrame(request_id="r_plain", path=str(plain)))
+    assert result.exists is True
+    assert result.git_branch is None
+
+
 def test_handle_stat_returns_file_for_existing_file(
     tmp_path: Path,
 ) -> None:

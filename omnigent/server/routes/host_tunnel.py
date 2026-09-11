@@ -751,6 +751,7 @@ async def _receive_loop(
                         "type": frame.type,
                         "canonical_path": frame.canonical_path,
                         "error": frame.error,
+                        "git_branch": frame.git_branch,
                     }
                 )
             continue
