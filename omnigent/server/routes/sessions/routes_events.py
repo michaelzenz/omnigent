@@ -3029,6 +3029,34 @@ def register_events_routes(
         deleted = await conversation_store.delete_conversation(session_id)
         if not deleted:
             raise _session_not_found()
+        # PuppyGarden workers bound to this session (worker.target_id) die
+        # with it: soft-delete every lane so the dispatcher never dispatches
+        # another item into a session that no longer exists.
+        worker_store_for_delete = getattr(request.app.state, "worker_store", None)
+        if worker_store_for_delete is not None:
+
+            def _soft_delete_workers_for_session() -> int:
+                workers = worker_store_for_delete.list_workers_by_target_id(session_id)
+                count = 0
+                for worker in workers:
+                    if worker.state == "deleted":
+                        continue
+                    if (
+                        worker_store_for_delete.update_worker(
+                            worker.id, state="deleted"
+                        )
+                        is not None
+                    ):
+                        count += 1
+                return count
+
+            deleted_workers = await asyncio.to_thread(_soft_delete_workers_for_session)
+            if deleted_workers:
+                _logger.info(
+                    "Soft-deleted %d PuppyGarden worker(s) bound to deleted session %s",
+                    deleted_workers,
+                    session_id,
+                )
         # The session is gone, so is its launch-progress state. Failed
         # launches are retained in the cache for reload visibility while
         # the session exists; without this eviction every deleted

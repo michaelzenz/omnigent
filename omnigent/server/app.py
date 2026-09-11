@@ -2016,6 +2016,7 @@ def create_app(
     app.state.sandbox_config = sandbox_config
     app.state.project_store = project_store
     app.state.manager_store = manager_store
+    app.state.worker_store = worker_store
     app.state.branding_snapshot = branding_snapshot
     app.state.feature_flags = resolved_feature_flags
     # GitHub App integration: enabled only when both the config and the

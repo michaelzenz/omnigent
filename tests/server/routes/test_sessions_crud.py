@@ -8,11 +8,13 @@ the stores.
 
 from __future__ import annotations
 
+import uuid
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
 import pytest_asyncio
+from fastapi import FastAPI
 
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import USER_SESSION_TITLE_MAX_CHARS
@@ -745,3 +747,44 @@ async def test_list_sessions_pinned_filter(
     assert plain.id not in ids
     # A pin belonging to another user must not appear for the caller.
     assert other_user_pin.id not in ids
+
+
+# ── DELETE /v1/sessions/{id} soft-deletes PuppyGarden workers ────────
+
+
+async def test_delete_session_soft_deletes_bound_workers(
+    client: httpx.AsyncClient,
+    session_id: str,
+    app: FastAPI,
+    db_uri: str,
+) -> None:
+    """Deleting a session soft-deletes every worker lane bound to it.
+
+    worker.target_id holds the worker's session id; a lane that outlives
+    its session would let the dispatcher dispatch into a dead session.
+    """
+    from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
+
+    worker_store = SqlAlchemyWorkerStore(db_uri)
+    live = worker_store.create_worker(
+        uuid.uuid4().hex, task_id=uuid.uuid4().hex, target_id=session_id
+    )
+    second = worker_store.create_worker(
+        uuid.uuid4().hex, task_id=uuid.uuid4().hex, target_id=session_id
+    )
+    already_deleted = worker_store.create_worker(
+        uuid.uuid4().hex, task_id=uuid.uuid4().hex, target_id=session_id, state="deleted"
+    )
+    unrelated = worker_store.create_worker(
+        uuid.uuid4().hex, task_id=uuid.uuid4().hex, target_id="conv-unrelated"
+    )
+
+    resp = await client.delete(f"/v1/sessions/{session_id}")
+    assert resp.status_code == 200
+
+    assert worker_store.get_worker(live.id).state == "deleted"
+    assert worker_store.get_worker(second.id).state == "deleted"
+    # Already-deleted and unrelated lanes are untouched.
+    assert worker_store.get_worker(already_deleted.id).state == "deleted"
+    assert worker_store.get_worker(unrelated.id).state == "uninitialized"
+    del app
