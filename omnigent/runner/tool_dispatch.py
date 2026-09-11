@@ -95,10 +95,6 @@ from omnigent.tools.builtins.os_env import (
     SysOsShellTool,
     SysOsWriteTool,
 )
-from omnigent.tools.builtins.pi_file_tools import (
-    build_pi_file_tools,
-    execute_pi_file_tool,
-)
 from omnigent.tools.builtins.puppygarden_api import (
     PUPPYGARDEN_CALLER_CONVERSATION_HEADER,
     PuppyGardenApiTool,
@@ -725,7 +721,6 @@ def build_os_env_tool_schemas() -> list[_JsonObject]:
                 SysOsWriteTool(_os_env),
                 SysOsEditTool(_os_env),
                 SysOsShellTool(_os_env),
-                *build_pi_file_tools(_os_env),
             ):
                 tool_schema = _string_object_dict(tool.get_schema())
                 function = (
@@ -5906,7 +5901,7 @@ async def _collect_sub_agents(
                     # Exclude the caller itself from its own sibling list.
                     if entry["conversation_id"] != conversation_id:
                         result.append(entry)
-        except Exception:  # noqa: BLE001
+        except Exception:
             _logger.debug(
                 "sys_session_list sibling enrichment failed for parent %s",
                 parent_id,
@@ -7154,24 +7149,6 @@ async def _execute_os_env_tool(
                 command=cast("str", args.get("command", "")),
                 timeout=cast("int | None", args.get("timeout")),
             )
-        elif tool_name in {"read", "write", "edit", "bash", "grep", "find", "ls"}:
-            if tool_name in {"write", "edit"}:
-                _path = cast("str", args.get("path", ""))
-                if filesystem_registry is not None and conversation_id is not None:
-                    await _seed_os_env_snapshot(
-                        os_env, _path, filesystem_registry, conversation_id
-                    )
-            result = await execute_pi_file_tool(tool_name, args, os_env)
-            if (
-                tool_name in {"write", "edit"}
-                and filesystem_registry is not None
-                and conversation_id is not None
-            ):
-                if tool_name == "write" and result.get("created") is True:
-                    status = "created"
-                else:
-                    status = "modified"
-                filesystem_registry.record_change(_path, status, conversation_id)
         else:
             return f"Error: {tool_name} not implemented"
 
@@ -8247,7 +8224,7 @@ async def _evaluate_async_tool_call_policy(
             evaluation_id,
             extra={"session_id": conversation_id},
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         _logger.warning(
             "async PHASE_TOOL_CALL policy evaluate failed for %s; denying",
             evaluation_id,

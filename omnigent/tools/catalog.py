@@ -30,7 +30,6 @@ class ToolGroup:
 GROUPS: list[ToolGroup] = [
     ToolGroup(id="skills", title="Skills", order=10),
     ToolGroup(id="files_content", title="Files & content", order=20),
-    ToolGroup(id="pi_file_interaction", title="File interaction — Pi", order=25),
     ToolGroup(id="agents_sessions", title="Agents & sessions", order=30),
     ToolGroup(id="computer_terminal", title="Computer & terminal", order=40),
     ToolGroup(id="legacy_os_interaction", title="Legacy File Interaction", order=45),
@@ -159,49 +158,6 @@ TOOLS: list[ToolCatalogEntry] = [
         "Download agent bundles",
         "Download a session's agent bundle for inspection or forking.",
         "agents_sessions",
-    ),
-    # File interaction — Pi (new Pi-compatible tools)
-    ToolCatalogEntry(
-        "read",
-        "Read files",
-        "Read a text file with inclusive start/end line ranges.",
-        "pi_file_interaction",
-    ),
-    ToolCatalogEntry(
-        "write",
-        "Write files",
-        "Write full file contents, creating parent directories.",
-        "pi_file_interaction",
-    ),
-    ToolCatalogEntry(
-        "edit",
-        "Edit files",
-        "Perform exact text replacements in a file, with batch support.",
-        "pi_file_interaction",
-    ),
-    ToolCatalogEntry(
-        "bash",
-        "Run shell commands",
-        "Run a shell command in the OS environment.",
-        "pi_file_interaction",
-    ),
-    ToolCatalogEntry(
-        "grep",
-        "Search file contents",
-        "Search file contents for a pattern with context and glob filtering.",
-        "pi_file_interaction",
-    ),
-    ToolCatalogEntry(
-        "find",
-        "Find files",
-        "Find files and directories matching a glob pattern.",
-        "pi_file_interaction",
-    ),
-    ToolCatalogEntry(
-        "ls",
-        "List directories",
-        "List directory entries (non-recursive), including dotfiles.",
-        "pi_file_interaction",
     ),
     # Computer & terminal
     ToolCatalogEntry(
