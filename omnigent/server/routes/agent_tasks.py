@@ -2363,6 +2363,7 @@ def create_agent_tasks_router(
             user_id = get_user_id(request, auth_provider)
             await _get_task_or_404(task_id, user_id)
             workers = await asyncio.to_thread(worker_store.list_workers_for_task, task_id)
+            workers = [w for w in workers if w.state != "deleted"]
             return {
                 "object": "list",
                 "data": [_worker_to_response(w) for w in workers],

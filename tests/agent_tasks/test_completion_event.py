@@ -19,11 +19,11 @@ from omnigent.agent_tasks.completion import (
     configure_task_completion,
     notify_worker_session_status,
 )
-from omnigent.agent_tasks.maintenance_gc import MaintenanceGcConfig, run_maintenance_gc
 from omnigent.agent_tasks.event_types import WORKER_EXECUTION_FINISHED_EVENT_TYPE
 from omnigent.agent_tasks.execution_reconciler import (
     reconcile_running_executions_once,
 )
+from omnigent.agent_tasks.maintenance_gc import MaintenanceGcConfig, run_maintenance_gc
 from omnigent.agent_tasks.notices import _format_worker_notice
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import MessageData, NewConversationItem
@@ -532,3 +532,33 @@ async def test_run_maintenance_gc_purges_old_reconciled(
         await run_maintenance_gc(event_store, queue_store, config=config)
 
     assert len(event_store.list_events(state="reconciled", task_id=seeded["task_id"])) == 0
+
+
+@pytest.mark.asyncio
+async def test_status_hooks_skip_deleted_workers(completion_setup: dict) -> None:
+    """A teardown-time status event must not resurrect a deleted lane.
+
+    Deleting a session soft-deletes its bound worker (state='deleted').
+    The delete path stops the session first, so a late idle/failed status
+    event for that session can arrive after the soft-delete. The status
+    hooks must no-op instead of flipping the worker back to idle/busy —
+    that would resurrect a ghost lane bound to a session that no longer
+    exists.
+    """
+    from omnigent.agent_tasks.completion import observe_worker_session_status
+
+    worker_store: SqlAlchemyWorkerStore = completion_setup["worker_store"]
+    worker_conv_id = completion_setup["worker_conv_id"]
+    worker = worker_store.get_by_target_id(worker_conv_id)
+    assert worker is not None
+    worker_store.update_worker(worker.id, state="deleted")
+
+    observed = await observe_worker_session_status(worker_conv_id, "idle")
+    assert observed is False
+
+    handled = await notify_worker_session_status(worker_conv_id, "idle", output="late settle")
+    assert handled is False
+
+    refreshed = worker_store.get_worker(worker.id)
+    assert refreshed is not None
+    assert refreshed.state == "deleted"
