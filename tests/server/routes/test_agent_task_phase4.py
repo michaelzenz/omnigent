@@ -576,3 +576,52 @@ async def test_worker_title_route_is_removed(client: httpx.AsyncClient) -> None:
     )
 
     assert response.status_code == 404
+
+
+async def test_list_task_workers_excludes_deleted(
+    client: httpx.AsyncClient,
+    worker_provider_id: str,
+    manager_id: str,
+    db_uri: str,
+) -> None:
+    """Soft-deleted lanes (session deleted) vanish from the workers list.
+
+    Session delete soft-deletes (state='deleted') every worker bound to
+    the deleted session; listing the task's workers must not return them,
+    or a deleted session's lane keeps appearing under the task.
+    """
+    task_id = await _bootstrapped_task(client, db_uri, manager_id)
+    worker_store = SqlAlchemyWorkerStore(db_uri)
+
+    deleted_worker_id = _uid("phase4_deleted_lane_worker")
+    worker_store.create_worker(
+        deleted_worker_id,
+        task_id,
+        kind="managed",
+        provider_name="p",
+        provider_configuration=json.dumps({"launch": {}}),
+        state="idle",
+        target_id=_uid("phase4_deleted_lane_session"),
+    )
+    live_worker_id = _uid("phase4_live_lane_worker")
+    worker_store.create_worker(
+        live_worker_id,
+        task_id,
+        kind="managed",
+        provider_name="p",
+        provider_configuration=json.dumps({"launch": {}}),
+        state="idle",
+        target_id=_uid("phase4_live_lane_session"),
+    )
+    worker_store.update_worker(deleted_worker_id, state="deleted")
+
+    listed = await client.get(f"/v1/agent-tasks/{task_id}/workers")
+    assert listed.status_code == 200, listed.text
+    listed_ids = {w["worker_id"] for w in listed.json()["data"]}
+    assert live_worker_id in listed_ids
+    assert deleted_worker_id not in listed_ids
+
+    dashboard = await client.get(f"/v1/agent-tasks/{task_id}/dashboard")
+    assert dashboard.status_code == 200, dashboard.text
+    lane_ids = {w["worker_id"] for w in dashboard.json()["workers"]}
+    assert deleted_worker_id not in lane_ids

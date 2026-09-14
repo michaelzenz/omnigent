@@ -77,6 +77,8 @@ async def observe_worker_session_status(
     worker = _context.worker_store.get_by_target_id(session_id)
     if worker is None or worker.kind not in {WORKER_KIND_MANAGED, WORKER_KIND_INTERNAL}:
         return False
+    if worker.state == "deleted":
+        return False
     if status == "idle":
         state = "idle"
     elif status == "failed":
@@ -118,6 +120,8 @@ async def notify_worker_session_status(
         return False
     worker = _context.worker_store.get_by_target_id(session_id)
     if worker is None or worker.kind != WORKER_KIND_MANAGED:
+        return False
+    if worker.state == "deleted":
         return False
     execution = _context.task_event_store.get_execution_by_conversation_id(session_id)
     if execution is None:
@@ -274,7 +278,7 @@ async def _emit_worker_execution_finished_event(
                 state="reconciled",
                 processed_at=now_epoch(),
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
             _logger.warning(
                 "failed to enqueue manager notice for event %s; "
                 "packager will pick it up on next poll",

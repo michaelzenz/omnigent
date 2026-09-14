@@ -34,7 +34,7 @@ def build_task_dashboard(
     item_by_id = {item.id: item for item in items}
     workers = worker_store.list_workers_for_task(task.id)
     # Exclude terminated workers — they're untracked but kept for audit.
-    workers = [w for w in workers if w.state != "terminated"]
+    workers = [w for w in workers if w.state not in ("terminated", "deleted")]
     worker_by_id = {worker.id: worker for worker in workers}
 
     worker_ids = set(worker_by_id)

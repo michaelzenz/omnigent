@@ -176,3 +176,41 @@ def test_worker_lane_rows_and_state(db_uri: str) -> None:
     # Finished work stays on the execution history row, not as a task-item row.
     done_titles = {row["item"]["title"] for row in lane["rows"] if row["kind"] == "item"}
     assert done_item.title not in done_titles
+
+
+def test_dashboard_excludes_deleted_workers(db_uri: str) -> None:
+    """A worker soft-deleted with its session must not render a lane.
+
+    Deleting a session soft-deletes (state='deleted') every worker bound
+    to it via target_id. The dashboard is the task card's read model —
+    a deleted lane can never dispatch again, so rendering it would
+    resurrect a ghost lane for a session that no longer exists.
+    """
+    task_store = SqlAlchemyTaskStore(db_uri)
+    item_store = SqlAlchemyTaskItemStore(db_uri)
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    worker_store = SqlAlchemyWorkerStore(db_uri)
+    task_id = _uid("task_deleted_lane")
+    task_store.create(
+        task_id,
+        "Deleted lane task",
+        "deleted lane goal",
+        state="active",
+        manager_id=_uid("mgr_conv_deleted"),
+    )
+    task = task_store.get(task_id)
+    assert task is not None
+
+    live = worker_store.create_worker(_uid("worker_live"), task_id, state="idle")
+    doomed = worker_store.create_worker(
+        _uid("worker_doomed"),
+        task_id,
+        target_id=_uid("deleted_session"),
+        state="idle",
+    )
+    worker_store.update_worker(doomed.id, state="deleted")
+
+    dashboard = build_task_dashboard(task, event_store, item_store, worker_store)
+    lane_ids = {lane["worker_id"] for lane in dashboard["workers"]}
+    assert live.id in lane_ids
+    assert doomed.id not in lane_ids
