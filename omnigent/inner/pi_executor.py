@@ -2574,6 +2574,7 @@ class PiExecutor(Executor):
                 return {
                     "summary": result.get("summary", ""),
                     "total_tokens": result.get("estimatedTokensAfter", 0),
+                    "summary_model": state.model,
                     "compacted_messages": _pi_messages_to_canonical(messages),
                     "reason": event.get("reason"),
                     "first_kept_entry_id": result.get("firstKeptEntryId"),

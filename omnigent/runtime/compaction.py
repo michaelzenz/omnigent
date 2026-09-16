@@ -362,8 +362,11 @@ async def summarize_history(
 
     When *runner_client* is provided the summarization LLM call is
     delegated to the runner's ``POST /v1/summarize`` endpoint so the
-    runner's credentials are used instead of the Omnigent server's. Falls
-    back to *llm_client* when no runner client is configured.
+    runner's credentials are used instead of the Omnigent server's. If
+    the runner call fails, the call is retried through *llm_client* —
+    the server's own credentials with the same model — before compaction
+    degrades. Falls back to *llm_client* directly when no runner client
+    is configured.
 
     :param messages_to_summarize: The messages outside the recent
         window to summarise, as Responses API input dicts. By the
@@ -386,13 +389,22 @@ async def summarize_history(
         ``"token_count"`` (approximate token count).
     """
     if runner_client is not None:
-        return await _summarize_via_runner_uncached(
-            runner_client,
-            messages_to_summarize,
-            model,
-            connection,
-            conversation_id=conversation_id,
-        )
+        try:
+            return await _summarize_via_runner_uncached(
+                runner_client,
+                messages_to_summarize,
+                model,
+                connection,
+                conversation_id=conversation_id,
+            )
+        except Exception as exc:
+            if llm_client is None:
+                raise
+            _logger.warning(
+                "Runner summarization failed (%s); retrying through the "
+                "server's own LLM client with the same model",
+                exc,
+            )
     return await _summarize_history_uncached(
         messages_to_summarize,
         llm_client,
@@ -514,10 +526,11 @@ def compaction_to_history_items(
             item_type = msg.get("type", "message")
             if item_type == "message":
                 msg_role = msg.get("role", "user")
+                agent = (data.model or "unknown") if msg_role == "assistant" else None
                 item_data: MessageData | FunctionCallData | FunctionCallOutputData = MessageData(
                     role=msg_role,
                     content=msg.get("content", []),
-                    agent=data.model if msg_role == "assistant" else None,
+                    agent=agent,
                 )
             elif item_type == "function_call":
                 arguments = msg.get("arguments", {})

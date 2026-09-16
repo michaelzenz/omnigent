@@ -1007,6 +1007,52 @@ async def test_summarize_history_validates_runner_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_summarize_history_falls_back_to_server_client_when_runner_fails() -> None:
+    """A failing runner summarize is retried through the server's LLM client.
+
+    The runner resolves its own credentials for /v1/summarize; when that
+    resolution fails (e.g. an expired Databricks CLI profile on a remote
+    host), compaction must retry through the server's own client with the
+    same model instead of degrading to lossy truncation.
+    """
+
+    class _FailingRunnerClient:
+        async def post(self, *_args: object, **_kwargs: object) -> object:
+            raise RuntimeError("runner credentials could not be resolved")
+
+    summary_text = "Server-side summary."
+    stub_llm = _ReturnsTextClient(text=summary_text, model="openai/gpt-4o")
+
+    result = await summarize_history(
+        [{"role": "user", "content": "prior conversation"}],
+        stub_llm,
+        "openai/gpt-4o",
+        runner_client=_FailingRunnerClient(),
+    )
+
+    assert result["text"] == summary_text
+    assert result["token_count"] > 0
+    assert stub_llm.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_summarize_history_runner_failure_without_server_client_raises() -> None:
+    """No server client to fall back to — the runner failure propagates."""
+
+    class _FailingRunnerClient:
+        async def post(self, *_args: object, **_kwargs: object) -> object:
+            raise RuntimeError("runner credentials could not be resolved")
+
+    with pytest.raises(RuntimeError, match="runner credentials"):
+        await summarize_history(
+            [{"role": "user", "content": "prior conversation"}],
+            None,
+            "openai/gpt-4o",
+            runner_client=_FailingRunnerClient(),
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "payload",
     [
@@ -1015,10 +1061,15 @@ async def test_summarize_history_validates_runner_response() -> None:
         {"text": "Runner summary", "token_count": True},
     ],
 )
-async def test_summarize_history_rejects_malformed_runner_response(
+async def test_summarize_runner_helper_rejects_malformed_response(
     payload: object,
 ) -> None:
-    """Runner summarization fails clearly when required fields are malformed."""
+    """The runner helper fails clearly when required fields are malformed.
+
+    Targets the helper directly: through ``summarize_history`` a malformed
+    runner response now triggers the server-client fallback instead of
+    surfacing.
+    """
 
     class _Response:
         def raise_for_status(self) -> None:
@@ -1031,12 +1082,13 @@ async def test_summarize_history_rejects_malformed_runner_response(
         async def post(self, *_args: object, **_kwargs: object) -> _Response:
             return _Response()
 
+    from omnigent.runtime.compaction import _summarize_via_runner_uncached
+
     with pytest.raises(RuntimeError, match="invalid summary fields"):
-        await summarize_history(
+        await _summarize_via_runner_uncached(
+            _RunnerClient(),
             [{"role": "user", "content": "prior conversation"}],
-            _RaisesIfCalled(),
             "openai/gpt-4o",
-            runner_client=_RunnerClient(),
         )
 
 
@@ -1184,6 +1236,39 @@ def test_compaction_to_history_items_with_compacted_messages_sets_agent() -> Non
     # Third item is a user message, so agent stays None.
     assert isinstance(result[2].data, MessageData)
     assert result[2].data.role == "user"
+
+
+def test_compaction_to_history_items_falls_back_without_model() -> None:
+    """
+    Legacy compaction rows persisted model=None (e.g. Pi compact before
+    summary_model was threaded). Replaying their assistant messages must
+    fall back to a placeholder agent instead of failing the whole history
+    load with the MessageData validator's "assistant messages require
+    'agent'" error.
+    """
+    compaction_item = ConversationItem(
+        id="cmp_legacy",
+        type="compaction",
+        status="completed",
+        response_id="task_003",
+        created_at=3000,
+        data=CompactionData(
+            summary="Summary.",
+            last_item_id="msg_end",
+            model=None,
+            token_count=10,
+            compacted_messages=[
+                {"role": "user", "content": [{"type": "input_text", "text": "Hello"}]},
+                {"role": "assistant", "content": [{"type": "output_text", "text": "Hi there"}]},
+            ],
+        ),
+    )
+
+    result = compaction_to_history_items(compaction_item)
+
+    assert isinstance(result[1].data, MessageData)
+    assert result[1].data.role == "assistant"
+    assert result[1].data.agent  # placeholder, non-None so validation passes
 
 
 def test_count_tokens_returns_positive_integer() -> None:
