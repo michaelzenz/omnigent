@@ -11,8 +11,9 @@ The runner's dispatch contract (verified in
 
 * Native harnesses inject ``/compact`` into the vendor TUI and return
   **200** on success or **5xx** on failure.
-* SDK harnesses return **204** (no-op) because their context is controlled
-  entirely by the vendor harness; the server surfaces a 400 error.
+* SDK harnesses return **204** (no-op): their live context is controlled
+  entirely by the vendor harness, so the server falls back to
+  server-side compaction of the stored history.
 * A failed injection (pane not attached) returns **503**.
 
 These tests pin the Omnigent side of that contract by stubbing the runner's
@@ -26,6 +27,7 @@ from typing import Any
 
 import httpx
 import pytest
+from fastapi import FastAPI
 
 from omnigent.runtime.compaction import CompactionResult
 from tests.server.helpers import create_test_agent
@@ -138,25 +140,31 @@ async def test_compact_skips_omnigent_compaction_when_runner_handles_it(
     )
 
 
-async def test_compact_returns_error_when_runner_noops(
+async def test_compact_runner_noop_falls_back_to_server_side_compaction(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
-    A 204 from the runner (SDK harness) surfaces a clear 400 error.
+    A 204 from the runner (SDK harness no-op) falls back to AP-side
+    compaction of the stored history.
 
-    SDK harnesses own their own context; the server cannot compact on their
-    behalf. The 204 no-op signals "not handled here" and the server must
-    reject the request rather than attempting AP-side compaction.
+    SDK harnesses own their live context, so the runner's 204 means
+    "not handled here" — but the stored history is still compactable
+    in-process (the fallback restored by "fall back to server-side
+    compaction when the runner can't compact"). The server must run
+    its own compaction and return success, not reject the request.
     """
     from omnigent.runtime import set_runner_client
 
-    async def _must_not_run(**_: Any) -> CompactionResult:
-        raise AssertionError("compact_conversation_now must not run when the runner returned 204")
+    compaction_calls: list[dict[str, Any]] = []
+
+    async def _record_compaction(**kwargs: Any) -> CompactionResult:
+        compaction_calls.append(kwargs)
+        return CompactionResult(messages=[], summary_metadata=None, total_tokens=0)
 
     monkeypatch.setattr(
         "omnigent.runtime.workflow.compact_conversation_now",
-        _must_not_run,
+        _record_compaction,
     )
 
     runner, captured = _fake_runner_returning(204)
@@ -172,21 +180,26 @@ async def test_compact_returns_error_when_runner_noops(
         await runner.aclose()
         set_runner_client(None)
 
-    assert resp.status_code == 400, resp.text
-    assert "/compact is not available" in resp.text
-    # Control was still forwarded before the error.
+    assert resp.status_code == 202, resp.text
+    assert resp.json() == {"queued": False}, resp.text
+    # Control was forwarded before the fallback, and the fallback ran
+    # exactly once against the stored history.
     assert captured == [{"type": "compact"}], (
-        f"AP server must forward compact to the runner before returning the error; "
-        f"got {captured!r}."
+        f"AP server must forward compact to the runner before the fallback; got {captured!r}."
+    )
+    assert len(compaction_calls) == 1, (
+        f"204 no-op must fall back to exactly one server-side compaction; "
+        f"got {len(compaction_calls)}."
     )
 
 
-async def test_compact_sdk_harness_no_runner_returns_not_available(
+async def test_compact_sdk_harness_no_runner_without_llm_returns_not_available(
     client: httpx.AsyncClient,
 ) -> None:
     """
-    A compact request for an SDK-harness session with no runner returns a
-    clear 400 "not available for this session type" error.
+    A compact request for an SDK-harness session with no runner and no
+    LLM model falls back to server-side compaction, which 400s with a
+    clear "not available for this session type" error.
     """
     agent = await create_test_agent(
         client,
@@ -202,7 +215,7 @@ async def test_compact_sdk_harness_no_runner_returns_not_available(
     )
 
     assert resp.status_code == 400, resp.text
-    assert "/compact is not available" in resp.text
+    assert "/compact is unavailable" in resp.text
 
 
 async def test_compact_errors_when_runner_injection_fails(
@@ -290,6 +303,138 @@ async def test_compact_native_session_no_runner_returns_reconnect_error(
     assert resp.status_code == 503, resp.text
     assert "Reconnect the session" in resp.text
     assert "llm.model" not in resp.text
+
+
+# ── Unbound Pi session: /compact auto-resumes the runner ─────────────────
+#
+# The onih-pi fork harness compacts inside its live runner harness
+# (POST /v1/sessions/{id}/compact-harness). When the session has no
+# reachable runner — never bound, or bound-but-offline — the router
+# raises instead of returning ``None`` ("conversation '...' is not
+# bound to a runner; resume the session to bind a registered runner"),
+# which used to surface verbatim to the user. The compact branch must
+# treat that miss as "no runner yet" and hand the session to the wake
+# path, exactly like the message-dispatch path does.
+
+
+async def test_compact_unbound_pi_session_wakes_instead_of_binding_409(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+) -> None:
+    """An unbound Pi session's /compact attempts the auto-resume wake.
+
+    The router's raw "not bound to a runner" 409 must not reach the
+    user: the compact branch catches the unbound router miss and hands
+    the session to the wake path. With nothing to wake (no host, no
+    registered runner) the wake correctly gives up — but with the
+    designed "reconnect first" 503, not the confusing binding 409.
+    """
+    from omnigent.runtime import _globals, set_runner_client, set_runner_router
+
+    agent = await create_test_agent(client, name="onih-pi", include_llm=False)
+    sid = await _create_session(client, agent["id"])
+
+    # Production parity: the app's real router raising the exact
+    # "not bound to a runner" CONFLICT for this unbound session.
+    prior_router = _globals._runner_router
+    prior_client = _globals._runner_client
+    set_runner_router(app.state.runner_router)
+    set_runner_client(None)
+    try:
+        resp = await client.post(
+            f"/v1/sessions/{sid}/events",
+            json={"type": "compact", "data": {}},
+        )
+    finally:
+        set_runner_router(prior_router)
+        set_runner_client(prior_client)
+
+    assert resp.status_code == 503, resp.text
+    assert "Can't compact this session while its runner is offline" in resp.text
+    assert "not bound to a runner" not in resp.text
+
+
+async def test_compact_unbound_pi_session_auto_resumes_runner_and_compacts(
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wakeable Pi session compacts against its runner after auto-resume.
+
+    The runner is bound-but-offline (router raises RUNNER_UNAVAILABLE),
+    then the wake resolves a live client: the compact must complete on
+    the runner (compact-harness POST) and return 202, not fail with the
+    offline/binding error.
+    """
+    from omnigent.runtime import _globals, set_runner_client, set_runner_router
+    from omnigent.server.routes import sessions as sessions_routes
+    from omnigent.stores.conversation_store.sqlalchemy_store import (
+        SqlAlchemyConversationStore,
+    )
+
+    runner_id = "runner_fake_compact_wake"
+    compact_harness_calls: list[str] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        """Serve the wake handshake, relay heartbeat, and compact-harness."""
+        path = request.url.path
+        if request.method == "GET" and path.endswith("/stream"):
+            # Relay readiness: one session.heartbeat frame, then end.
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=b'data: {"type": "session.heartbeat"}\n\n',
+            )
+        if request.method == "POST" and path == "/v1/sessions":
+            # Session-init handshake.
+            return httpx.Response(200, json={})
+        if request.method == "POST" and path.endswith("/compact-harness"):
+            compact_harness_calls.append(path)
+            return httpx.Response(200, json={"status": "ok"})
+        return httpx.Response(204)
+
+    fake_runner = httpx.AsyncClient(
+        transport=httpx.MockTransport(_handler),
+        base_url="http://runner",
+    )
+
+    call_count = {"n": 0}
+
+    async def _stub_get_runner_client(session_id, runner_router=None, *, conversation=None):
+        """First call (forward) finds no runner; later calls (wake) do."""
+        del session_id, runner_router, conversation
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return None
+        return fake_runner
+
+    monkeypatch.setattr(sessions_routes, "_get_runner_client", _stub_get_runner_client)
+
+    agent = await create_test_agent(client, name="onih-pi", include_llm=False)
+    sid = await _create_session(client, agent["id"])
+    # Bound-but-offline: runner_id set, tunnel never registered.
+    SqlAlchemyConversationStore(db_uri).replace_runner_id(sid, runner_id)
+
+    prior_router = _globals._runner_router
+    prior_client = _globals._runner_client
+    set_runner_router(app.state.runner_router)
+    set_runner_client(None)
+    try:
+        resp = await client.post(
+            f"/v1/sessions/{sid}/events",
+            json={"type": "compact", "data": {}},
+        )
+    finally:
+        set_runner_router(prior_router)
+        set_runner_client(prior_client)
+        await fake_runner.aclose()
+
+    assert resp.status_code == 202, resp.text
+    assert resp.json() == {"queued": False}, resp.text
+    assert compact_harness_calls == [f"/v1/sessions/{sid}/compact-harness"], (
+        f"Compact must run against the auto-resumed runner; got {compact_harness_calls!r}."
+    )
 
 
 # ── external_compaction_status: terminal-observed compaction edge ────────

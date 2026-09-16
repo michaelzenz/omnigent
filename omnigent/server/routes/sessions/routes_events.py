@@ -1488,13 +1488,7 @@ def register_events_routes(
                 conv,
                 agent_store,
                 agent_cache,
-            await _run_compact_locked(
-                session_id,
-                conv,
-                agent_store,
-                agent_cache,
                 wake_runner=_wake_bound_runner_for_control,
-            )
             )
             return {"queued": False}
         if body.type == "compaction":
@@ -3042,9 +3036,7 @@ def register_events_routes(
                     if worker.state == "deleted":
                         continue
                     if (
-                        worker_store_for_delete.update_worker(
-                            worker.id, state="deleted"
-                        )
+                        worker_store_for_delete.update_worker(worker.id, state="deleted")
                         is not None
                     ):
                         count += 1
