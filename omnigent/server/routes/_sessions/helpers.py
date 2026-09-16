@@ -7866,7 +7866,18 @@ async def _run_compact_locked(
         from omnigent.execution_targets import ONIH_PI_TARGET
 
         if spec.name == ONIH_PI_TARGET:
-            runner_client = await _get_runner_client_for_resource_access(session_id)
+            try:
+                runner_client = await _get_runner_client_for_resource_access(session_id)
+            except OmnigentError as exc:
+                if exc.code in (ErrorCode.CONFLICT, ErrorCode.RUNNER_UNAVAILABLE):
+                    _logger.debug(
+                        "Compact found no runner client for session=%s (code=%s); attempting wake",
+                        session_id,
+                        exc.code,
+                    )
+                    runner_client = None
+                else:
+                    raise
             if runner_client is None and wake_runner is not None:
                 # No runner bound (e.g. the transport dropped since the last
                 # turn). Wake it the same way the control-event path does,
