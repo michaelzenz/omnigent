@@ -820,9 +820,6 @@ def create_hosts_router(
         # (create mode). Left None in bind mode so the rollback below never
         # force-removes the user's pre-existing worktree.
         worktree = None
-        # Auto mode rewrites ``workspace`` into the fresh worktree below, so
-        # the source repo has to be captured first (the label points at it).
-        source_repo = workspace
         if body.git is not None:
             from omnigent.host.git_worktree import (
                 WorktreeError,
@@ -876,7 +873,7 @@ def create_hosts_router(
 
                 try:
                     auto_options: dict[str, Any] = (
-                        {"auto_reuse": True, "lease_owner": body.session_id}
+                        {"auto_reuse": True, "session_id": body.session_id}
                         if body.git.auto_create
                         else {}
                     )
@@ -989,19 +986,38 @@ def create_hosts_router(
             workspace,
             git_branch,
         )
-        if body.git is not None and body.git.auto_create:
-            # Same label set the create flow stamps: the sidebar reads the
-            # managed-worktree marker and the delete flow offers to remove
-            # the worktree it points at.
-            await asyncio.to_thread(
-                conversation_store.set_labels,
-                body.session_id,
-                {
-                    "omnigent.auto_worktree": "1",
-                    "omnigent.auto_worktree.source_repo": source_repo,
-                    "omnigent.auto_worktree.base_ref": body.git.base_branch or "",
-                },
+        if body.git is not None and body.git.existing_worktree:
+            # Binding to an existing folder: grant the session's lease when
+            # the folder is managed (auto-created or already leased), so
+            # co-use keeps the folder out of the reuse pool. Plain folders
+            # are not managed — no lease, no relocation contract.
+            from omnigent.server.routes._host_worktree import (
+                WorktreeHostUnavailableError as _bind_unavailable,
             )
+            from omnigent.server.routes._host_worktree import (
+                WorktreeProxyError as _bind_proxy,
+            )
+            from omnigent.server.routes._host_worktree import (
+                worktree_lease_on_host as _bind_lease,
+            )
+
+            try:
+                await _bind_lease(
+                    host_registry=host_registry,
+                    host_conn=conn,
+                    op="grant",
+                    session_id=body.session_id,
+                    worktree_path=workspace,
+                )
+            except (_bind_proxy, _bind_unavailable) as exc:
+                # Best-effort: the session is bound and functional; the
+                # lease re-grants on the next dispatch renew.
+                _logger.warning(
+                    "Worktree lease grant failed for session %s on %s: %s",
+                    body.session_id,
+                    workspace,
+                    exc,
+                )
 
         request_id = secrets.token_hex(8)
         future: asyncio.Future[dict[str, str | None]] = asyncio.get_running_loop().create_future()

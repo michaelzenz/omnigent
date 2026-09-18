@@ -64,8 +64,8 @@ class HostFrameKind(str, Enum):
     REMOVE_WORKTREE_RESULT = "host.remove_worktree_result"
     LIST_WORKTREES = "host.list_worktrees"
     LIST_WORKTREES_RESULT = "host.list_worktrees_result"
-    RENEW_WORKTREE_LEASE = "host.renew_worktree_lease"
-    RENEW_WORKTREE_LEASE_RESULT = "host.renew_worktree_lease_result"
+    WORKTREE_LEASE = "host.worktree_lease"
+    WORKTREE_LEASE_RESULT = "host.worktree_lease_result"
     CREATE_DIR = "host.create_dir"
     CREATE_DIR_RESULT = "host.create_dir_result"
     INSTALL_HARNESS = "host.install_harness"
@@ -548,7 +548,7 @@ class HostCreateWorktreeFrame:
     auto_reuse: bool = False
     reuse_existing_branch: bool = False
     reuse_path: str | None = None
-    lease_owner: str | None = None
+    session_id: str | None = None
     lease_seconds: int = 86_400
 
 
@@ -672,23 +672,43 @@ class HostListWorktreesResultFrame:
 
 
 @dataclass
-class HostRenewWorktreeLeaseFrame:
-    """Server → host: extend a managed worktree lease for its owner."""
+class HostWorktreeLeaseFrame:
+    """Server → host: grant, renew, or release a managed worktree lease.
+
+    ``op`` is ``"grant"`` (bind the session's lease at the folder's current
+    seq), ``"renew"`` (validate against the folder's seq and extend), or
+    ``"release"`` (drop the session's lease). ``worktree_path`` is ignored
+    for ``"release"``.
+    """
 
     request_id: str
+    op: str
+    session_id: str
     worktree_path: str
-    lease_owner: str
     lease_seconds: int = 86_400
-    release: bool = False
 
 
 @dataclass
-class HostRenewWorktreeLeaseResultFrame:
-    """Host → server: whether the managed worktree lease was renewed."""
+class HostWorktreeLeaseResultFrame:
+    """Host → server: managed worktree lease op outcome.
+
+    ``valid``/``managed`` answer the renew op: ``managed=False`` means the
+    session does not participate in the managed-worktree model (plain
+    folder); ``valid=False, managed=True`` means the folder was reassigned
+    and the session must relocate. For release, ``released`` reports
+    whether a lease was removed, ``managed`` whether the folder is
+    managed, and ``folder_free`` whether no unexpired claims remain.
+    """
 
     request_id: str
     status: str
-    renewed: bool = False
+    valid: bool = False
+    managed: bool = False
+    released: bool = False
+    folder_free: bool = True
+    # renew: the lease's persisted repo root — a fenced session relocates
+    # from it when its workspace directory no longer exists.
+    repo_root: str | None = None
     error: str | None = None
 
 
@@ -1127,8 +1147,8 @@ HostFrame = (
     | HostRemoveWorktreeResultFrame
     | HostListWorktreesFrame
     | HostListWorktreesResultFrame
-    | HostRenewWorktreeLeaseFrame
-    | HostRenewWorktreeLeaseResultFrame
+    | HostWorktreeLeaseFrame
+    | HostWorktreeLeaseResultFrame
     | HostCreateDirFrame
     | HostCreateDirResultFrame
     | HostInstallHarnessFrame
@@ -1365,7 +1385,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "auto_reuse": frame.auto_reuse,
                 "reuse_existing_branch": frame.reuse_existing_branch,
                 "reuse_path": frame.reuse_path,
-                "lease_owner": frame.lease_owner,
+                "session_id": frame.session_id,
                 "lease_seconds": frame.lease_seconds,
             }
         )
@@ -1425,24 +1445,28 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "error": frame.error,
             }
         )
-    if isinstance(frame, HostRenewWorktreeLeaseFrame):
+    if isinstance(frame, HostWorktreeLeaseFrame):
         return _encode_payload(
             {
-                "kind": HostFrameKind.RENEW_WORKTREE_LEASE.value,
+                "kind": HostFrameKind.WORKTREE_LEASE.value,
                 "request_id": frame.request_id,
+                "op": frame.op,
+                "session_id": frame.session_id,
                 "worktree_path": frame.worktree_path,
-                "lease_owner": frame.lease_owner,
                 "lease_seconds": frame.lease_seconds,
-                "release": frame.release,
             }
         )
-    if isinstance(frame, HostRenewWorktreeLeaseResultFrame):
+    if isinstance(frame, HostWorktreeLeaseResultFrame):
         return _encode_payload(
             {
-                "kind": HostFrameKind.RENEW_WORKTREE_LEASE_RESULT.value,
+                "kind": HostFrameKind.WORKTREE_LEASE_RESULT.value,
                 "request_id": frame.request_id,
                 "status": frame.status,
-                "renewed": frame.renewed,
+                "valid": frame.valid,
+                "managed": frame.managed,
+                "released": frame.released,
+                "folder_free": frame.folder_free,
+                "repo_root": frame.repo_root,
                 "error": frame.error,
             }
         )
@@ -1756,10 +1780,10 @@ def _decode_known_host_frame(
             return _decode_list_worktrees(msg)
         case HostFrameKind.LIST_WORKTREES_RESULT:
             return _decode_list_worktrees_result(msg)
-        case HostFrameKind.RENEW_WORKTREE_LEASE:
-            return _decode_renew_worktree_lease(msg)
-        case HostFrameKind.RENEW_WORKTREE_LEASE_RESULT:
-            return _decode_renew_worktree_lease_result(msg)
+        case HostFrameKind.WORKTREE_LEASE:
+            return _decode_worktree_lease(msg)
+        case HostFrameKind.WORKTREE_LEASE_RESULT:
+            return _decode_worktree_lease_result(msg)
         case HostFrameKind.CREATE_DIR:
             return _decode_create_dir(msg)
         case HostFrameKind.CREATE_DIR_RESULT:
@@ -2098,7 +2122,7 @@ def _decode_create_worktree(msg: _JsonObject) -> HostCreateWorktreeFrame:
         auto_reuse=auto_reuse,
         reuse_existing_branch=reuse_existing_branch,
         reuse_path=_optional_nullable_str(msg, "reuse_path"),
-        lease_owner=_optional_nullable_str(msg, "lease_owner"),
+        session_id=_optional_nullable_str(msg, "session_id"),
         lease_seconds=lease_seconds,
     )
 
@@ -2198,32 +2222,40 @@ def _decode_list_worktrees_result(
     )
 
 
-def _decode_renew_worktree_lease(msg: _JsonObject) -> HostRenewWorktreeLeaseFrame:
+def _decode_worktree_lease(msg: _JsonObject) -> HostWorktreeLeaseFrame:
     lease_seconds = msg.get("lease_seconds", 86_400)
     if not isinstance(lease_seconds, int) or isinstance(lease_seconds, bool) or lease_seconds <= 0:
         raise ValueError("frame field must be a positive int: 'lease_seconds'")
-    release = msg.get("release", False)
-    if not isinstance(release, bool):
-        raise ValueError("frame field must be a bool: 'release'")
-    return HostRenewWorktreeLeaseFrame(
+    return HostWorktreeLeaseFrame(
         request_id=_required_str(msg, "request_id"),
+        op=_required_str(msg, "op"),
+        session_id=_required_str(msg, "session_id"),
         worktree_path=_required_str(msg, "worktree_path"),
-        lease_owner=_required_str(msg, "lease_owner"),
         lease_seconds=lease_seconds,
-        release=release,
     )
 
 
-def _decode_renew_worktree_lease_result(
-    msg: _JsonObject,
-) -> HostRenewWorktreeLeaseResultFrame:
-    renewed = msg.get("renewed", False)
-    if not isinstance(renewed, bool):
-        raise ValueError("frame field must be a bool: 'renewed'")
-    return HostRenewWorktreeLeaseResultFrame(
+def _decode_worktree_lease_result(msg: _JsonObject) -> HostWorktreeLeaseResultFrame:
+    valid = msg.get("valid", False)
+    if not isinstance(valid, bool):
+        raise ValueError("frame field must be a bool: 'valid'")
+    managed = msg.get("managed", False)
+    if not isinstance(managed, bool):
+        raise ValueError("frame field must be a bool: 'managed'")
+    released = msg.get("released", False)
+    if not isinstance(released, bool):
+        raise ValueError("frame field must be a bool: 'released'")
+    folder_free = msg.get("folder_free", True)
+    if not isinstance(folder_free, bool):
+        raise ValueError("frame field must be a bool: 'folder_free'")
+    return HostWorktreeLeaseResultFrame(
         request_id=_required_str(msg, "request_id"),
         status=_required_str(msg, "status"),
-        renewed=renewed,
+        valid=valid,
+        managed=managed,
+        released=released,
+        folder_free=folder_free,
+        repo_root=_optional_nullable_str(msg, "repo_root"),
         error=_optional_nullable_str(msg, "error"),
     )
 

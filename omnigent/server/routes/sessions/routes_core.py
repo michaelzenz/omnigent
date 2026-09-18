@@ -3092,18 +3092,15 @@ def register_core_routes(
         _announce_session_added(user_id, new_conv.id)
 
         if body.worktree is not None:
-            # Auto-worktree sources retain their canonical parent repo in a
-            # label; otherwise the host resolves the source workspace back to
-            # its main work tree. Branch from the source session's branch when
-            # known so the fork continues from the same committed code.
-            source_repo = (
-                source.labels.get("omnigent.auto_worktree.source_repo") or source.workspace
-            )
-            assert source.host_id is not None and source_repo is not None
+            # Branch from the source session's branch when known so the
+            # fork continues from the same committed code. The host
+            # resolves the source repo from the source workspace (a git
+            # linked worktree resolves back to its main work tree).
+            assert source.host_id is not None and source.workspace is not None
             _spawn_worktree_creation_task(
                 session_id=new_conv.id,
                 host_id=source.host_id,
-                source_repo=source_repo,
+                source_repo=source.workspace,
                 branch_name=None,
                 base_branch=source.git_branch,
                 auto_fetch_base=body.worktree.auto_fetch_base,

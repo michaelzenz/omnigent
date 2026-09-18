@@ -5968,11 +5968,88 @@ async def test_handle_create_worktree_auto_reuse_crash_becomes_failed_frame(
             repo_path="/tmp/whatever",
             branch_name="agent/x",
             auto_reuse=True,
-            lease_owner="session_1",
+            session_id="session_1",
         ),
         SimpleNamespace(),  # type: ignore[arg-type] — unused: the crash precedes any log send
     )
     assert result.request_id == "req_auto_crash"
     assert result.status == "failed"
     assert result.error == "internal error during worktree creation"
+    _cleanup_host(host)
+
+
+async def test_handle_worktree_lease_ops(monkeypatch: pytest.MonkeyPatch) -> None:
+    """grant/renew/release ops dispatch to the registry and report state."""
+    from omnigent.host.frames import HostWorktreeLeaseFrame
+
+    host = _make_host_process()
+
+    def _grant(**kwargs: object) -> bool:
+        assert kwargs["session_id"] == "session_1"
+        assert kwargs["worktree_path"] == "/wt/a"
+        return True
+
+    def _renew(**kwargs: object) -> dict[str, object]:
+        return {
+            "valid": False,
+            "managed": True,
+            "repo_root": "/repo",  # fenced: the folder was reassigned
+        }
+
+    def _release(**kwargs: object) -> dict[str, object]:
+        return {
+            "released": True,
+            "folder_path": "/wt/a",
+            "folder_managed": True,
+            "folder_free": True,
+        }
+
+    monkeypatch.setattr("omnigent.host.connect.grant_auto_worktree_lease", _grant)
+    monkeypatch.setattr("omnigent.host.connect.renew_auto_worktree_lease", _renew)
+    monkeypatch.setattr("omnigent.host.connect.release_auto_worktree_lease", _release)
+
+    granted = await host._handle_worktree_lease(
+        HostWorktreeLeaseFrame(
+            request_id="req_lease_g",
+            op="grant",
+            session_id="session_1",
+            worktree_path="/wt/a",
+        )
+    )
+    assert granted.status == "ok"
+    assert granted.valid is True and granted.managed is True
+
+    renewed = await host._handle_worktree_lease(
+        HostWorktreeLeaseFrame(
+            request_id="req_lease_r",
+            op="renew",
+            session_id="session_1",
+            worktree_path="/wt/a",
+        )
+    )
+    assert renewed.status == "ok"
+    assert renewed.valid is False and renewed.managed is True
+    assert renewed.repo_root == "/repo"
+
+    released = await host._handle_worktree_lease(
+        HostWorktreeLeaseFrame(
+            request_id="req_lease_x",
+            op="release",
+            session_id="session_1",
+            worktree_path="",
+        )
+    )
+    assert released.status == "ok"
+    assert released.released is True and released.folder_free is True
+
+    unknown = await host._handle_worktree_lease(
+        HostWorktreeLeaseFrame(
+            request_id="req_lease_u",
+            op="explode",
+            session_id="session_1",
+            worktree_path="/wt/a",
+        )
+    )
+    assert unknown.status == "failed"
+    assert "explode" in (unknown.error or "")
     _cleanup_host(host)
