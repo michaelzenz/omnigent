@@ -18,7 +18,7 @@ from omnigent.host.frames import (
     HostCreateWorktreeFrame,
     HostListWorktreesFrame,
     HostRemoveWorktreeFrame,
-    HostRenewWorktreeLeaseFrame,
+    HostWorktreeLeaseFrame,
     HostWorktreeSizesFrame,
     encode_host_frame,
 )
@@ -150,7 +150,7 @@ async def create_worktree_on_host(
     auto_reuse: bool = False,
     reuse_existing_branch: bool = False,
     reuse_path: str | None = None,
-    lease_owner: str | None = None,
+    session_id: str | None = None,
     lease_seconds: int = 86_400,
 ) -> CreatedWorktree:
     """Send a ``host.create_worktree`` frame and await the result.
@@ -191,7 +191,7 @@ async def create_worktree_on_host(
                 auto_reuse=auto_reuse,
                 reuse_existing_branch=reuse_existing_branch,
                 reuse_path=reuse_path,
-                lease_owner=lease_owner,
+                session_id=session_id,
                 lease_seconds=lease_seconds,
             )
         )
@@ -308,57 +308,51 @@ async def list_worktrees_on_host(
     return worktrees
 
 
-async def renew_worktree_lease_on_host(
+async def worktree_lease_on_host(
     *,
     host_registry: HostRegistry,
     host_conn: HostConnection,
-    worktree_path: str,
-    lease_owner: str,
+    op: str,
+    session_id: str,
+    worktree_path: str = "",
     lease_seconds: int = 86_400,
-    release: bool = False,
-) -> bool:
-    """Renew a managed worktree lease when ``lease_owner`` still owns it."""
+) -> dict[str, object]:
+    """Run a managed worktree lease op on the host.
+
+    :param op: ``"grant"`` (bind the session's lease at the folder's
+        current seq), ``"renew"`` (validate against the folder's seq and
+        extend), or ``"release"`` (drop the session's lease).
+    :returns: The host's result dict. For renew:
+        ``{valid, managed}`` — ``managed=False`` means the session does
+        not participate in the managed-worktree model; ``valid=False,
+        managed=True`` means the folder was reassigned and the session
+        must relocate. For release: ``{released, managed, folder_free}``.
+    :raises WorktreeProxyError: If the host reports a failure.
+    """
     request_id = secrets.token_hex(8)
     frame = encode_host_frame(
-        HostRenewWorktreeLeaseFrame(
+        HostWorktreeLeaseFrame(
             request_id=request_id,
+            op=op,
+            session_id=session_id,
             worktree_path=worktree_path,
-            lease_owner=lease_owner,
             lease_seconds=lease_seconds,
-            release=release,
         )
     )
     result = await _await_host_worktree_result(
         host_registry=host_registry,
         host_conn=host_conn,
-        pending=host_conn.pending_renew_worktree_leases,
+        pending=host_conn.pending_worktree_leases,
         request_id=request_id,
         frame=frame,
-        op="worktree lease renewal",
+        op=f"worktree lease {op}",
         timeout_s=10.0,
     )
     if result.get("status") != "ok":
         raise WorktreeProxyError(
-            f"worktree lease renewal failed: {result.get('error') or 'host reported no detail'}"
+            f"worktree lease {op} failed: {result.get('error') or 'host reported no detail'}"
         )
-    return result.get("renewed") is True
-
-
-async def release_worktree_lease_on_host(
-    *,
-    host_registry: HostRegistry,
-    host_conn: HostConnection,
-    worktree_path: str,
-    lease_owner: str,
-) -> bool:
-    """Release a managed lease after explicit session deletion."""
-    return await renew_worktree_lease_on_host(
-        host_registry=host_registry,
-        host_conn=host_conn,
-        worktree_path=worktree_path,
-        lease_owner=lease_owner,
-        release=True,
-    )
+    return result
 
 
 # Timeout for the worktree-sizes round-trip. The host's per-worktree du cap is

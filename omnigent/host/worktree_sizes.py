@@ -15,11 +15,13 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from typing import cast
 
 from omnigent.host.git_worktree import (
     WorktreeError,
     _locked_auto_cache,
     _run_git,
+    folder_has_active_claims,
     list_worktrees,
 )
 
@@ -46,21 +48,22 @@ def _worktree_has_dirty_files(path: str) -> bool:
 
 
 def _auto_managed_info(repo_root: str) -> dict[str, dict[str, object]]:
-    """Lease info for Omnigent-managed auto worktrees belonging to ``repo_root``.
+    """Managed-folder records for auto worktrees belonging to ``repo_root``.
 
-    Returns a dict mapping worktree path to its registry entry, which
-    contains ``lease_owner``, ``lease_expires_at``, and ``health``.
+    Returns a dict mapping worktree path to its registry folder record
+    (``seq``, ``health``, ``branch``, …).
     """
     try:
-        with _locked_auto_cache() as entries:
+        with _locked_auto_cache() as reg:
+            folders = cast("dict[str, dict[str, object]]", reg["folders"])
             return {
                 path: raw
-                for path, raw in entries.items()
+                for path, raw in folders.items()
                 if isinstance(path, str)
                 and isinstance(raw, dict)
                 and raw.get("repo_root") == repo_root
             }
-    except Exception:  # noqa: BLE001
+    except Exception:
         _logger.warning("failed to read auto worktree cache", exc_info=True)
         return {}
 
@@ -200,21 +203,21 @@ def calculate_worktree_sizes(repo_path: str) -> WorktreeSizeResult:
     total_bytes = 0
     repo_root = worktrees[0].path if worktrees else repo_path
     managed_info = _auto_managed_info(repo_root)
-    now = int(time.time())
     for wt in worktrees:
         size, err = _dir_size_bytes(wt.path)
         dirty = False
         info = managed_info.get(wt.path)
         managed = info is not None
-        # A worktree is reusable when: managed, not main, clean, and the
-        # lease is free (no owner or lease expired).
+        # A worktree is reusable when: managed, not main, clean, and no
+        # unexpired lease holds it (folder back in the reuse pool).
         lease_free = False
         if managed and not wt.is_main and err is None:
             dirty = _worktree_has_dirty_files(wt.path)
             if not dirty:
-                owner = info.get("lease_owner") if isinstance(info, dict) else None
-                expires_at = info.get("lease_expires_at") if isinstance(info, dict) else None
-                lease_free = owner is None or (isinstance(expires_at, int) and expires_at <= now)
+                try:
+                    lease_free = not folder_has_active_claims(worktree_path=wt.path)
+                except Exception:  # noqa: BLE001 — a registry hiccup must not fail sizing
+                    lease_free = False
         entries.append(
             WorktreeSizeEntry(
                 path=wt.path,

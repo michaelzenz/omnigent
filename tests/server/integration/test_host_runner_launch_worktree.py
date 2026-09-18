@@ -520,17 +520,19 @@ async def test_launch_runner_auto_create_generates_branch_and_labels(
     assert cap.create[0].branch_name  # generated, non-empty
     assert cap.remove == [], "worktree was rolled back on a successful launch"
 
-    # The session row points at the worktree with the generated branch,
-    # plus the same label set the create flow stamps (sidebar marker +
-    # source repo for the delete flow).
+    # The session row points at the worktree with the generated branch.
+    # Labels are gone from the lease model: the folder's managed state and
+    # source repo live in the host registry (the lease was granted
+    # host-side by the acquire flow).
     conv = SqlAlchemyConversationStore(db_uri).get_conversation(session_id)
     assert conv is not None
     expected_dirname = cap.create[0].branch_name.replace("/", "-")
     assert conv.workspace == f"{_SOURCE_REPO}-worktrees/{expected_dirname}"
     assert conv.git_branch == cap.create[0].branch_name
     assert conv.host_id == _HOST_ID
-    assert conv.labels.get("omnigent.auto_worktree") == "1"
-    assert conv.labels.get("omnigent.auto_worktree.source_repo") == _SOURCE_REPO
+    assert not any(key.startswith("omnigent.auto_worktree") for key in conv.labels), (
+        "auto_worktree labels are removed from the lease model"
+    )
 
 
 async def test_launch_runner_auto_create_requires_lease_capable_host(

@@ -12,6 +12,7 @@ import json
 import re
 import shutil
 import subprocess
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -22,7 +23,10 @@ from omnigent.host.git_worktree import (
     WorktreeError,
     acquire_auto_worktree_streaming,
     create_worktree,
+    folder_has_active_claims,
+    grant_auto_worktree_lease,
     list_worktrees,
+    release_auto_worktree_lease,
     remove_worktree,
     renew_auto_worktree_lease,
     validate_branch_name,
@@ -165,8 +169,38 @@ def test_create_worktree_uses_omnigent_worktree_root(git_repo: Path) -> None:
 
 def _wipe_auto_registry() -> None:
     """Empty the host-local managed-worktree registry file."""
-    registry = Path.home() / ".omnigent" / "worktrees" / ".auto-worktrees.json"
-    registry.write_text("{}")
+    _registry_path().write_text("{}")
+
+
+def _registry_path() -> Path:
+    """Return the host-local managed-worktree registry file path."""
+    path = Path.home() / ".omnigent" / "worktrees" / ".auto-worktrees.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _expire_all_claims(worktree_path: str) -> None:
+    """Expire every lease pointing at *worktree_path* (registry surgery)."""
+    reg = json.loads(_registry_path().read_text())
+    for lease in reg["leases"].values():
+        if lease.get("folder") == worktree_path:
+            lease["expires_at"] = 0
+    _registry_path().write_text(json.dumps(reg))
+
+
+def _active_sessions(worktree_path: str) -> list[str]:
+    """Sessions whose lease currently validates against the folder."""
+    reg = json.loads(_registry_path().read_text())
+    folder = reg["folders"][worktree_path]
+    now = int(time.time())
+    return [
+        session
+        for session, lease in reg["leases"].items()
+        if lease.get("folder") == worktree_path
+        and lease.get("seq") == folder.get("seq")
+        and isinstance(lease.get("expires_at"), int)
+        and lease["expires_at"] > now
+    ]
 
 
 def test_auto_worktree_relocation_adopts_same_path_worktree(git_repo: Path) -> None:
@@ -180,7 +214,7 @@ def test_auto_worktree_relocation_adopts_same_path_worktree(git_repo: Path) -> N
     first = acquire_auto_worktree_streaming(
         repo_path=str(git_repo),
         branch_name="agent/orig-aaaaaa",
-        lease_owner="session-1",
+        session_id="session-1",
     )
     worktree_path = Path(first.worktree_path)
     # The user switches branches inside the worktree; the old ref vanishes.
@@ -194,7 +228,7 @@ def test_auto_worktree_relocation_adopts_same_path_worktree(git_repo: Path) -> N
     relocated = acquire_auto_worktree_streaming(
         repo_path=str(git_repo),
         branch_name="agent/orig-aaaaaa",
-        lease_owner="session-1",
+        session_id="session-1",
         reuse_existing_branch=True,
         reuse_path=str(worktree_path),
         base_branch="main",
@@ -228,7 +262,7 @@ def test_auto_worktree_relocation_recreates_missing_branch_from_base(
     relocated = acquire_auto_worktree_streaming(
         repo_path=str(git_repo),
         branch_name="agent/gone-cccccc",
-        lease_owner="session-1",
+        session_id="session-1",
         reuse_existing_branch=True,
         base_branch="main",
     )
@@ -254,13 +288,13 @@ def test_auto_worktree_relocation_skips_path_held_by_another_session(
     other = acquire_auto_worktree_streaming(
         repo_path=str(git_repo),
         branch_name="agent/other-dddddd",
-        lease_owner="session-2",
+        session_id="session-2",
     )
 
     relocated = acquire_auto_worktree_streaming(
         repo_path=str(git_repo),
         branch_name="agent/mine-eeeeee",
-        lease_owner="session-1",
+        session_id="session-1",
         reuse_existing_branch=True,
         reuse_path=str(other.worktree_path),
         base_branch="main",
@@ -274,24 +308,21 @@ def test_auto_worktree_reuses_only_expired_clean_entry(git_repo: Path) -> None:
     first = acquire_auto_worktree_streaming(
         repo_path=str(git_repo),
         branch_name="agent/first-aaaaaa",
-        lease_owner="session-1",
+        session_id="session-1",
     )
     second = acquire_auto_worktree_streaming(
         repo_path=str(git_repo),
         branch_name="agent/second-bbbbbb",
-        lease_owner="session-2",
+        session_id="session-2",
     )
     assert second.worktree_path != first.worktree_path
 
-    registry = Path.home() / ".omnigent" / "worktrees" / ".auto-worktrees.json"
-    entries = json.loads(registry.read_text())
-    entries[first.worktree_path]["lease_expires_at"] = 0
-    registry.write_text(json.dumps(entries))
+    _expire_all_claims(first.worktree_path)
 
     reused = acquire_auto_worktree_streaming(
         repo_path=str(git_repo),
         branch_name="agent/third-cccccc",
-        lease_owner="session-3",
+        session_id="session-3",
     )
     assert reused.worktree_path == first.worktree_path
     assert _current_branch(Path(reused.worktree_path)) == "agent/third-cccccc"
@@ -302,27 +333,354 @@ def test_auto_worktree_quarantines_expired_dirty_entry(git_repo: Path) -> None:
     first = acquire_auto_worktree_streaming(
         repo_path=str(git_repo),
         branch_name="agent/dirty-aaaaaa",
-        lease_owner="session-1",
+        session_id="session-1",
     )
     dirty_file = Path(first.worktree_path) / "local.txt"
     dirty_file.write_text("keep me")
 
-    registry = Path.home() / ".omnigent" / "worktrees" / ".auto-worktrees.json"
-    entries = json.loads(registry.read_text())
-    entries[first.worktree_path]["lease_expires_at"] = 0
-    registry.write_text(json.dumps(entries))
+    _expire_all_claims(first.worktree_path)
 
     acquired = acquire_auto_worktree_streaming(
         repo_path=str(git_repo),
         branch_name="agent/new-bbbbbb",
-        lease_owner="session-2",
+        session_id="session-2",
     )
     assert acquired.worktree_path != first.worktree_path
     assert dirty_file.read_text() == "keep me"
-    assert renew_auto_worktree_lease(
+    result = renew_auto_worktree_lease(
         worktree_path=first.worktree_path,
-        lease_owner="session-1",
+        session_id="session-1",
     )
+    # The folder was never reassigned (nobody adopted the dirty entry), so
+    # the original session's renewal re-grants in place.
+    assert result["valid"] is True and result["managed"] is True
+
+
+# ── Fencing-lease model: N claims per folder, seq-gated validity ────────
+#
+# Every host session on a managed git folder holds its own lease; a lease
+# is valid while its seq matches the folder's AND it is unexpired. Pool
+# adoption requires ALL claims on the folder to be expired, and bumps the
+# folder's seq — instantly fencing every other claim.
+
+
+def test_active_claim_blocks_pool_reuse(git_repo: Path) -> None:
+    """A folder with an unexpired claim is never handed to a new session."""
+    holder = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/held-aaaaaa",
+        session_id="session-1",
+    )
+    assert folder_has_active_claims(worktree_path=holder.worktree_path)
+
+    taker = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/taker-bbbbbb",
+        session_id="session-2",
+    )
+
+    assert taker.worktree_path != holder.worktree_path
+    assert _current_branch(Path(holder.worktree_path)) == "agent/held-aaaaaa"
+
+
+def test_expired_claims_free_folder_for_reuse_and_fence_holders(git_repo: Path) -> None:
+    """All-expired claims let a new session take over and fence the old."""
+    first = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/old-aaaaaa",
+        session_id="session-1",
+    )
+    _expire_all_claims(first.worktree_path)
+    assert not folder_has_active_claims(worktree_path=first.worktree_path)
+
+    taker = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/new-bbbbbb",
+        session_id="session-2",
+    )
+
+    assert taker.worktree_path == first.worktree_path
+    assert _current_branch(Path(first.worktree_path)) == "agent/new-bbbbbb"
+    # The takeover bumped the folder's seq: session-1's claim is fenced.
+    reg = json.loads(_registry_path().read_text())
+    assert reg["leases"]["session-1"]["seq"] != reg["folders"][first.worktree_path]["seq"]
+    assert reg["leases"]["session-2"]["seq"] == reg["folders"][first.worktree_path]["seq"]
+
+
+def test_renew_extends_valid_lease_and_regrants_expired_untaken(git_repo: Path) -> None:
+    """Renew extends a valid lease; an expired-but-untaken lease re-grants."""
+    first = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/renew-aaaaaa",
+        session_id="session-1",
+    )
+    result = renew_auto_worktree_lease(worktree_path=first.worktree_path, session_id="session-1")
+    assert result["valid"] is True and result["managed"] is True
+
+    # Expire the lease; nobody took the folder, so renewal re-grants in
+    # place instead of forcing a relocation.
+    _expire_all_claims(first.worktree_path)
+    reg = json.loads(_registry_path().read_text())
+    stale = reg["leases"]["session-1"]
+    stale["expires_at"] = int(time.time()) + 86_400
+    _registry_path().write_text(json.dumps(reg))
+    result = renew_auto_worktree_lease(worktree_path=first.worktree_path, session_id="session-1")
+    assert result["valid"] is True and result["managed"] is True
+    assert folder_has_active_claims(worktree_path=first.worktree_path)
+
+
+def test_renew_after_takeover_reports_fenced(git_repo: Path) -> None:
+    """A fenced lease (folder reassigned) must relocate, not re-grant."""
+    first = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/fenced-aaaaaa",
+        session_id="session-1",
+    )
+    _expire_all_claims(first.worktree_path)
+    acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/taker-bbbbbb",
+        session_id="session-2",
+    )
+
+    result = renew_auto_worktree_lease(worktree_path=first.worktree_path, session_id="session-1")
+
+    assert result["valid"] is False and result["managed"] is True
+    # The lease carries the repo root so relocation works even after the
+    # workspace directory is deleted.
+    assert result["repo_root"] == str(git_repo)
+
+
+def test_renew_plain_folder_is_not_managed(git_repo: Path) -> None:
+    """A workspace outside the managed registry gets (False, False)."""
+    result = renew_auto_worktree_lease(worktree_path=str(git_repo), session_id="session-1")
+    assert result["valid"] is False and result["managed"] is False
+    assert result["repo_root"] is None
+
+
+def test_leaseless_session_on_managed_folder_earns_claim(git_repo: Path) -> None:
+    """A co-user without a claim (fork / bind) earns it on first renew."""
+    holder = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/shared-aaaaaa",
+        session_id="session-1",
+    )
+
+    result = renew_auto_worktree_lease(worktree_path=holder.worktree_path, session_id="session-2")
+
+    assert result["valid"] is True and result["managed"] is True
+    assert sorted(_active_sessions(holder.worktree_path)) == ["session-1", "session-2"]
+
+
+def test_grant_lease_on_managed_folder_couses(git_repo: Path) -> None:
+    """An explicit bind to an in-use folder grants a co-claim, no bump."""
+    holder = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/couse-aaaaaa",
+        session_id="session-1",
+    )
+    seq_before = json.loads(_registry_path().read_text())["folders"][holder.worktree_path]["seq"]
+
+    assert grant_auto_worktree_lease(worktree_path=holder.worktree_path, session_id="session-2")
+
+    assert sorted(_active_sessions(holder.worktree_path)) == ["session-1", "session-2"]
+    seq_after = json.loads(_registry_path().read_text())["folders"][holder.worktree_path]["seq"]
+    assert seq_after == seq_before
+    # Grant on a non-managed folder fails.
+    assert not grant_auto_worktree_lease(worktree_path=str(git_repo), session_id="session-3")
+
+
+def test_branch_switch_does_not_affect_leases(git_repo: Path) -> None:
+    """Branch is orthogonal to lease validity.
+
+    A session switching the folder's branch (a plain git operation inside
+    the worktree) neither invalidates its own lease nor any co-user's:
+    validity is seq + expiry only. The folder record's branch is passive
+    metadata describing what is checked out.
+    """
+    first = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/switch-aaaaaa",
+        session_id="session-1",
+    )
+    worktree_path = Path(first.worktree_path)
+
+    # A session switches the folder to another branch (no acquire involved).
+    _git(worktree_path, "switch", "-q", "-c", "agent/switch-bbbbbb")
+
+    # The lease survives the switch, and a relocation re-adopt keeps the
+    # folder as-is, returning the worktree's CURRENT branch (the session
+    # row re-syncs to it) instead of failing on the renamed branch.
+    result = renew_auto_worktree_lease(worktree_path=first.worktree_path, session_id="session-1")
+    assert result["valid"] is True and result["managed"] is True
+    relocated = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/switch-aaaaaa",
+        session_id="session-1",
+        reuse_existing_branch=True,
+        reuse_path=str(worktree_path),
+        base_branch="main",
+    )
+    assert relocated.worktree_path == first.worktree_path
+    assert relocated.branch == "agent/switch-bbbbbb"
+
+    # A co-user earns its claim on the switched folder; both leases stay
+    # valid across a further switch, with no seq bump (nothing fenced).
+    renew_auto_worktree_lease(worktree_path=first.worktree_path, session_id="session-2")
+    assert sorted(_active_sessions(first.worktree_path)) == ["session-1", "session-2"]
+    _git(worktree_path, "switch", "-q", "-c", "agent/switch-cccccc")
+    assert sorted(_active_sessions(first.worktree_path)) == ["session-1", "session-2"]
+    reg = json.loads(_registry_path().read_text())
+    folder_seq = reg["folders"][first.worktree_path]["seq"]
+    assert reg["leases"]["session-1"]["seq"] == folder_seq
+    assert reg["leases"]["session-2"]["seq"] == folder_seq
+    # Renewals after the switch: both still valid.
+    for session in ("session-1", "session-2"):
+        result = renew_auto_worktree_lease(worktree_path=first.worktree_path, session_id=session)
+        assert result["valid"] is True and result["managed"] is True
+
+
+def test_renew_after_folder_prune_reports_fenced_with_repo_root(git_repo: Path) -> None:
+    """A pruned folder record (dir deleted) fences the lease, with repo root.
+
+    The session's workspace directory is gone; renewal must report
+    ``valid=False, managed=True`` plus the persisted repo root so the
+    server can relocate from the repo instead of the deleted path.
+    """
+    first = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/pruned-aaaaaa",
+        session_id="session-1",
+    )
+    reg = json.loads(_registry_path().read_text())
+    del reg["folders"][first.worktree_path]
+    _registry_path().write_text(json.dumps(reg))
+
+    result = renew_auto_worktree_lease(worktree_path=first.worktree_path, session_id="session-1")
+
+    assert result["valid"] is False and result["managed"] is True
+    assert result["repo_root"] == str(git_repo)
+
+
+def test_dirty_reclaim_requires_current_generation(git_repo: Path) -> None:
+    """A fenced session may not reclaim a folder holding another's WIP.
+
+    S is fenced off folder F; T takes F over and leaves uncommitted work.
+    When S's next acquire runs, F is a free candidate again — but its WIP
+    belongs to T's generation, so S must not skip the clean check; the
+    dirty folder is skipped and S gets a fresh one.
+    """
+    first = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/dirtygen-aaaaaa",
+        session_id="session-1",
+    )
+    _expire_all_claims(first.worktree_path)
+    taker = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/dirtygen-bbbbbb",
+        session_id="session-2",
+    )
+    assert taker.worktree_path == first.worktree_path
+    # T leaves uncommitted work, then its claim lapses.
+    (Path(first.worktree_path) / "t-wip.txt").write_text("taker WIP")
+    _expire_all_claims(first.worktree_path)
+
+    reacquired = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/dirtygen-aaaaaa",
+        session_id="session-1",
+        reuse_existing_branch=True,
+    )
+
+    # F is dirty with T's WIP: S cannot reclaim it as its own; it gets a
+    # fresh folder and T's work stays untouched.
+    assert reacquired.worktree_path != first.worktree_path
+    assert (Path(first.worktree_path) / "t-wip.txt").read_text() == "taker WIP"
+
+
+def test_dirty_own_current_generation_reclaims_in_place(git_repo: Path) -> None:
+    """The current-gen holder reclaims its own dirty folder as-is."""
+    first = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/wip-aaaaaa",
+        session_id="session-1",
+    )
+    (Path(first.worktree_path) / "wip.txt").write_text("my WIP")
+
+    # Relocation-style re-acquire of the session's own recorded path: the
+    # claim is the folder's current generation, so the dirty WIP is the
+    # session's own and the adopt skips the clean check.
+    reacquired = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/wip-aaaaaa",
+        session_id="session-1",
+        reuse_existing_branch=True,
+        reuse_path=str(first.worktree_path),
+    )
+
+    assert reacquired.worktree_path == first.worktree_path
+    assert (Path(first.worktree_path) / "wip.txt").read_text() == "my WIP"
+
+
+def test_release_drops_claim_and_reports_folder_free(git_repo: Path) -> None:
+    """Release removes the claim; folder_free flips when the last goes."""
+    first = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/rel-aaaaaa",
+        session_id="session-1",
+    )
+    acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/couse-cccccc",
+        session_id="session-2",
+    )
+    grant_auto_worktree_lease(worktree_path=first.worktree_path, session_id="session-2")
+
+    result = release_auto_worktree_lease(session_id="session-1")
+    assert result["released"] is True
+    assert result["folder_managed"] is True
+    assert result["folder_free"] is False  # session-2 still holds a claim
+
+    result = release_auto_worktree_lease(session_id="session-2")
+    assert result["folder_free"] is True
+    assert not folder_has_active_claims(worktree_path=first.worktree_path)
+    # Releasing with no lease is a harmless no-op.
+    result = release_auto_worktree_lease(session_id="session-1")
+    assert result["released"] is False
+
+
+def test_session_holds_single_lease_across_rebind(git_repo: Path) -> None:
+    """A session's 1:1 lease: rebinding to a new folder drops the old."""
+    acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/rebind-aaaaaa",
+        session_id="session-1",
+    )
+    second = acquire_auto_worktree_streaming(
+        repo_path=str(git_repo),
+        branch_name="agent/rebind-bbbbbb",
+        session_id="session-1",
+    )
+
+    reg = json.loads(_registry_path().read_text())
+    assert list(reg["leases"].keys()) == ["session-1"]
+    assert reg["leases"]["session-1"]["folder"] == second.worktree_path
+
+
+def test_v1_registry_fails_loud_without_migration(git_repo: Path) -> None:
+    """A v1 file is refused until migrated — no fallback reading."""
+    legacy = {
+        "/wt/a": {"repo_root": str(git_repo), "lease_owner": "session-1"},
+    }
+    _registry_path().write_text(json.dumps(legacy))
+
+    with pytest.raises(WorktreeError, match="unsupported schema"):
+        acquire_auto_worktree_streaming(
+            repo_path=str(git_repo),
+            branch_name="agent/x-aaaaaa",
+            session_id="session-1",
+        )
 
 
 def test_auto_worktree_syncs_from_remote_before_reuse(
@@ -360,17 +718,14 @@ def test_auto_worktree_syncs_from_remote_before_reuse(
     first = acquire_auto_worktree_streaming(
         repo_path=str(local),
         branch_name="agent/first-aaaaaa",
-        lease_owner="session-1",
+        session_id="session-1",
         base_branch="origin/main",
         auto_fetch_base=True,
         on_log=logs.append,
     )
 
     # Expire the lease so the worktree becomes a reuse candidate.
-    registry = Path.home() / ".omnigent" / "worktrees" / ".auto-worktrees.json"
-    entries = json.loads(registry.read_text())
-    entries[first.worktree_path]["lease_expires_at"] = 0
-    registry.write_text(json.dumps(entries))
+    _expire_all_claims(first.worktree_path)
 
     # Push a new commit to the remote.
     (local / "README.md").write_text("v2")
@@ -384,7 +739,7 @@ def test_auto_worktree_syncs_from_remote_before_reuse(
     reused = acquire_auto_worktree_streaming(
         repo_path=str(local),
         branch_name="agent/second-bbbbbb",
-        lease_owner="session-2",
+        session_id="session-2",
         base_branch="origin/main",
         auto_fetch_base=True,
         on_log=logs.append,
@@ -406,7 +761,7 @@ def test_auto_worktree_without_base_uses_linked_worktree_head(git_repo: Path) ->
     created = acquire_auto_worktree_streaming(
         repo_path=str(source_path),
         branch_name="agent/fork-aaaaaa",
-        lease_owner="session-fork",
+        session_id="session-fork",
     )
 
     assert _rev_parse(Path(created.worktree_path)) == _rev_parse(source_path)

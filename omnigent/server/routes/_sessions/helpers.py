@@ -606,14 +606,13 @@ def _announce_session_added(user_id: str | None, session_id: str) -> None:
     )
 
 
-async def _renew_auto_worktree_lease_on_turn_end(session_id: str) -> None:
-    """Renew a session's managed worktree lease when a turn ends.
+async def _renew_session_worktree_lease(session_id: str) -> None:
+    """Extend a session's managed worktree lease (fire-and-forget).
 
-    Auto-worktree sessions lease their worktree for 24h at creation, and
-    without periodic renewal the lease lapses while a long-lived session is
-    still active — another session's relocation can then reclaim the
-    worktree out from under it. Every terminal turn edge (idle/failed)
-    renews, keeping the lease alive for the session's lifetime.
+    Every host session on a git folder holds a lease (granted at bind);
+    called at terminal turn edges (idle/failed) to keep it alive across
+    long idle stretches. A fenced lease (folder reassigned) is left for
+    the next dispatch to relocate — this call only extends expiry.
 
     Fire-and-forget: renewal is best-effort. A failed renewal (host offline,
     registry entry lost) is retried at the next turn, and the
@@ -621,15 +620,13 @@ async def _renew_auto_worktree_lease_on_turn_end(session_id: str) -> None:
     """
     try:
         from omnigent.agent_tasks.adoption import get_session_adoption_context
-        from omnigent.server.routes._host_worktree import renew_worktree_lease_on_host
+        from omnigent.server.routes._host_worktree import worktree_lease_on_host
 
         ctx = get_session_adoption_context()
         if ctx is None:
             return
         conv = await asyncio.to_thread(ctx.conversation_store.get_conversation, session_id)
-        if conv is None or conv.labels.get("omnigent.auto_worktree") != "1":
-            return
-        if conv.host_id is None or conv.workspace is None:
+        if conv is None or conv.host_id is None or conv.workspace is None:
             return
         host_registry = get_server_host_registry()
         if host_registry is None:
@@ -637,11 +634,12 @@ async def _renew_auto_worktree_lease_on_turn_end(session_id: str) -> None:
         host_conn = host_registry.get(conv.host_id)
         if host_conn is None or not host_conn.hello.managed_worktree_leases:
             return
-        await renew_worktree_lease_on_host(
+        await worktree_lease_on_host(
             host_registry=host_registry,
             host_conn=host_conn,
+            op="renew",
+            session_id=session_id,
             worktree_path=conv.workspace,
-            lease_owner=session_id,
         )
     except Exception:  # noqa: BLE001
         _logger.debug("worktree lease renewal failed for %s", session_id, exc_info=True)
@@ -4492,7 +4490,7 @@ def _publish_status(
             adoption_task.add_done_callback(
                 lambda task: task.exception() if not task.cancelled() else None
             )
-            lease_task = asyncio.create_task(_renew_auto_worktree_lease_on_turn_end(session_id))
+            lease_task = asyncio.create_task(_renew_session_worktree_lease(session_id))
             lease_task.add_done_callback(
                 lambda task: task.exception() if not task.cancelled() else None
             )
@@ -4515,7 +4513,7 @@ def _publish_status(
             error=error.message if error is not None else None,
         )
         with contextlib.suppress(RuntimeError):
-            lease_task = asyncio.create_task(_renew_auto_worktree_lease_on_turn_end(session_id))
+            lease_task = asyncio.create_task(_renew_session_worktree_lease(session_id))
             lease_task.add_done_callback(
                 lambda task: task.exception() if not task.cancelled() else None
             )
@@ -9747,6 +9745,14 @@ def _reject_server_reserved_label_seed(labels: dict[str, str] | None) -> None:
             "and cannot be set by clients",
             code=ErrorCode.INVALID_INPUT,
         )
+    if _TURN_ACTOR_LABEL in labels:
+        raise OmnigentError(
+            f"label {_TURN_ACTOR_LABEL!r} is server-internal and cannot be set by clients",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    # The lease model no longer writes these labels, but a database that
+    # has not run the strip migration yet may still carry them; keep them
+    # client-unwritable so a stale marker cannot be forged.
     auto_worktree_key = next(
         (
             key
@@ -9758,11 +9764,6 @@ def _reject_server_reserved_label_seed(labels: dict[str, str] | None) -> None:
     if auto_worktree_key is not None:
         raise OmnigentError(
             f"label {auto_worktree_key!r} is server-internal and cannot be set by clients",
-            code=ErrorCode.INVALID_INPUT,
-        )
-    if _TURN_ACTOR_LABEL in labels:
-        raise OmnigentError(
-            f"label {_TURN_ACTOR_LABEL!r} is server-internal and cannot be set by clients",
             code=ErrorCode.INVALID_INPUT,
         )
     # The archive timestamp is stamped by the server on the archive transition

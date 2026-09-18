@@ -192,6 +192,7 @@ from omnigent.server.routes._sessions.helpers import (
     _publish_worktree_log,
     _publish_worktree_status,
     _remove_session_worktree_best_effort,
+    _renew_session_worktree_lease,
     _require_external_status_forward,
     _resolve_harness,
     _run_compact_locked,
@@ -567,43 +568,55 @@ def register_events_routes(
         runner_id = getattr(conv, "runner_id", None)
         return isinstance(runner_id, str) and token_bound_runner_id(token) == runner_id
 
-    async def _renew_or_relocate_auto_worktree(conv: Conversation) -> Conversation:
-        if conv.labels.get("omnigent.auto_worktree") != "1":
+    async def _renew_or_relocate_worktree(conv: Conversation) -> Conversation:
+        """Validate the session's worktree lease at dispatch; relocate if fenced.
+
+        Every host session on a git folder holds a managed-worktree lease
+        (granted at bind). ``renew`` answers two things: whether the folder
+        is managed at all (``managed=False`` — plain folder, nothing to do)
+        and whether the lease still matches the folder's fencing seq
+        (``valid``). A fenced lease means another session took the folder
+        over; this session relocates to a fresh folder before the turn.
+        """
+        if conv.host_id is None or conv.workspace is None:
             return conv
-        if conv.host_id is None or conv.workspace is None or conv.git_branch is None:
-            raise OmnigentError(
-                "auto worktree session is missing its host, workspace, or branch",
-                code=ErrorCode.CONFLICT,
-            )
         if host_registry is None:
-            raise OmnigentError("host registry is unavailable", code=ErrorCode.CONFLICT)
+            return conv
         host_conn = host_registry.get(conv.host_id)
-        if host_conn is None:
-            raise OmnigentError("session host is offline", code=ErrorCode.CONFLICT)
-        if not host_conn.hello.managed_worktree_leases:
-            raise OmnigentError(
-                "session host must be upgraded before its worktree lease can be restored",
-                code=ErrorCode.CONFLICT,
-            )
+        if host_conn is None or not host_conn.hello.managed_worktree_leases:
+            return conv
 
         from omnigent.server.routes._host_worktree import (
             WorktreeProxyError,
             create_worktree_on_host,
-            renew_worktree_lease_on_host,
+            worktree_lease_on_host,
         )
 
         try:
-            renewed = await renew_worktree_lease_on_host(
+            result = await worktree_lease_on_host(
                 host_registry=host_registry,
                 host_conn=host_conn,
+                op="renew",
+                session_id=conv.id,
                 worktree_path=conv.workspace,
-                lease_owner=conv.id,
             )
         except WorktreeProxyError as exc:
             raise OmnigentError(exc.message, code=ErrorCode.CONFLICT) from exc
-        if renewed:
+        if result.get("valid") is True or result.get("managed") is not True:
             return conv
 
+        if conv.git_branch is None:
+            raise OmnigentError(
+                "session workspace must be relocated but has no git branch",
+                code=ErrorCode.CONFLICT,
+            )
+        # The fenced lease persists its repo root, so relocation works even
+        # after the workspace directory itself was deleted.
+        relocate_from = (
+            result.get("repo_root")
+            if isinstance(result.get("repo_root"), str) and result.get("repo_root")
+            else conv.workspace
+        )
         _publish_worktree_status(conv.id, "reacquiring", branch=conv.git_branch)
         _publish_worktree_log(conv.id, "The previous worktree was reassigned; relocating…")
         if conv.runner_id is not None:
@@ -631,32 +644,29 @@ def register_events_routes(
                 bump_updated_at=False,
             )
 
-        source_repo = conv.labels.get("omnigent.auto_worktree.source_repo")
-        if not source_repo:
-            raise OmnigentError(
-                "auto worktree session is missing its source repository",
-                code=ErrorCode.CONFLICT,
-            )
         _publish_worktree_status(conv.id, "relocating", branch=conv.git_branch)
 
         def _on_log(line: str) -> None:
             _publish_worktree_log(conv.id, line)
 
         try:
+            # The host resolves the source repo from the relocate-from path
+            # (a git linked worktree resolves back to its main work tree —
+            # or the lease's persisted repo root when the workspace is
+            # already gone), and falls back to the folder record's base
+            # commit when the session branch is gone from the repo's refs.
             created = await create_worktree_on_host(
                 host_registry=host_registry,
                 host_conn=host_conn,
-                repo_path=source_repo,
+                repo_path=relocate_from,
                 branch_name=conv.git_branch,
-                # Fallback base when the session branch is gone from the
-                # host repo's refs (renamed, or created on another host).
-                base_branch=conv.labels.get("omnigent.auto_worktree.base_ref"),
+                base_branch=None,
                 auto_reuse=True,
                 reuse_existing_branch=True,
                 # Re-acquire the session's own worktree when no other live
                 # session holds it — creation is the last resort.
                 reuse_path=conv.workspace,
-                lease_owner=conv.id,
+                session_id=conv.id,
                 on_log=_on_log,
             )
         except WorktreeProxyError as exc:
@@ -821,11 +831,7 @@ def register_events_routes(
                 code=ErrorCode.CONFLICT,
             )
         worktree_status = _session_worktree_status_cache.get(session_id)
-        retrying_auto_restore = (
-            worktree_status is not None
-            and worktree_status.stage == "failed"
-            and conv.labels.get("omnigent.auto_worktree") == "1"
-        )
+        retrying_auto_restore = worktree_status is not None and worktree_status.stage == "failed"
         if (
             worktree_status is not None
             and not retrying_auto_restore
@@ -852,7 +858,7 @@ def register_events_routes(
                     conversation_store.get_conversation,
                     session_id,
                 )
-                conv = await _renew_or_relocate_auto_worktree(latest or conv)
+                conv = await _renew_or_relocate_worktree(latest or conv)
         if in_flight is not None:
             # Marked only after authorization and stale-generation validation,
             # so rejected callers cannot make the session appear active.
@@ -2964,13 +2970,42 @@ def register_events_routes(
             with contextlib.suppress(RuntimeError):
                 await get_terminal_registry().cleanup_conversation(session_id)
         # Opt-in git worktree cleanup: only when delete_branch=true and
-        # the session has a server-created worktree. Runs after runner
-        # teardown but before the irreversible file cleanup below: an
-        # unreachable host fails the delete (409) with the session
-        # retained, so nothing irrecoverable may be destroyed first.
-        # Git errors on a reachable host stay best-effort.
+        # the session has a git workspace. Release the session's claim
+        # first, then decide: another session's active claim keeps the
+        # managed folder; otherwise the folder (and branch) go with the
+        # session. Runs after runner teardown but before the irreversible
+        # file cleanup below: an unreachable host fails the delete (409)
+        # with the session retained, so nothing irrecoverable may be
+        # destroyed first. Git errors on a reachable host stay best-effort.
+        folder_free: bool | None = None
+        if conv.host_id is not None and conv.workspace is not None and host_registry is not None:
+            host_conn = host_registry.get(conv.host_id)
+            if host_conn is not None and host_conn.hello.managed_worktree_leases:
+                from omnigent.server.routes._host_worktree import (
+                    WorktreeProxyError,
+                    worktree_lease_on_host,
+                )
+
+                try:
+                    release_result = await worktree_lease_on_host(
+                        host_registry=host_registry,
+                        host_conn=host_conn,
+                        op="release",
+                        session_id=conv.id,
+                    )
+                    if release_result.get("managed") is True:
+                        # Managed folder: removal only when the last claim
+                        # is gone. Unmanaged folders keep the old behavior
+                        # (the folder belongs to this session alone).
+                        folder_free = release_result.get("folder_free") is True
+                except WorktreeProxyError:
+                    _logger.warning(
+                        "Failed to release managed worktree lease for deleted session %s",
+                        session_id,
+                    )
         if (
             delete_branch
+            and folder_free is not False
             and conv.git_branch is not None
             and conv.workspace is not None
             and conv.host_id is not None
@@ -2986,31 +3021,6 @@ def register_events_routes(
                 exclude_conversation_id=conv.id,
                 fail_if_unavailable=True,
             )
-        if (
-            conv.labels.get("omnigent.auto_worktree") == "1"
-            and conv.host_id is not None
-            and conv.workspace is not None
-            and host_registry is not None
-        ):
-            host_conn = host_registry.get(conv.host_id)
-            if host_conn is not None:
-                from omnigent.server.routes._host_worktree import (
-                    WorktreeProxyError,
-                    release_worktree_lease_on_host,
-                )
-
-                try:
-                    await release_worktree_lease_on_host(
-                        host_registry=host_registry,
-                        host_conn=host_conn,
-                        worktree_path=conv.workspace,
-                        lease_owner=conv.id,
-                    )
-                except WorktreeProxyError:
-                    _logger.warning(
-                        "Failed to release managed worktree lease for deleted session %s",
-                        session_id,
-                    )
         # Session file cleanup.
         if file_store is not None and artifact_store is not None:
             deleted_file_ids = await asyncio.to_thread(

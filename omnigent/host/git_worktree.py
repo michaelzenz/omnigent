@@ -41,6 +41,11 @@ _GIT_TIMEOUT_S: float | None = None
 _AUTO_LEASE_SECONDS = 86_400
 _AUTO_CACHE_PROCESS_LOCK = threading.RLock()
 
+# Registry schema version. v2 stores folders (with a fencing ``seq``) and
+# per-session leases separately; a v1 file fails loud — hand-migrate it to
+# the v2 shape or delete it (a fresh empty registry is seeded), no fallback.
+_REGISTRY_VERSION = 2
+
 # Chars git refuses in a ref: space, control chars, ``~^:?*[\``, DEL.
 # (``..``, leading ``-``/``.``, ``/`` edges, ``.lock``, ``@{`` are
 # checked separately.)
@@ -347,21 +352,86 @@ def _auto_cache_paths() -> tuple[Path, Path]:
     return root / ".auto-worktrees.json", root / ".auto-worktrees.lock"
 
 
+def _read_folder_base_commit(worktree_path: str) -> str | None:
+    """The managed folder record's base commit, or ``None``."""
+    try:
+        with _locked_auto_cache() as reg:
+            folders = cast("dict[str, dict[str, object]]", reg["folders"])
+            folder = folders.get(worktree_path)
+            base = folder.get("base_commit") if isinstance(folder, dict) else None
+            return base if isinstance(base, str) and base else None
+    except WorktreeError:
+        return None
+
+
+def _lease_is_active(lease: object, folder_seq: object, now: int) -> bool:
+    """Whether a lease record is a currently-valid claim on its folder."""
+    if not isinstance(lease, dict):
+        return False
+    expires_at = lease.get("expires_at")
+    return (
+        isinstance(expires_at, int)
+        and not isinstance(expires_at, bool)
+        and expires_at > now
+        and lease.get("seq") == folder_seq
+    )
+
+
+def _active_claim_sessions(
+    leases: object, worktree_path: str, folder_seq: object, now: int
+) -> list[str]:
+    """Sessions holding a currently-valid claim on *worktree_path*."""
+    if not isinstance(leases, dict):
+        return []
+    return [
+        session
+        for session, lease in leases.items()
+        if isinstance(lease, dict)
+        and lease.get("folder") == worktree_path
+        and _lease_is_active(lease, folder_seq, now)
+    ]
+
+
 @contextmanager
 def _locked_auto_cache() -> Generator[dict[str, object], None, None]:
     """Lock and persist the host-local managed-worktree registry."""
     registry_path, lock_path = _auto_cache_paths()
     with _AUTO_CACHE_PROCESS_LOCK, lock_path.open("a+", encoding="utf-8") as lock_file:
+        # Bounded exclusive wait on every platform: acquire holds the lock
+        # through minutes-long git work, and an unbounded block here would
+        # hang server RPCs past their timeouts.
+        deadline = time.monotonic() + 120.0
         if fcntl is not None:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            while True:
+                try:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise WorktreeError(
+                            "timed out waiting for the managed worktree lock"
+                        ) from exc
+                    time.sleep(0.1)
         elif msvcrt is not None:  # pragma: no cover - Windows.
             lock_file.seek(0, os.SEEK_END)
             if lock_file.tell() == 0:
                 lock_file.write("\0")
                 lock_file.flush()
             lock_file.seek(0)
-            deadline = time.monotonic() + 120.0
             while True:
+                try:
+                    msvcrt.locking(  # type: ignore[attr-defined]
+                        lock_file.fileno(),
+                        msvcrt.LK_NBLCK,  # type: ignore[attr-defined]
+                        1,
+                    )
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise WorktreeError(
+                            "timed out waiting for the managed worktree lock"
+                        ) from exc
+                    time.sleep(0.1)
                 try:
                     msvcrt.locking(  # type: ignore[attr-defined]
                         lock_file.fileno(),
@@ -380,7 +450,20 @@ def _locked_auto_cache() -> Generator[dict[str, object], None, None]:
                 raw = json.loads(registry_path.read_text(encoding="utf-8"))
             except (FileNotFoundError, json.JSONDecodeError, OSError):
                 raw = {}
-            entries: dict[str, object] = raw if isinstance(raw, dict) else {}
+            if not isinstance(raw, dict) or not raw:
+                # Fresh host: seed the empty v2 registry.
+                raw = {"version": _REGISTRY_VERSION, "folders": {}, "leases": {}}
+            elif raw.get("version") != _REGISTRY_VERSION:
+                raise WorktreeError(
+                    "managed worktree registry has an unsupported schema "
+                    f"(expected version {_REGISTRY_VERSION}); hand-migrate "
+                    "the file to the v2 shape or delete it to start fresh"
+                )
+            if not isinstance(raw.get("folders"), dict):
+                raw["folders"] = {}
+            if not isinstance(raw.get("leases"), dict):
+                raw["leases"] = {}
+            entries = cast("dict[str, object]", raw)
             yield entries
             temp_path = registry_path.with_suffix(".tmp")
             temp_path.write_text(json.dumps(entries, sort_keys=True), encoding="utf-8")
@@ -419,14 +502,13 @@ def acquire_auto_worktree_streaming(
     *,
     repo_path: str,
     branch_name: str,
-    lease_owner: str,
+    session_id: str,
     base_branch: str | None = None,
     auto_fetch_base: bool = False,
     lease_seconds: int = _AUTO_LEASE_SECONDS,
     reuse_existing_branch: bool = False,
     reuse_path: str | None = None,
     on_log: Callable[[str], None] | None = None,
-    on_reclaim: Callable[[str, str], bool] | None = None,
 ) -> CreatedWorktree:
     """Atomically reuse a clean managed worktree or create and lease one."""
     validate_branch_name(branch_name)
@@ -472,6 +554,22 @@ def acquire_auto_worktree_streaming(
                     ["rev-parse", "--verify", "--end-of-options", base_branch],
                     cwd=repo_root,
                 )
+            elif reuse_path is not None:
+                # Relocation without an explicit base: recreate the missing
+                # branch from the folder record's original base commit
+                # (replaces the removed base_ref label) rather than an
+                # unrelated current HEAD.
+                recorded_base = _read_folder_base_commit(reuse_path)
+                if recorded_base is not None:
+                    if on_log is not None:
+                        on_log(
+                            f"Branch {branch_name!r} is not in this repo's refs; "
+                            "falling back to the recorded base commit…"
+                        )
+                    base_result = _run_git(
+                        ["rev-parse", "--verify", "--end-of-options", recorded_base],
+                        cwd=repo_root,
+                    )
             if base_result.returncode != 0:
                 base_ref = "HEAD"
                 base_result = _run_git(
@@ -492,49 +590,89 @@ def acquire_auto_worktree_streaming(
     base_commit = base_result.stdout.strip()
     now = int(time.time())
 
-    with _locked_auto_cache() as raw_entries:
-        if not isinstance(raw_entries, dict):  # pragma: no cover - context normalizes this
-            raise WorktreeError("managed worktree registry is invalid")
+    with _locked_auto_cache() as reg:
+        folders = cast("dict[str, dict[str, object]]", reg["folders"])
+        leases = cast("dict[str, dict[str, object]]", reg["leases"])
         worktrees = {worktree.path: worktree for worktree in list_worktrees(repo_path=repo_root)}
 
-        def _lease_holder(path: str) -> tuple[str | None, bool]:
-            """Return (owner, lease_active) for a registry entry."""
-            raw = raw_entries.get(path)
-            if not isinstance(raw, dict):
-                return None, False
-            owner = raw.get("lease_owner")
-            owner = owner if isinstance(owner, str) else None
-            expires_at = raw.get("lease_expires_at")
-            active = (
-                isinstance(expires_at, int)
-                and not isinstance(expires_at, bool)
-                and expires_at > now
-            )
-            return owner, active and owner is not None
+        def _folder_seq(path: str) -> object:
+            """Current fencing seq of a managed folder, or ``None``."""
+            folder = folders.get(path)
+            return folder.get("seq") if isinstance(folder, dict) else None
 
-        def _adopt(worktree: WorktreeInfo, branch: str) -> CreatedWorktree:
-            """Register the lease on an existing worktree and adopt it as-is."""
-            entry = raw_entries.get(worktree.path)
-            if not isinstance(entry, dict):
-                entry = {"repo_root": repo_root, "created_at": now}
-                raw_entries[worktree.path] = entry
-            entry_map = cast("dict[str, object]", entry)
-            previous_generation = entry_map.get("generation")
-            updates: dict[str, object] = {
-                "branch": branch,
-                "base_commit": base_commit,
-                "lease_owner": lease_owner,
-                "lease_expires_at": now + lease_seconds,
-                "generation": (
-                    previous_generation
-                    if isinstance(previous_generation, int)
-                    and not isinstance(previous_generation, bool)
-                    else 1
-                ),
-                "health": "ready",
+        def _contended(path: str) -> bool:
+            """Whether another session holds a currently-valid claim."""
+            return any(
+                session != session_id
+                for session in _active_claim_sessions(leases, path, _folder_seq(path), now)
+            )
+
+        def _claim_folder(
+            path: str,
+            *,
+            branch: str | None,
+            bump: bool,
+        ) -> None:
+            """Take or refresh the session's claim on a managed folder.
+
+            ``bump`` fences the folder: every other session's claim becomes
+            stale (seq mismatch) and its next dispatch relocates. Only the
+            pool-adoption paths bump; co-use grants keep the current seq.
+            """
+            folder = folders.get(path)
+            if not isinstance(folder, dict):
+                folder = {
+                    "repo_root": repo_root,
+                    "created_at": now,
+                    "seq": 1,
+                    "generation": 1,
+                }
+                record = cast("dict[str, object]", folder)
+                folders[path] = record
+                new_seq = 1
+            else:
+                record = folder
+                previous_seq = folder.get("seq")
+                previous_seq = previous_seq if isinstance(previous_seq, int) else 0
+                new_seq = previous_seq + 1 if bump else previous_seq
+                record["seq"] = new_seq
+            record["branch"] = branch
+            record["base_commit"] = base_commit
+            record["health"] = "ready"
+            leases[session_id] = {
+                "folder": path,
+                "seq": new_seq,
+                "expires_at": now + lease_seconds,
                 "last_used_at": now,
+                # Survives folder-record pruning: a fenced session must be
+                # able to relocate even after its workspace dir is deleted.
+                "repo_root": repo_root,
             }
-            entry_map.update(updates)
+            record["last_used_at"] = now
+
+        def _adopt(worktree: WorktreeInfo, branch: str) -> CreatedWorktree | None:
+            """Take over an existing worktree as-is, fencing other claims.
+
+            Adopting as-is (skipping the clean check) is only safe when the
+            folder is the session's own current-generation claim — its WIP.
+            A folder whose current claim belongs to another generation may
+            hold that session's uncommitted work; adopting it dirty would
+            hand one session's WIP to another.
+            """
+            prior_lease = leases.get(session_id)
+            own_current = (
+                isinstance(prior_lease, dict)
+                and prior_lease.get("folder") == worktree.path
+                and prior_lease.get("seq") == _folder_seq(worktree.path)
+            )
+            if not own_current and not _worktree_is_clean(worktree.path):
+                if on_log is not None:
+                    on_log(
+                        f"Worktree {worktree.path} holds another generation's "
+                        "uncommitted work; creating a fresh folder…"
+                    )
+                return None
+            _claim_folder(worktree.path, branch=branch, bump=True)
             if on_log is not None:
                 on_log(f"Reacquired existing worktree {worktree.path}.")
             return CreatedWorktree(worktree_path=worktree.path, branch=branch)
@@ -548,19 +686,13 @@ def acquire_auto_worktree_streaming(
             # the session row to it.
             live = worktrees.get(reuse_path)
             if live is not None and not live.is_main and live.branch is not None:
-                owner, active = _lease_holder(reuse_path)
-                contested = active and owner != lease_owner
-                reclaim_failed = (
-                    not contested
-                    and owner is not None
-                    and on_reclaim is not None
-                    and not on_reclaim(owner, reuse_path)
-                )
-                if contested or reclaim_failed:
+                if _contended(reuse_path):
                     if on_log is not None:
                         on_log(f"Worktree {reuse_path} is held by another session; relocating…")
                 else:
-                    return _adopt(live, live.branch)
+                    adopted = _adopt(live, live.branch)
+                    if adopted is not None:
+                        return adopted
         if reuse_existing_branch:
             # Relocation fallback: adopt a live worktree that already has
             # the branch checked out (registry entry lost, but the branch
@@ -570,78 +702,63 @@ def acquire_auto_worktree_streaming(
                 None,
             )
             if live is not None and live.branch is not None:
-                owner, active = _lease_holder(live.path)
-                contested = active and owner != lease_owner
-                reclaim_failed = (
-                    not contested
-                    and owner is not None
-                    and on_reclaim is not None
-                    and not on_reclaim(owner, live.path)
-                )
-                if not contested and not reclaim_failed:
-                    return _adopt(live, live.branch)
+                if not _contended(live.path):
+                    adopted = _adopt(live, live.branch)
+                    if adopted is not None:
+                        return adopted
         candidates: list[tuple[str, dict[str, object]]] = []
-        for path, raw_entry in list(raw_entries.items()):
-            if not isinstance(path, str) or not isinstance(raw_entry, dict):
-                raw_entries.pop(path, None)
+        for path, folder in list(folders.items()):
+            if not isinstance(path, str) or not isinstance(folder, dict):
+                folders.pop(path, None)
                 continue
-            if raw_entry.get("repo_root") != repo_root:
+            if folder.get("repo_root") != repo_root:
                 continue
             worktree = worktrees.get(path)
             if worktree is None or worktree.is_main:
-                raw_entries.pop(path, None)
+                # The worktree directory is gone — prune the record. Leases
+                # pointing at it stay until their sessions relocate.
+                folders.pop(path, None)
                 continue
-            expires_at = raw_entry.get("lease_expires_at")
-            owner = raw_entry.get("lease_owner")
-            if owner == lease_owner or not isinstance(expires_at, int) or expires_at <= now:
-                candidates.append((path, raw_entry))
+            if _active_claim_sessions(leases, path, folder.get("seq"), now):
+                # An unexpired claim holds this folder — not a reuse candidate.
+                continue
+            candidates.append((path, folder))
 
         def _last_used(candidate: tuple[str, dict[str, object]]) -> int:
             value = candidate[1].get("last_used_at")
             return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
-        for path, entry in sorted(candidates, key=_last_used):
-            same_owner = entry.get("lease_owner") == lease_owner
+        for path, folder in sorted(candidates, key=_last_used):
             worktree = worktrees[path]
-            if same_owner and worktree.branch == branch_name:
-                entry.update(
-                    {
-                        "lease_expires_at": now + lease_seconds,
-                        "last_used_at": now,
-                        "health": "ready",
-                    }
-                )
+            prior_lease = leases.get(session_id)
+            own_folder = (
+                isinstance(prior_lease, dict)
+                and prior_lease.get("folder") == path
+                # Only the folder's CURRENT generation can be the session's
+                # own WIP; a fenced lease means the WIP may belong to the
+                # session that took the folder over since.
+                and prior_lease.get("seq") == folder.get("seq")
+            )
+            if own_folder and worktree.branch == branch_name:
+                # Reclaiming the session's own folder — its uncommitted work
+                # is the session's WIP, so skip the clean check and reuse
+                # it as-is.
+                _claim_folder(path, branch=worktree.branch, bump=True)
                 if on_log is not None:
                     on_log(f"Reacquired existing worktree {path}.")
                 return CreatedWorktree(worktree_path=path, branch=branch_name)
-            previous_owner = entry.get("lease_owner")
-            if (
-                isinstance(previous_owner, str)
-                and previous_owner != lease_owner
-                and on_reclaim is not None
-                and not on_reclaim(previous_owner, path)
-            ):
-                continue
             if not _worktree_is_clean(path):
-                entry["health"] = "dirty"
-                entry["lease_expires_at"] = None
+                folder["health"] = "dirty"
                 continue
-            previous_generation = entry.get("generation")
-            generation = (
+            previous_generation = folder.get("generation")
+            folder["generation"] = (
                 previous_generation
                 if isinstance(previous_generation, int)
                 and not isinstance(previous_generation, bool)
                 else 0
             ) + 1
-            entry.update(
-                {
-                    "lease_owner": lease_owner,
-                    "lease_expires_at": now + lease_seconds,
-                    "generation": generation,
-                    "health": "preparing",
-                    "last_used_at": now,
-                }
-            )
+            folder["health"] = "preparing"
+            folder["last_used_at"] = now
             if on_log is not None:
                 on_log(f"Reusing managed worktree {path}…")
             try:
@@ -657,22 +774,12 @@ def acquire_auto_worktree_streaming(
                     label="git switch failed",
                 )
             except WorktreeError:
-                entry["health"] = "quarantined"
-                entry["lease_owner"] = None
-                entry["lease_expires_at"] = None
+                folder["health"] = "quarantined"
                 continue
             if result.returncode != 0:
-                entry["health"] = "quarantined"
-                entry["lease_owner"] = None
-                entry["lease_expires_at"] = None
+                folder["health"] = "quarantined"
                 continue
-            entry.update(
-                {
-                    "branch": branch_name,
-                    "base_commit": base_commit,
-                    "health": "ready",
-                }
-            )
+            _claim_folder(path, branch=branch_name, bump=True)
             return CreatedWorktree(worktree_path=path, branch=branch_name)
 
         if reuse_existing_branch and branch_in_refs:
@@ -708,38 +815,165 @@ def acquire_auto_worktree_streaming(
                 auto_fetch_base=False,
                 on_log=on_log,
             )
-        raw_entries[created.worktree_path] = {
+        folders[created.worktree_path] = {
             "repo_root": repo_root,
             "branch": created.branch,
             "base_commit": base_commit,
-            "lease_owner": lease_owner,
-            "lease_expires_at": now + lease_seconds,
+            "seq": 1,
             "generation": 1,
             "health": "ready",
             "created_at": now,
             "last_used_at": now,
         }
+        leases[session_id] = {
+            "folder": created.worktree_path,
+            "seq": 1,
+            "expires_at": now + lease_seconds,
+            "last_used_at": now,
+            "repo_root": repo_root,
+        }
         return created
+
+
+def grant_auto_worktree_lease(
+    *,
+    worktree_path: str,
+    session_id: str,
+    lease_seconds: int = _AUTO_LEASE_SECONDS,
+) -> bool:
+    """Grant the session's lease on a managed folder at its current seq.
+
+    Used when a session binds to a folder that is already managed — its own
+    creation, a relocation rebind, or deliberate co-use of an in-use
+    folder. Grants never bump the seq, so co-users never invalidate each
+    other. ``False`` when the folder is not managed.
+    """
+    now = int(time.time())
+    with _locked_auto_cache() as reg:
+        folders = cast("dict[str, dict[str, object]]", reg["folders"])
+        folder = folders.get(worktree_path)
+        if not isinstance(folder, dict):
+            return False
+        seq = folder.get("seq")
+        seq = seq if isinstance(seq, int) else 0
+        leases = cast("dict[str, dict[str, object]]", reg["leases"])
+        leases[session_id] = {
+            "folder": worktree_path,
+            "seq": seq,
+            "expires_at": now + lease_seconds,
+            "last_used_at": now,
+            "repo_root": folder.get("repo_root"),
+        }
+        folder["last_used_at"] = now
+        return True
 
 
 def renew_auto_worktree_lease(
     *,
     worktree_path: str,
-    lease_owner: str,
+    session_id: str,
     lease_seconds: int = _AUTO_LEASE_SECONDS,
-    release: bool = False,
-) -> bool:
-    """Extend a managed lease only when the caller still owns it."""
+) -> dict[str, object]:
+    """Validate and extend the session's lease.
+
+    :returns: ``{valid, managed, repo_root}``. ``managed`` says whether the
+        session participates in the managed-worktree model at all: it holds
+        a lease on this folder, or the folder is a registered managed
+        folder. A lease-less session on a managed folder (fork /
+        existing-worktree binding before its first claim, or an expired
+        lease whose folder nobody took over) earns its claim here — grant
+        at the folder's current seq, no bump.
+
+        ``valid=False`` with ``managed=True`` means the folder was
+        reassigned: the folder's seq moved past the lease's seq (fencing),
+        or the folder record is gone. The session must relocate;
+        ``repo_root`` (persisted on the lease) is the repo to rebuild from
+        when the workspace directory no longer exists.
+    """
     now = int(time.time())
-    with _locked_auto_cache() as entries:
-        entry = entries.get(worktree_path)
-        if not isinstance(entry, dict) or entry.get("lease_owner") != lease_owner:
-            return False
-        entry["lease_expires_at"] = 0 if release else now + lease_seconds
-        if release:
-            entry["lease_owner"] = None
-        entry["last_used_at"] = now
-        return True
+    with _locked_auto_cache() as reg:
+        folders = cast("dict[str, dict[str, object]]", reg["folders"])
+        leases = cast("dict[str, dict[str, object]]", reg["leases"])
+        folder = folders.get(worktree_path)
+        folder_managed = isinstance(folder, dict)
+        lease = leases.get(session_id)
+        lease_on_folder = isinstance(lease, dict) and lease.get("folder") == worktree_path
+        if not folder_managed and not lease_on_folder:
+            return {"valid": False, "managed": False, "repo_root": None}
+        if not isinstance(folder, dict):
+            # The folder record was pruned (worktree directory deleted) —
+            # the session's workspace is gone; relocate from the lease's
+            # persisted repo root.
+            return {
+                "valid": False,
+                "managed": True,
+                "repo_root": lease.get("repo_root") if isinstance(lease, dict) else None,
+            }
+        seq = folder.get("seq")
+        seq = seq if isinstance(seq, int) else 0
+        folder_repo_root = folder.get("repo_root")
+        if not lease_on_folder:
+            # First claim by this session on a managed folder.
+            leases[session_id] = {
+                "folder": worktree_path,
+                "seq": seq,
+                "expires_at": now + lease_seconds,
+                "last_used_at": now,
+                "repo_root": folder_repo_root,
+            }
+            folder["last_used_at"] = now
+            return {"valid": True, "managed": True, "repo_root": folder_repo_root}
+        assert isinstance(lease, dict)
+        if lease.get("seq") != seq:
+            # Fenced: another session took the folder over. Relocate.
+            fenced_repo_root = lease.get("repo_root") or folder_repo_root
+            return {"valid": False, "managed": True, "repo_root": fenced_repo_root}
+        lease["expires_at"] = now + lease_seconds
+        lease["last_used_at"] = now
+        if not lease.get("repo_root"):
+            lease["repo_root"] = folder_repo_root
+        folder["last_used_at"] = now
+        return {"valid": True, "managed": True, "repo_root": lease.get("repo_root")}
+
+
+def release_auto_worktree_lease(*, session_id: str) -> dict[str, object]:
+    """Drop the session's lease. Returns the folder's post-release state.
+
+    :returns: ``{released, folder_path, folder_managed, folder_free}`` —
+        ``folder_free`` is whether no unexpired claims remain, i.e. the
+        folder is back in the reuse pool.
+    """
+    with _locked_auto_cache() as reg:
+        folders = cast("dict[str, dict[str, object]]", reg["folders"])
+        leases = cast("dict[str, dict[str, object]]", reg["leases"])
+        lease = leases.pop(session_id, None)
+        folder_path: str | None = None
+        folder_managed = False
+        folder_free = True
+        if isinstance(lease, dict) and isinstance(lease.get("folder"), str):
+            folder_path = cast("str", lease["folder"])
+            folder = folders.get(folder_path)
+            folder_managed = isinstance(folder, dict)
+            folder_seq = folder.get("seq") if isinstance(folder, dict) else None
+            folder_free = not _active_claim_sessions(
+                leases, folder_path, folder_seq, int(time.time())
+            )
+        return {
+            "released": isinstance(lease, dict),
+            "folder_path": folder_path,
+            "folder_managed": folder_managed,
+            "folder_free": folder_free,
+        }
+
+
+def folder_has_active_claims(*, worktree_path: str) -> bool:
+    """Whether any unexpired claim currently holds *worktree_path*."""
+    now = int(time.time())
+    with _locked_auto_cache() as reg:
+        folders = cast("dict[str, dict[str, object]]", reg["folders"])
+        folder = folders.get(worktree_path)
+        folder_seq = folder.get("seq") if isinstance(folder, dict) else None
+        return bool(_active_claim_sessions(reg["leases"], worktree_path, folder_seq, now))
 
 
 def create_worktree(
@@ -1153,9 +1387,19 @@ def remove_worktree(
         deletion.
     :param delete_branch: When ``True``, run ``git branch -D`` on
         ``branch`` after removing the worktree directory.
-    :raises WorktreeError: If the worktree path is missing/invalid, or
-        a git command fails.
+    :raises WorktreeError: If the worktree path is missing/invalid, the
+        folder still holds another session's active lease, or a git
+        command fails.
     """
+    # Registry-aware guard: a managed folder with another session's
+    # unexpired claim must not be removed out from under it (closes the
+    # release→remove window against a concurrent acquire re-claiming the
+    # freed folder).
+    if folder_has_active_claims(worktree_path=worktree_path):
+        raise WorktreeError(
+            "managed worktree is still leased by another session; "
+            "release its lease before removing"
+        )
     try:
         main_repo = _main_repo_for_worktree(worktree_path)
     except WorktreeError:

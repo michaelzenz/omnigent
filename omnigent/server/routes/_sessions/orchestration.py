@@ -6708,8 +6708,14 @@ async def _relay_runner_stream(
             return
 
 
-_auto_worktree_lease_renewed_at: dict[str, float] = {}
+_auto_worktree_lease_renewed_at: dict[str, tuple[float, bool]] = {}
 _AUTO_WORKTREE_RENEW_INTERVAL_S = 3_600
+# Declined renewals (plain-folder workspace, or the lease actively held by
+# another co-user) retry on a shorter clock than the hourly success cadence,
+# but not on every 15s heartbeat — a decline is either permanent (no managed
+# entry) or self-resolving (the holder's own renewal), so hammering the host
+# registry between heartbeats buys nothing.
+_AUTO_WORKTREE_RENEW_DECLINED_INTERVAL_S = 300
 
 
 async def _renew_active_auto_worktree_lease(
@@ -6722,19 +6728,26 @@ async def _renew_active_auto_worktree_lease(
     if _session_status_cache.get(session_id) not in ("running", "waiting"):
         return
     now = time.time()
-    if now - _auto_worktree_lease_renewed_at.get(session_id, 0) < _AUTO_WORKTREE_RENEW_INTERVAL_S:
+    last_ts, last_ok = _auto_worktree_lease_renewed_at.get(session_id, (0.0, True))
+    interval = (
+        _AUTO_WORKTREE_RENEW_INTERVAL_S if last_ok else _AUTO_WORKTREE_RENEW_DECLINED_INTERVAL_S
+    )
+    if now - last_ts < interval:
         return
+    # Bound the map: idle sessions' entries are only read here, so drop
+    # ones older than two success cadences.
+    if len(_auto_worktree_lease_renewed_at) > 4_096:
+        cutoff = now - 2 * _AUTO_WORKTREE_RENEW_INTERVAL_S
+        for stale in [
+            key for key, (ts, _ok) in _auto_worktree_lease_renewed_at.items() if ts < cutoff
+        ]:
+            _auto_worktree_lease_renewed_at.pop(stale, None)
     conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
-    if (
-        conv is None
-        or conv.labels.get("omnigent.auto_worktree") != "1"
-        or conv.host_id is None
-        or conv.workspace is None
-    ):
+    if conv is None or conv.host_id is None or conv.workspace is None:
         return
     from omnigent.server.routes._host_worktree import (
         WorktreeProxyError,
-        renew_worktree_lease_on_host,
+        worktree_lease_on_host,
     )
     from omnigent.server.routes._sessions.common import get_server_host_registry
 
@@ -6743,17 +6756,30 @@ async def _renew_active_auto_worktree_lease(
     if host_registry is None or host_conn is None or not host_conn.hello.managed_worktree_leases:
         return
     try:
-        renewed = await renew_worktree_lease_on_host(
+        result = await worktree_lease_on_host(
             host_registry=host_registry,
             host_conn=host_conn,
+            op="renew",
+            session_id=session_id,
             worktree_path=conv.workspace,
-            lease_owner=session_id,
         )
     except WorktreeProxyError:
         _logger.warning("Failed to renew active worktree lease for %s", session_id)
         return
-    if renewed:
-        _auto_worktree_lease_renewed_at[session_id] = now
+    if result.get("valid") is True:
+        _auto_worktree_lease_renewed_at[session_id] = (now, True)
+    else:
+        # Not renewed: the workspace is a plain folder (not managed), or the
+        # folder was reassigned (fenced) — relocation happens at the next
+        # dispatch. An active claim from any co-user keeps the worktree out
+        # of the reuse pool either way.
+        _auto_worktree_lease_renewed_at[session_id] = (now, False)
+        _logger.debug(
+            "Worktree lease not renewed for %s at %s (not a managed worktree, "
+            "or reassigned to another session)",
+            session_id,
+            conv.workspace,
+        )
 
 
 async def _relay_runner_stream_once(
@@ -9950,7 +9976,7 @@ async def _run_worktree_creation(
 
     try:
         auto_options: dict[str, Any] = (
-            {"auto_reuse": True, "lease_owner": session_id} if auto_create else {}
+            {"auto_reuse": True, "session_id": session_id} if auto_create else {}
         )
         created = await create_worktree_on_host(
             host_registry=host_registry,
@@ -9977,7 +10003,8 @@ async def _run_worktree_creation(
         )
         return
 
-    # Patch the session's workspace to the worktree path.
+    # Patch the session's workspace to the worktree path. The lease was
+    # granted host-side by the acquire flow — no session marker needed.
     try:
         await asyncio.to_thread(
             conversation_store.set_host_id,
@@ -9986,16 +10013,6 @@ async def _run_worktree_creation(
             workspace=created.worktree_path,
             git_branch=created.branch,
         )
-        if auto_create:
-            await asyncio.to_thread(
-                conversation_store.set_labels,
-                session_id,
-                {
-                    "omnigent.auto_worktree": "1",
-                    "omnigent.auto_worktree.source_repo": source_repo,
-                    "omnigent.auto_worktree.base_ref": base_branch or "",
-                },
-            )
     except Exception:  # noqa: BLE001
         _logger.exception("Failed to patch workspace for %s", session_id)
         _publish_worktree_status(

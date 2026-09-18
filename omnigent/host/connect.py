@@ -76,8 +76,6 @@ from omnigent.host.frames import (
     HostModelOptionsResultFrame,
     HostRemoveWorktreeFrame,
     HostRemoveWorktreeResultFrame,
-    HostRenewWorktreeLeaseFrame,
-    HostRenewWorktreeLeaseResultFrame,
     HostRunnerExitedFrame,
     HostRunnerStatusFrame,
     HostRunnerStatusResultFrame,
@@ -90,6 +88,8 @@ from omnigent.host.frames import (
     HostStopRunnerResultFrame,
     HostStoreSecretFrame,
     HostStoreSecretResultFrame,
+    HostWorktreeLeaseFrame,
+    HostWorktreeLeaseResultFrame,
     HostWorktreeLogFrame,
     HostWorktreeSizesFrame,
     HostWorktreeSizesResultFrame,
@@ -100,7 +100,9 @@ from omnigent.host.git_worktree import (
     WorktreeError,
     acquire_auto_worktree_streaming,
     create_worktree_streaming,
+    grant_auto_worktree_lease,
     list_worktrees,
+    release_auto_worktree_lease,
     remove_worktree,
     renew_auto_worktree_lease,
 )
@@ -3334,36 +3336,6 @@ class HostProcess:
             return r.github_pr_diff()
         raise ValueError(f"unknown fs op: {op!r}")
 
-    async def _reclaim_worktree_runners(
-        self,
-        previous_owner: str,
-        worktree_path: str,
-    ) -> bool:
-        """Intentionally stop runners before an expired worktree is reused."""
-        target = Path(worktree_path).resolve()
-        async with self._runner_lifecycle_lock:
-            matches = [
-                (runner_id, handle)
-                for runner_id, handle in self._runners.items()
-                if handle.session_id == previous_owner
-                and Path(handle.workspace).resolve() == target
-            ]
-            for runner_id, _handle in matches:
-                self._runners.pop(runner_id, None)
-        try:
-            for _runner_id, handle in matches:
-                await asyncio.to_thread(self._stop_runner_proc, handle.proc)
-        except OSError:
-            async with self._runner_lifecycle_lock:
-                for runner_id, handle in matches:
-                    if await asyncio.to_thread(handle.proc.poll) is None:
-                        self._runners[runner_id] = handle
-            return False
-        for _, handle in matches:
-            if await asyncio.to_thread(handle.proc.poll) is None:
-                return False
-        return True
-
     async def _handle_create_worktree(
         self,
         frame: HostCreateWorktreeFrame,
@@ -3399,21 +3371,6 @@ class HostProcess:
                 loop,
             )
 
-        def _on_reclaim(previous_owner: str, worktree_path: str) -> bool:
-            future = asyncio.run_coroutine_threadsafe(
-                self._reclaim_worktree_runners(previous_owner, worktree_path),
-                loop,
-            )
-            try:
-                return future.result(timeout=35.0)
-            except (TimeoutError, OSError):
-                _logger.warning(
-                    "Could not stop stale runner for managed worktree %s",
-                    worktree_path,
-                    exc_info=True,
-                )
-                return False
-
         try:
             # Pause the orphan reaper: create_worktree runs git via
             # subprocess.run, whose children are direct children of this host
@@ -3421,20 +3378,19 @@ class HostProcess:
             # from under subprocess (#1782).
             with self._host_subprocess_op():
                 if frame.auto_reuse:
-                    if not frame.lease_owner:
-                        raise WorktreeError("auto worktree creation requires a lease owner")
+                    if not frame.session_id:
+                        raise WorktreeError("auto worktree creation requires a session id")
                     created = await asyncio.to_thread(
                         acquire_auto_worktree_streaming,
                         repo_path=frame.repo_path,
                         branch_name=frame.branch_name,
                         base_branch=frame.base_branch,
                         auto_fetch_base=frame.auto_fetch_base,
-                        lease_owner=frame.lease_owner,
+                        session_id=frame.session_id,
                         lease_seconds=frame.lease_seconds,
                         reuse_existing_branch=frame.reuse_existing_branch,
                         reuse_path=frame.reuse_path,
                         on_log=_on_log,
-                        on_reclaim=_on_reclaim,
                     )
                 elif frame.existing_branch:
                     # Upstream recreate path: check the pre-existing branch
@@ -3716,28 +3672,76 @@ class HostProcess:
             error=result.error,
         )
 
-    async def _handle_renew_worktree_lease(
+    async def _handle_worktree_lease(
         self,
-        frame: HostRenewWorktreeLeaseFrame,
-    ) -> HostRenewWorktreeLeaseResultFrame:
-        try:
-            renewed = await asyncio.to_thread(
-                renew_auto_worktree_lease,
-                worktree_path=frame.worktree_path,
-                lease_owner=frame.lease_owner,
-                lease_seconds=frame.lease_seconds,
-                release=frame.release,
-            )
-        except (OSError, ValueError) as exc:
-            return HostRenewWorktreeLeaseResultFrame(
+        frame: HostWorktreeLeaseFrame,
+    ) -> HostWorktreeLeaseResultFrame:
+        if frame.op == "grant":
+            try:
+                granted = await asyncio.to_thread(
+                    grant_auto_worktree_lease,
+                    worktree_path=frame.worktree_path,
+                    session_id=frame.session_id,
+                    lease_seconds=frame.lease_seconds,
+                )
+            except (OSError, ValueError) as exc:
+                return HostWorktreeLeaseResultFrame(
+                    request_id=frame.request_id,
+                    status="failed",
+                    error=str(exc),
+                )
+            return HostWorktreeLeaseResultFrame(
                 request_id=frame.request_id,
-                status="failed",
-                error=str(exc),
+                status="ok",
+                valid=granted,
+                managed=granted,
             )
-        return HostRenewWorktreeLeaseResultFrame(
+        if frame.op == "renew":
+            try:
+                result = await asyncio.to_thread(
+                    renew_auto_worktree_lease,
+                    worktree_path=frame.worktree_path,
+                    session_id=frame.session_id,
+                    lease_seconds=frame.lease_seconds,
+                )
+            except (OSError, ValueError) as exc:
+                return HostWorktreeLeaseResultFrame(
+                    request_id=frame.request_id,
+                    status="failed",
+                    error=str(exc),
+                )
+            return HostWorktreeLeaseResultFrame(
+                request_id=frame.request_id,
+                status="ok",
+                valid=result.get("valid") is True,
+                managed=result.get("managed") is True,
+                repo_root=(
+                    result.get("repo_root") if isinstance(result.get("repo_root"), str) else None
+                ),
+            )
+        if frame.op == "release":
+            try:
+                result = await asyncio.to_thread(
+                    release_auto_worktree_lease,
+                    session_id=frame.session_id,
+                )
+            except (OSError, ValueError) as exc:
+                return HostWorktreeLeaseResultFrame(
+                    request_id=frame.request_id,
+                    status="failed",
+                    error=str(exc),
+                )
+            return HostWorktreeLeaseResultFrame(
+                request_id=frame.request_id,
+                status="ok",
+                released=result.get("released") is True,
+                managed=result.get("folder_managed") is True,
+                folder_free=result.get("folder_free") is True,
+            )
+        return HostWorktreeLeaseResultFrame(
             request_id=frame.request_id,
-            status="ok",
-            renewed=renewed,
+            status="failed",
+            error=f"unknown worktree lease op: {frame.op!r}",
         )
 
     async def _lifecycle_monitor_loop(self) -> None:
@@ -4730,8 +4734,8 @@ class HostProcess:
             await ws.send(encode_host_frame(await self._handle_remove_worktree(frame)))
         elif isinstance(frame, HostListWorktreesFrame):
             await ws.send(encode_host_frame(await self._handle_list_worktrees(frame)))
-        elif isinstance(frame, HostRenewWorktreeLeaseFrame):
-            await ws.send(encode_host_frame(await self._handle_renew_worktree_lease(frame)))
+        elif isinstance(frame, HostWorktreeLeaseFrame):
+            await ws.send(encode_host_frame(await self._handle_worktree_lease(frame)))
         elif isinstance(frame, HostWorktreeSizesFrame):
             result = await self._handle_worktree_sizes(frame)
             await ws.send(encode_host_frame(result))

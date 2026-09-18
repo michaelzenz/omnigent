@@ -73,17 +73,21 @@ def test_fork_drops_import_provenance_labels(
     assert IMPORT_EXTERNAL_SESSION_ID_LABEL_KEY not in fork.labels
 
 
-def test_fork_drops_auto_worktree_lease_labels(
+def test_fork_drops_stale_auto_worktree_labels(
     conversation_store: SqlAlchemyConversationStore,
 ) -> None:
-    """A fork must acquire its own managed-worktree lease metadata."""
+    """Lease state lives in the host registry, not in labels.
+
+    The ``omnigent.auto_worktree*`` marker is removed from the lease model,
+    but a database that has not run the strip migration yet may still carry
+    it — a fork must not inherit the stale marker.
+    """
     source = conversation_store.create_conversation()
     conversation_store.set_labels(
         source.id,
         {
             "omnigent.auto_worktree": "1",
             "omnigent.auto_worktree.source_repo": "/repo",
-            "omnigent.auto_worktree.base_ref": "main",
             "kept": "yes",
         },
     )
