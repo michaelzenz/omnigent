@@ -337,95 +337,101 @@ export function TaskCard({
         </div>
       ) : dashboard ? (
         <div className="puppy-task-card-body grid min-w-0 gap-5 p-4">
-          <section className="min-w-0 space-y-4">
-            <div>
-              <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                Overview
-              </h3>
-              {effectiveDescription ? (
-                <div className="prose prose-sm dark:prose-invert max-w-none break-words">
-                  <HighlightedMarkdown>{effectiveDescription}</HighlightedMarkdown>
+          {/* Overview and task items stack as two full-width rows; the assets/workers
+           * rail keeps its right-hand column. */}
+          <div className="grid min-w-0 content-start gap-5">
+            <section className="min-w-0 space-y-4">
+              <div>
+                <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                  Overview
+                </h3>
+                {effectiveDescription ? (
+                  <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+                    <HighlightedMarkdown>{effectiveDescription}</HighlightedMarkdown>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No overview yet.</p>
+                )}
+              </div>
+              <dl className="puppy-task-card-meta grid gap-x-4 gap-y-3 rounded-lg border border-border bg-muted/20 p-3">
+                <div className="min-w-0">
+                  <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                    Manager
+                  </dt>
+                  <dd className="mt-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={managerSelected ? "default" : "outline"}
+                      className="h-auto min-h-9 w-full max-w-full justify-start gap-1.5 whitespace-normal px-2 py-1.5 text-left leading-tight"
+                      disabled={managerHoldPending}
+                      onClick={async (event) => {
+                        event.stopPropagation();
+                        setManagerHoldPending(true);
+                        setManagerHoldError(null);
+                        try {
+                          await openManager(taskId, dashboard.task.manager_conversation_id, title);
+                        } catch (openError) {
+                          setManagerHoldError(
+                            openError instanceof Error
+                              ? openError.message
+                              : "Could not pause manager dispatch",
+                          );
+                        } finally {
+                          setManagerHoldPending(false);
+                        }
+                      }}
+                    >
+                      {managerHoldPending ? (
+                        <Loader2Icon className="size-4 animate-spin" aria-hidden />
+                      ) : (
+                        <MessageSquareIcon aria-hidden />
+                      )}
+                      {managerHoldPending ? "Pausing…" : "Open manager chat"}
+                    </Button>
+                    {managerHoldError ? (
+                      <p className="mt-1 text-xs text-destructive">{managerHoldError}</p>
+                    ) : null}
+                  </dd>
                 </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">No overview yet.</p>
-              )}
-            </div>
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-muted/20 p-3">
-              <div className="min-w-0">
-                <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                  Manager
-                </dt>
-                <dd className="mt-1">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={managerSelected ? "default" : "outline"}
-                    className="h-auto min-h-9 w-full max-w-full justify-start gap-1.5 whitespace-normal px-2 py-1.5 text-left leading-tight"
-                    disabled={managerHoldPending}
-                    onClick={async (event) => {
-                      event.stopPropagation();
-                      setManagerHoldPending(true);
-                      setManagerHoldError(null);
-                      try {
-                        await openManager(taskId, dashboard.task.manager_conversation_id, title);
-                      } catch (openError) {
-                        setManagerHoldError(
-                          openError instanceof Error
-                            ? openError.message
-                            : "Could not pause manager dispatch",
-                        );
-                      } finally {
-                        setManagerHoldPending(false);
-                      }
-                    }}
-                  >
-                    {managerHoldPending ? (
-                      <Loader2Icon className="size-4 animate-spin" aria-hidden />
-                    ) : (
-                      <MessageSquareIcon aria-hidden />
-                    )}
-                    {managerHoldPending ? "Pausing…" : "Open manager chat"}
-                  </Button>
-                  {managerHoldError ? (
-                    <p className="mt-1 text-xs text-destructive">{managerHoldError}</p>
-                  ) : null}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                  Workers
-                </dt>
-                <dd className="mt-1 text-sm font-medium">{dashboard.workers.length}</dd>
-              </div>
-              <div>
-                <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                  Created
-                </dt>
-                <dd className="mt-1 text-sm font-medium">
-                  {effectiveCreatedAt ? relativeTime(effectiveCreatedAt * 1000) : "Unknown"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                  Priority
-                </dt>
-                <dd className="mt-1 text-sm font-medium">
-                  P{Math.min(3, Math.max(0, effectivePriority))}
-                </dd>
-              </div>
-            </dl>
-          </section>
-          <TaskItemsPanel
-            taskId={taskId}
-            dashboard={dashboard}
-            selectedWorkerId={selectedWorkerId}
-          />
-          <TaskCardSidebar
-            taskId={taskId}
-            assets={dashboard.assets ?? []}
-            workers={dashboard.workers}
-            hostId={dashboard.workers.find((w) => w.host_id)?.host_id ?? null}
-          />
+                <div>
+                  <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                    Workers
+                  </dt>
+                  <dd className="mt-1 text-sm font-medium">{dashboard.workers.length}</dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                    Created
+                  </dt>
+                  <dd className="mt-1 text-sm font-medium">
+                    {effectiveCreatedAt ? relativeTime(effectiveCreatedAt * 1000) : "Unknown"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                    Priority
+                  </dt>
+                  <dd className="mt-1 text-sm font-medium">
+                    P{Math.min(3, Math.max(0, effectivePriority))}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+            <TaskItemsPanel
+              taskId={taskId}
+              dashboard={dashboard}
+              selectedWorkerId={selectedWorkerId}
+            />
+          </div>
+          <div className="puppy-task-card-rail-cell">
+            <TaskCardSidebar
+              taskId={taskId}
+              assets={dashboard.assets ?? []}
+              workers={dashboard.workers}
+              hostId={dashboard.workers.find((w) => w.host_id)?.host_id ?? null}
+            />
+          </div>
         </div>
       ) : null}
     </article>
