@@ -264,6 +264,10 @@ function PuppyGardenSessionView({ sessionId }: PuppyGardenSessionViewProps) {
           loadingMoreHistory={loadingMoreHistory}
           permissionLevel={permissionLevel}
           readOnlyReason={readOnlyReason}
+          // The board is the primary surface: the dock loading (secretary
+          // bootstrap, worker-lane switch) must not yank focus from the
+          // search bar or wherever the user is typing.
+          focusOnConversationSwitch={false}
           effortLevels={effortLevels}
           showEffort={showEffort}
           showModels={modelPickerKind !== null}
