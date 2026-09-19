@@ -1,14 +1,22 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TaskDashboard, TaskItemSummary } from "@/lib/agentTasksApi";
+import type * as agentTasksHooks from "@/hooks/useAgentTasks";
 import { TaskItemsPanel } from "./TaskCardWorkers";
 
 const resolveMutateAsync = vi.fn();
 
-vi.mock("@/hooks/useAgentTasks", () => ({
+vi.mock("@/hooks/useAgentTasks", async (importOriginal) => ({
+  ...(await importOriginal<typeof agentTasksHooks>()),
   useResolveTaskItem: vi.fn(() => ({ mutateAsync: resolveMutateAsync, isPending: false })),
+  useUpdateTaskItem: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   useAssignTaskItemWorker: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   useCreateTaskItem: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useStopTaskItem: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useRemoveTaskItem: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useRetryTaskItem: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useUntrackWorker: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
 }));
 
 vi.mock("@/hooks/useWorkerProviders", () => ({
@@ -47,23 +55,33 @@ function dashboardWith(overrides: Partial<TaskDashboard>): TaskDashboard {
   };
 }
 
+// Provider so any hook that slips past the vi.mock stubs still resolves.
+function renderPanel(dashboard: TaskDashboard) {
+  return render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <TaskItemsPanel taskId="task-1" dashboard={dashboard} selectedWorkerId={null} />
+    </QueryClientProvider>,
+  );
+}
+
 describe("human action task items", () => {
   afterEach(() => {
     cleanup();
     resolveMutateAsync.mockClear();
   });
 
-  it("renders badge and description with Done/Dismiss and no worker controls", () => {
-    render(
-      <TaskItemsPanel
-        taskId="task-1"
-        dashboard={dashboardWith({ inbox_items: [HUMAN_ACTION_ITEM] })}
-        selectedWorkerId={null}
-      />,
-    );
+  it("renders badge and description with Done/Dismiss and no worker controls once expanded", () => {
+    renderPanel(dashboardWith({ inbox_items: [HUMAN_ACTION_ITEM] }));
 
+    // Items ship shrunk: title + human-action badge only.
     expect(screen.getByText("human action")).toBeInTheDocument();
     expect(screen.getByText(HUMAN_ACTION_ITEM.title)).toBeInTheDocument();
+    expect(screen.queryByText(/IAM console/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Rotate the AWS access key/ }));
+
     expect(screen.getByText(/IAM console/)).toBeInTheDocument();
     expect(screen.queryByText("Change worker")).not.toBeInTheDocument();
     expect(screen.queryByText("Accept")).not.toBeInTheDocument();
@@ -82,27 +100,24 @@ describe("human action task items", () => {
   });
 
   it("renders recently done human actions without action buttons", () => {
-    render(
-      <TaskItemsPanel
-        taskId="task-1"
-        dashboard={dashboardWith({
-          recent_done_items: {
-            all: [{ ...HUMAN_ACTION_ITEM, state: "done" }],
-            by_worker: {},
-          },
-        })}
-        selectedWorkerId={null}
-      />,
+    renderPanel(
+      dashboardWith({
+        recent_done_items: {
+          all: [{ ...HUMAN_ACTION_ITEM, state: "done" }],
+          by_worker: {},
+        },
+      }),
     );
 
     fireEvent.click(screen.getByText("Recently done (1)"));
+    fireEvent.click(screen.getByRole("button", { name: /Rotate the AWS access key/ }));
     expect(screen.getByText(HUMAN_ACTION_ITEM.title)).toBeInTheDocument();
     expect(screen.getByText("human action")).toBeInTheDocument();
     expect(screen.queryByLabelText("Mark human action done")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Dismiss human action")).not.toBeInTheDocument();
   });
 
-  it("still renders work items with the worker ack editor", () => {
+  it("still renders work items with the worker ack editor once expanded", () => {
     const workItem: TaskItemSummary = {
       ...HUMAN_ACTION_ITEM,
       id: "work-1",
@@ -110,15 +125,33 @@ describe("human action task items", () => {
       instructions: "Do the thing",
       kind: "work",
     };
-    render(
-      <TaskItemsPanel
-        taskId="task-1"
-        dashboard={dashboardWith({ inbox_items: [workItem] })}
-        selectedWorkerId={null}
-      />,
-    );
+    renderPanel(dashboardWith({ inbox_items: [workItem] }));
+
+    fireEvent.click(screen.getByRole("button", { name: /Regular work item/ }));
 
     expect(screen.queryByText("human action")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("Do the thing")).toBeInTheDocument();
+  });
+
+  it("ships work items shrunk to title + state badge and expands on click", () => {
+    const workItem: TaskItemSummary = {
+      ...HUMAN_ACTION_ITEM,
+      id: "work-shrink",
+      title: "Shrinkable work item",
+      instructions: "Do the thing",
+      kind: "work",
+    };
+    renderPanel(dashboardWith({ inbox_items: [workItem] }));
+
+    const head = screen.getByRole("button", { name: /Shrinkable work item/ });
+    expect(head).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByDisplayValue("Do the thing")).not.toBeInTheDocument();
+
+    fireEvent.click(head);
+    expect(screen.getByRole("button", { name: /Shrinkable work item/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
     expect(screen.getByDisplayValue("Do the thing")).toBeInTheDocument();
   });
 });
