@@ -295,7 +295,7 @@ export async function fetchAgentTasks(state = "idle"): Promise<AgentTaskSummary[
   return body.data;
 }
 
-/** Active and idle managed tasks (excludes pending packages and archived). */
+/** Live managed tasks (active/idle/agent-resolved; excludes archived). */
 export async function fetchLiveAgentTasks(): Promise<AgentTaskSummary[]> {
   const [active, idle, agentResolved] = await Promise.all([
     fetchAgentTasks("active"),
@@ -523,22 +523,6 @@ export async function permanentlyDeleteAgentTask(taskId: string): Promise<void> 
   if (!res.ok) await readJsonOrApiError(res);
 }
 
-export async function acceptAgentTaskPackage(taskId: string): Promise<AgentTaskSummary> {
-  const res = await authenticatedFetch(
-    `/v1/agent-tasks/${encodeURIComponent(taskId)}/accept-package`,
-    { method: "POST" },
-  );
-  return readJsonOrApiError<AgentTaskSummary>(res);
-}
-
-export async function rejectAgentTaskPackage(taskId: string): Promise<AgentTaskSummary> {
-  const res = await authenticatedFetch(
-    `/v1/agent-tasks/${encodeURIComponent(taskId)}/reject-package`,
-    { method: "POST" },
-  );
-  return readJsonOrApiError<AgentTaskSummary>(res);
-}
-
 export interface SpawnManagerNoticeResult {
   unmanaged_count: number;
   superseded: number;
@@ -702,7 +686,7 @@ export interface BoardTriage {
   fyi: FyiClusterCard[];
 }
 
-export type FyiResolution = "dismiss_fyi" | "promote_to_routing";
+export type FyiResolution = "dismiss_fyi";
 
 export async function fetchBoardTriage(): Promise<BoardTriage> {
   const res = await authenticatedFetch("/v1/agent-tasks/board/pending");
@@ -713,11 +697,6 @@ export async function resolveFyiCluster(
   clusterId: string,
   body: {
     resolution: FyiResolution;
-    routing_title?: string;
-    routing_instructions?: string;
-    suggested_task_id?: string | null;
-    proposed_task_title?: string;
-    proposed_task_internal_note?: string;
   },
 ): Promise<void> {
   const res = await authenticatedFetch(

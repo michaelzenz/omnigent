@@ -20,10 +20,10 @@ from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.task_store import TaskStore
 
 # A live task occupies capacity on its manager. Archived tasks free the slot;
-# agent-resolved stays live (it can revive to pending on new events).
+# agent-resolved stays live (it can revive to active on new events).
 _logger = logging.getLogger(__name__)
 
-_LIVE_TASK_STATES = frozenset({"active", "idle", "pending", "agent-resolved"})
+_LIVE_TASK_STATES = frozenset({"active", "idle", "agent-resolved"})
 
 
 @dataclass

@@ -38,19 +38,11 @@ export function PuppyGardenBoard() {
   const explicitMoveRef = useRef<{ movedId: string; successorId: string | null } | null>(null);
   const previousOrderRef = useRef("");
   const {
-    data: pendingTasks,
-    isLoading: pendingLoading,
-    error: pendingError,
-  } = useAgentTaskList("pending");
-  const {
     data: activeData,
     isLoading: activeLoading,
     error: activeError,
   } = useAgentTaskList("live");
-  const allTasks = useMemo(
-    () => rankTasks([...(pendingTasks ?? []), ...(activeData ?? [])]),
-    [pendingTasks, activeData],
-  );
+  const allTasks = useMemo(() => rankTasks(activeData ?? []), [activeData]);
   const orderKey = allTasks.map((task) => task.id).join("|");
 
   // Floating search: filters cards on title/description/goal/id (always) and
@@ -176,8 +168,8 @@ export function PuppyGardenBoard() {
     };
   };
 
-  const isLoading = pendingLoading || activeLoading;
-  const error = pendingError ?? activeError;
+  const isLoading = activeLoading;
+  const error = activeError;
   if (isLoading)
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -275,7 +267,6 @@ export function PuppyGardenBoard() {
                     createdAt={task.created_at}
                     priority={task.priority}
                     state={task.state}
-                    managerRoleKey={task.manager_role_key}
                     managerId={task.manager_id}
                     isLast={
                       index === visibleTasks.length - 1 && visibleTasks.length === allTasks.length

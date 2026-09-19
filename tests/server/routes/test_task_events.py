@@ -467,13 +467,13 @@ async def test_ambiguous_inbox_clusters_stalled_events(
     """GET ambiguous-inbox groups stalled events and suggests task candidates."""
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
-    paused_id = _uid("ambiguous-paused")
+    live_id = _uid("ambiguous-live")
     task_store.create(
-        paused_id,
+        live_id,
         "Upload retries",
         "uploads retry to success",
-        state="pending",
-        tags=[TaskTag(task_id=paused_id, tag_type="repo", tag="omnigent-fork")],
+        state="active",
+        tags=[TaskTag(task_id=live_id, tag_type="repo", tag="omnigent-fork")],
     )
     event_id = _uid("ambiguous-event")
     event_store.create_event(
@@ -490,23 +490,23 @@ async def test_ambiguous_inbox_clusters_stalled_events(
     assert body["object"] == "agent.task.ambiguous_inbox"
     cluster = body["clusters"][0]
     assert any(event["id"] == event_id for event in cluster["events"])
-    assert cluster["suggested_candidates"][0]["task_id"] == paused_id
+    assert cluster["suggested_candidates"][0]["task_id"] == live_id
 
 
-async def test_match_tasks_ranks_pending_tasks(
+async def test_match_tasks_ranks_live_tasks(
     client: httpx.AsyncClient,
     db_uri: str,
 ) -> None:
-    """POST match-tasks returns ranked active and pending task candidates."""
+    """POST match-tasks returns ranked live (active/idle) task candidates."""
     task_store = SqlAlchemyTaskStore(db_uri)
     event_store = SqlAlchemyTaskEventStore(db_uri)
-    paused_id = _uid("match-paused-task")
+    live_id = _uid("match-live-task")
     task_store.create(
-        paused_id,
+        live_id,
         "omnigent-fork",
         "uploads retry to success",
-        state="pending",
-        tags=[TaskTag(task_id=paused_id, tag_type="repo", tag="omnigent-fork")],
+        state="active",
+        tags=[TaskTag(task_id=live_id, tag_type="repo", tag="omnigent-fork")],
     )
     event_id = _uid("match-event")
     event_store.create_event(
@@ -523,5 +523,5 @@ async def test_match_tasks_ranks_pending_tasks(
     )
     assert matched.status_code == 200
     candidates = matched.json()["candidates"]
-    assert candidates[0]["task_id"] == paused_id
-    assert candidates[0]["state"] == "pending"
+    assert candidates[0]["task_id"] == live_id
+    assert candidates[0]["state"] == "active"

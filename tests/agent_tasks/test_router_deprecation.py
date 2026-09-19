@@ -135,11 +135,11 @@ class TestTaskRoster:
 
     def test_roster_lists_ranked_tasks(self):
         block = _format_task_roster(
-            [("t1", "Fix auth", "active"), ("t2", "Migrate DB", "pending")]
+            [("t1", "Fix auth", "active"), ("t2", "Migrate DB", "idle")]
         )
         assert "[Task roster" in block
         assert "t1 — Fix auth (active)" in block
-        assert "t2 — Migrate DB (pending)" in block
+        assert "t2 — Migrate DB (idle)" in block
         assert "POST /v1/agent-tasks/batch" in block
 
     def test_roster_respects_token_budget(self):

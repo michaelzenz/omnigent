@@ -20,31 +20,8 @@ async function invalidateBoard(queryClient: ReturnType<typeof useQueryClient>) {
 export function useResolveFyiCluster() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({
-      clusterId,
-      resolution,
-      routingTitle,
-      routingInstructions,
-      suggestedTaskId,
-      proposedTaskTitle,
-      proposedTaskInternalNote,
-    }: {
-      clusterId: string;
-      resolution: FyiResolution;
-      routingTitle?: string;
-      routingInstructions?: string;
-      suggestedTaskId?: string | null;
-      proposedTaskTitle?: string;
-      proposedTaskInternalNote?: string;
-    }) => {
-      await resolveFyiCluster(clusterId, {
-        resolution,
-        routing_title: routingTitle,
-        routing_instructions: routingInstructions,
-        suggested_task_id: suggestedTaskId,
-        proposed_task_title: proposedTaskTitle,
-        proposed_task_internal_note: proposedTaskInternalNote,
-      });
+    mutationFn: async ({ clusterId, resolution }: { clusterId: string; resolution: FyiResolution }) => {
+      await resolveFyiCluster(clusterId, { resolution });
     },
     onSuccess: async () => {
       await invalidateBoard(queryClient);
