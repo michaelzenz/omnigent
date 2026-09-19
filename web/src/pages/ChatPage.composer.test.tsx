@@ -3415,3 +3415,52 @@ describe("shouldQueueSend", () => {
     );
   });
 });
+
+describe("Composer conversation-switch focus", () => {
+  beforeEach(() => {
+    clearSessionDrafts();
+    useChatStore.setState({ conversationId: "conv_focus_a" });
+  });
+
+  afterEach(() => {
+    cleanup();
+    clearSessionDrafts();
+  });
+
+  /** Focus a non-composer element, as if the user were typing elsewhere. */
+  function focusOutside() {
+    const outside = document.createElement("input");
+    outside.setAttribute("data-testid", "outside-input");
+    document.body.appendChild(outside);
+    outside.focus();
+    expect(document.activeElement).toBe(outside);
+    return outside;
+  }
+
+  it("focuses the textarea when the conversation changes by default", () => {
+    render(<Composer {...composerProps()} />);
+    const outside = focusOutside();
+
+    act(() => {
+      useChatStore.setState({ conversationId: "conv_focus_b" });
+    });
+
+    expect(document.activeElement).toBe(textarea());
+    expect(document.activeElement).not.toBe(outside);
+  });
+
+  it("does not steal focus when focusOnConversationSwitch is false", () => {
+    // Embedded surfaces (PuppyGarden dock) pass false: the dock mounts after
+    // an async bootstrap and must not yank focus from whatever the user is
+    // typing in (e.g. the board's search bar).
+    render(<Composer {...composerProps({ focusOnConversationSwitch: false })} />);
+    const outside = focusOutside();
+
+    act(() => {
+      useChatStore.setState({ conversationId: "conv_focus_b" });
+    });
+
+    expect(document.activeElement).toBe(outside);
+    expect(document.activeElement).not.toBe(textarea());
+  });
+});
