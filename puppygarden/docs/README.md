@@ -36,4 +36,4 @@ All manuals are inside <host.puppygarden.root>/docs/
 
 * TaskEvent: like raw events, for example a slack message, a pr comment, a doc mention
 * TaskItem: TaskEvents are just raw events, they got reconcile into TaskItem, for example multiple comment on same pr reconcile to same TaskItem, which is the execution unit containing instructions that actually get executed by workers.
-* Task: the grouping unit with a goal that its manager steers toward. A manager chooses or creates the task after receiving an event, then reconciles the event into a taskItem. Active tasks are user-confirmed; pending tasks are manager proposals awaiting confirmation.
+* Task: the grouping unit with a goal that its manager steers toward. A manager chooses or creates the task after receiving an event, then reconciles the event into a taskItem. Tasks are born active (there is no proposal/confirm step).

@@ -114,7 +114,8 @@ puppygarden_api(
 ```
 
 > `POST /v1/agent-tasks/packages` (born **pending**, user confirms before
-> activation) is **deprecating** — do not use it for new tasks.
+> activation) has been **removed**. Create tasks directly as `active` via
+> `POST /v1/agent-tasks`.
 
 Pass your own `manager_id` so the task is attached to you from birth.
 Create its items afterwards via the task-items endpoints (see the
@@ -169,20 +170,19 @@ Your job is to maintain the status of the tasks you own, and suggest next steps 
   session), a red **!** appears on every task referencing it; when the user
   gets it working again, it un-halts and the badge clears.
 
-- **Extend** an existing item — pass `item_id` in the reconcile call:
+- **Extend** an existing item — narrow the existing item's title,
+  description, instructions, and internal_note so it covers the new
+  event too, and create the item's event link by claiming the event on
+  a new item when the event should be tracked separately:
   ```
   puppygarden_api(
-    method="POST",
-    path="/v1/agent-tasks/<task_id>/reconcile-events",
+    method="PATCH",
+    path="/v1/task-items/<existing_item_id>",
     body={
-      "items": [{
-        "event_ids": ["<event_id>"],
-        "item_id": "<existing_item_id>",
-        "title": "<updated title>",
-        "description": "<updated why>",
-        "instructions": "<updated worker instructions>",
-        "internal_note": "<updated agent context>"
-      }]
+      "title": "<updated title>",
+      "description": "<updated why>",
+      "instructions": "<updated worker instructions>",
+      "internal_note": "<updated agent context>"
     }
   )
   ```
@@ -264,17 +264,16 @@ puppygarden_api(
 
 You steer each task through its states via `PATCH /v1/agent-tasks/<id>`:
 
-- `pending` — **deprecating**: tasks are no longer born pending. Create
-tasks directly as `active` (see below). `pending` remains readable for
-legacy rows but do not create or move tasks into it.
+- `active` — work is live. Tasks are born active; there is no
+  confirmation/proposal step.
 - `agent-resolved` — the task looks done. It sorts to the board's end
-with a distinct badge. **Not final**: when a new relevant event lands,
-move it back to `pending`. Prefer this over endless `active` — the
-board should show what needs attention.
+  with a distinct badge. **Not final**: when a new relevant event lands,
+  move it back to `active`. Prefer this over endless `active` — the
+  board should show what needs attention.
 - `idle` — do not set manually; tasks auto-idle after a quiet week.
 
 Typical flow: create task (active) → work → `agent-resolved` when
-done → revive to `pending` on new events.
+ done → revive to `active` on new events.
 
 ## FYI
 

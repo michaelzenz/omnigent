@@ -1,4 +1,4 @@
-"""Task discovery for event routing — search active and pending tasks."""
+"""Task discovery for event routing — search live (active/idle) tasks."""
 
 from __future__ import annotations
 
@@ -6,17 +6,17 @@ from typing import Any
 
 from omnigent.agent_tasks.constants import AUTO_ROUTE_MAX_CANDIDATES
 from omnigent.agent_tasks.scoring import rank_tasks_for_event_tags
-from omnigent.entities import EventTag, Task, TaskEvent, TaskTag
+from omnigent.entities import Task, TaskEvent
 from omnigent.stores.agent_task.tags import merge_event_tags
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_store import TaskStore
 
-_ROUTABLE_TASK_STATES = frozenset({"active", "pending", "idle"})
+_ROUTABLE_TASK_STATES = frozenset({"active", "idle"})
 _LIVE_TASK_STATES = frozenset({"active", "idle"})
 
 
 def routable_tasks(task_store: TaskStore) -> list[Task]:
-    """Return active, idle, and pending tasks eligible for event routing."""
+    """Return active and idle tasks eligible for event routing."""
     tasks: list[Task] = []
     for state in sorted(_ROUTABLE_TASK_STATES):
         tasks.extend(task_store.list(state=state))
@@ -61,37 +61,6 @@ def ranked_task_payload(ranked: list[tuple[Task, float]]) -> list[dict[str, Any]
         }
         for task, score in ranked
     ]
-
-
-def collect_event_tags(
-    event_ids: list[str],
-    *,
-    task_event_store: TaskEventStore,
-) -> list[EventTag]:
-    """Merge tags from multiple events, last write wins per tag_type."""
-    events = load_events(event_ids, task_event_store=task_event_store)
-    return merge_event_tags(events)
-
-
-def task_tags_from_event_tags(task_id: str, event_tags: list[EventTag]) -> list[TaskTag]:
-    """Convert event tags into task tags for a new managed task."""
-    seen: set[tuple[str, str]] = set()
-    tags: list[TaskTag] = []
-    for event_tag in event_tags:
-        key = (event_tag.tag_type, event_tag.tag)
-        if key in seen:
-            continue
-        seen.add(key)
-        tags.append(TaskTag(task_id=task_id, tag_type=event_tag.tag_type, tag=event_tag.tag))
-    return tags
-
-
-def internal_note_from_event_tags(event_tags: list[EventTag]) -> str | None:
-    """Derive a task internal_note hint from event tags."""
-    for tag in event_tags:
-        if tag.tag_type == "repo":
-            return f"repo:{tag.tag}"
-    return None
 
 
 def load_events(

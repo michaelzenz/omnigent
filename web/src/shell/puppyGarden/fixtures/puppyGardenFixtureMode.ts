@@ -1,6 +1,6 @@
 /** Dev-only PuppyGarden board fixture. Enable with `?fixture=1` on `/puppy-garden`. */
 
-export const FIXTURE_PENDING_TASK_ID = "fixture-pending";
+export const FIXTURE_IDLE_TASK_ID = "fixture-idle";
 export const FIXTURE_ACTIVE_TASK_ID = "fixture-active";
 
 export function isPuppyGardenFixtureMode(): boolean {

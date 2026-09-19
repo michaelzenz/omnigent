@@ -192,7 +192,7 @@ class SqlAlchemyTaskStore(TaskStore):
         with self._session() as session:
             live = [
                 encode_task_state(state)
-                for state in ("active", "idle", "pending", "agent-resolved")
+                for state in ("active", "idle", "agent-resolved")
             ]
             stmt = (
                 select(SqlTask.manager_id)

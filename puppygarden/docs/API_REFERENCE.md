@@ -40,7 +40,6 @@ response then carries `deliveries: [{event_id, task_id}]`.
 | Method | Path                                                         |
 | ------ | ------------------------------------------------------------ |
 | POST   | `/v1/agent-tasks`                                            |
-| POST   | `/v1/agent-tasks/packages`                                   |
 | GET    | `/v1/agent-tasks`                                            |
 | POST   | `/v1/agent-tasks/batch`                                      |
 | GET    | `/v1/agent-tasks/managers`                                   |
@@ -65,9 +64,6 @@ response then carries `deliveries: [{event_id, task_id}]`.
 | POST   | `/v1/agent-tasks/{id}/assets`                                |
 | GET    | `/v1/agent-tasks/{id}/reconcile-queue`                       |
 | POST   | `/v1/agent-tasks/{id}/ack`                                   |
-| POST   | `/v1/agent-tasks/{id}/reconcile-events`                      |
-| POST   | `/v1/agent-tasks/{id}/accept-package`                        |
-| POST   | `/v1/agent-tasks/{id}/reject-package`                        |
 
 Task create and update bodies accept `priority` as an integer from 0 (P0,
 highest) through 3 (P3), defaulting to 2. Task responses include `priority` and

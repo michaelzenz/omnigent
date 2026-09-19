@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import {
-  acceptAgentTaskPackage,
   archiveAgentTask,
   assignTaskItemWorker,
   createTaskItem,
@@ -18,7 +17,6 @@ import {
   moveTaskToQueueEnd,
   permanentlyDeleteAgentTask,
   reassignWorker,
-  rejectAgentTaskPackage,
   resetBrokerSession,
   resetSecretarySession,
   patchAgentTask,
@@ -53,7 +51,6 @@ const fixtureEnabled = isPuppyGardenFixtureMode();
 function invalidateTaskQueries(queryClient: ReturnType<typeof useQueryClient>, taskId: string) {
   return Promise.all([
     queryClient.invalidateQueries({ queryKey: ["agent-task-dashboard", taskId] }),
-    queryClient.invalidateQueries({ queryKey: ["agent-tasks", "pending"] }),
     queryClient.invalidateQueries({ queryKey: ["agent-tasks", "live"] }),
     queryClient.invalidateQueries({ queryKey: ["agent-tasks", "active"] }),
     queryClient.invalidateQueries({ queryKey: ["agent-tasks", "idle"] }),
@@ -65,13 +62,8 @@ export function useAgentTaskList(state = "active") {
     queryKey: ["agent-tasks", state, fixtureEnabled ? "fixture" : "live"],
     queryFn: () => {
       if (fixtureEnabled) {
-        if (state === "pending") {
-          return FIXTURE_TASK_LIST.filter((task) => task.state === "pending");
-        }
         if (state === "live") {
-          return FIXTURE_TASK_LIST.filter(
-            (task) => task.state !== "pending" && task.state !== "archived",
-          );
+          return FIXTURE_TASK_LIST.filter((task) => task.state !== "archived");
         }
         return FIXTURE_TASK_LIST;
       }
@@ -317,29 +309,6 @@ export function useUpdateAgentTaskManagerRole(taskId: string) {
       patchAgentTask(taskId, { manager_role_key: managerRoleKey }),
     onSuccess: async () => {
       await invalidateTaskQueries(queryClient, taskId);
-    },
-  });
-}
-
-export function useAcceptAgentTaskPackage(taskId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => acceptAgentTaskPackage(taskId),
-    onSuccess: async () => {
-      await invalidateTaskQueries(queryClient, taskId);
-      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "pending"] });
-      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "live"] });
-    },
-  });
-}
-
-export function useRejectAgentTaskPackage(taskId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => rejectAgentTaskPackage(taskId),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "pending"] });
-      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "live"] });
     },
   });
 }

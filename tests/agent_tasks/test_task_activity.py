@@ -40,10 +40,10 @@ def test_sync_sets_idle_when_no_running_items(db_uri: str) -> None:
     assert synced.state == "idle"
 
 
-def test_sync_skips_pending_and_archived(db_uri: str) -> None:
+def test_sync_skips_archived(db_uri: str) -> None:
     task_store = SqlAlchemyTaskStore(db_uri)
     item_store = SqlAlchemyTaskItemStore(db_uri)
-    for state in ("pending", "archived"):
+    for state in ("archived",):
         task_id = _uid(f"task_{state}")
         task_store.create(task_id, f"{state} task", f"{state} goal", state=state)
         task = task_store.get(task_id)
