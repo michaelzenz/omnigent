@@ -1,14 +1,14 @@
 import type { AgentTaskSummary, TaskDashboard } from "@/lib/agentTasksApi";
-import { FIXTURE_ACTIVE_TASK_ID, FIXTURE_PENDING_TASK_ID } from "./puppyGardenFixtureMode";
+import { FIXTURE_ACTIVE_TASK_ID, FIXTURE_IDLE_TASK_ID } from "./puppyGardenFixtureMode";
 
 const NOW = Math.floor(Date.now() / 1000);
 
 export const FIXTURE_TASK_LIST: AgentTaskSummary[] = [
   {
-    id: FIXTURE_PENDING_TASK_ID,
+    id: FIXTURE_IDLE_TASK_ID,
     title: "Triage: Slack thread about deploy",
-    description: "Broker package waiting for a manager",
-    state: "pending",
+    description: "Waiting for a manager to pick it up",
+    state: "idle",
     manager_role_key: "manager:default",
     manager_id: null,
     manager_conversation_id: null,
@@ -25,13 +25,13 @@ export const FIXTURE_TASK_LIST: AgentTaskSummary[] = [
 ];
 
 export function buildFixtureDashboard(taskId: string): TaskDashboard | null {
-  if (taskId === FIXTURE_PENDING_TASK_ID) {
+  if (taskId === FIXTURE_IDLE_TASK_ID) {
     return {
       task: {
-        id: FIXTURE_PENDING_TASK_ID,
+        id: FIXTURE_IDLE_TASK_ID,
         title: "Triage: Slack thread about deploy",
-        description: "Broker package waiting for a manager",
-        state: "pending",
+        description: "Waiting for a manager to pick it up",
+        state: "idle",
         manager_id: null,
         manager_conversation_id: null,
       },

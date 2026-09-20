@@ -6,7 +6,7 @@ from omnigent.entities import Task
 from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_store import TaskStore
 
-_PROTECTED_TASK_STATES = frozenset({"pending", "archived"})
+_PROTECTED_TASK_STATES = frozenset({"archived"})
 
 
 def sync_task_activity_state(

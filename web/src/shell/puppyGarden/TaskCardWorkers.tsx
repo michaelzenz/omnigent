@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -26,12 +26,17 @@ import {
   type TaskItemSummary,
   type TaskWorkerLane,
 } from "@/lib/agentTasksApi";
-import { Highlight } from "./boardSearchHighlight";
 import { TaskCardItemEditor } from "./TaskCardItemEditor";
 import { TaskCardItemStateBadge } from "./TaskCardItemStateBadge";
 import { TaskCardRowActions } from "./TaskCardRowActions";
+import { Highlight } from "./boardSearchHighlight";
 import { isPuppyGardenFixtureMode } from "./fixtures/puppyGardenFixtureMode";
 import { isEditableItemState } from "./taskCardUtils";
+
+// Ring applied to item rows the server-side search matched — same palette
+// as the worker-card ring so one search reads as one style.
+const SEARCH_RING_CLASSES =
+  "border-amber-400/70 bg-amber-50/70 ring-1 ring-amber-400/50 dark:bg-amber-400/10";
 
 const ACTIVE_STATES = new Set([
   "draft",
@@ -319,18 +324,58 @@ function NewTaskItem({ taskId, onClose }: { taskId: string; onClose: () => void 
   );
 }
 
-// Ring applied to item/worker/asset rows the server-side search matched —
-// same palette as the worker-card ring so one search reads as one style.
-const SEARCH_RING_CLASSES =
-  "border-amber-400/70 bg-amber-50/70 ring-1 ring-amber-400/50 dark:bg-amber-400/10";
+// Task-item rows ship shrunk: the head shows only the title (wrapping as
+// needed) plus the state badge; expanding reveals the full row body.
+function ItemRowHead({
+  title,
+  expanded,
+  onToggle,
+  children,
+}: {
+  title: string;
+  expanded: boolean;
+  onToggle: () => void;
+  children?: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className="flex w-full min-w-0 items-start justify-between gap-2 text-left"
+      aria-expanded={expanded}
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle();
+      }}
+    >
+      <span className="flex min-w-0 flex-1 items-start gap-1.5">
+        {expanded ? (
+          <ChevronDownIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        ) : (
+          <ChevronRightIcon
+            className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
+        )}
+        <span className="min-w-0 text-sm leading-snug font-semibold">
+          <Highlight text={title} />
+        </span>
+      </span>
+      {children}
+    </button>
+  );
+}
 
 function HumanActionItemRow({
   taskId,
   item,
+  expanded,
+  onToggle,
   matched,
 }: {
   taskId: string;
   item: TaskItemSummary;
+  expanded: boolean;
+  onToggle: () => void;
   matched: boolean;
 }) {
   const resolveItem = useResolveTaskItem(taskId);
@@ -363,10 +408,7 @@ function HumanActionItemRow({
         matched && SEARCH_RING_CLASSES,
       )}
     >
-      <div className="flex min-w-0 items-start justify-between gap-2">
-        <h4 className="min-w-0 flex-1 text-sm leading-snug font-semibold">
-          <Highlight text={item.title} />
-        </h4>
+      <ItemRowHead title={item.title} expanded={expanded} onToggle={onToggle}>
         <Badge
           variant="outline"
           className="shrink-0 gap-1 border-sky-200 bg-sky-50 text-[10px] text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300"
@@ -374,36 +416,38 @@ function HumanActionItemRow({
           <UserIcon className="text-sky-400" aria-hidden />
           human action
         </Badge>
-      </div>
-      {item.description ? (
-        <p className="text-xs whitespace-pre-wrap text-muted-foreground">
-          <Highlight text={item.description} />
-        </p>
-      ) : null}
-      {!done ? (
-        <div className="flex justify-end gap-1.5 pt-0.5">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            aria-label="Dismiss human action"
-            disabled={resolveItem.isPending || untrack.isPending}
-            onClick={() => void handleDismiss()}
-          >
-            <XIcon aria-hidden /> Dismiss
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            disabled={resolveItem.isPending}
-            aria-label="Mark human action done"
-            onClick={() =>
-              void resolveItem.mutateAsync({ taskItemId: item.id, resolution: "mark_done" })
-            }
-          >
-            <CheckIcon aria-hidden /> Done
-          </Button>
-        </div>
+      </ItemRowHead>
+      {expanded ? (
+        <>
+          {item.description ? (
+            <p className="text-xs whitespace-pre-wrap text-muted-foreground">{item.description}</p>
+          ) : null}
+          {!done ? (
+            <div className="flex justify-end gap-1.5 pt-0.5">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                aria-label="Dismiss human action"
+                disabled={resolveItem.isPending || untrack.isPending}
+                onClick={() => void handleDismiss()}
+              >
+                <XIcon aria-hidden /> Dismiss
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={resolveItem.isPending}
+                aria-label="Mark human action done"
+                onClick={() =>
+                  void resolveItem.mutateAsync({ taskItemId: item.id, resolution: "mark_done" })
+                }
+              >
+                <CheckIcon aria-hidden /> Done
+              </Button>
+            </div>
+          ) : null}
+        </>
       ) : null}
     </li>
   );
@@ -413,15 +457,27 @@ function ItemRow({
   taskId,
   item,
   workers,
+  expanded,
+  onToggle,
   matched,
 }: {
   taskId: string;
   item: TaskItemSummary;
   workers: TaskWorkerLane[];
+  expanded: boolean;
+  onToggle: () => void;
   matched: boolean;
 }) {
   if (item.kind === "human_action") {
-    return <HumanActionItemRow taskId={taskId} item={item} matched={matched} />;
+    return (
+      <HumanActionItemRow
+        taskId={taskId}
+        item={item}
+        expanded={expanded}
+        onToggle={onToggle}
+        matched={matched}
+      />
+    );
   }
   const worker = workers.find((lane) => lane.worker_id === item.worker_id);
   const editable = isEditableItemState(item.state);
@@ -432,36 +488,35 @@ function ItemRow({
         matched && SEARCH_RING_CLASSES,
       )}
     >
-      <div className="flex min-w-0 items-start justify-between gap-2">
-        <h4 className="min-w-0 flex-1 text-sm leading-snug font-semibold">
-          <Highlight text={item.title} />
-        </h4>
+      <ItemRowHead title={item.title} expanded={expanded} onToggle={onToggle}>
         <TaskCardItemStateBadge state={item.state} />
-      </div>
-      {editable ? (
-        <TaskCardItemEditor
-          taskId={taskId}
-          item={item}
-          workerLanes={workers}
-          workerKind={worker?.kind ?? "managed"}
-          mode={item.state === "pending" ? "ack" : item.state === "queued" ? "edit" : "parked"}
-        />
-      ) : (
+      </ItemRowHead>
+      {expanded ? (
         <>
-          {item.description ? (
-            <p className="text-xs whitespace-pre-wrap">
-              <Highlight text={item.description} />
-            </p>
-          ) : null}
-          {item.instructions ? (
-            <p className="text-xs whitespace-pre-wrap text-muted-foreground">
-              <Highlight text={item.instructions} />
-            </p>
-          ) : null}
+          {editable ? (
+            <TaskCardItemEditor
+              taskId={taskId}
+              item={item}
+              workerLanes={workers}
+              workerKind={worker?.kind ?? "managed"}
+              mode={item.state === "pending" ? "ack" : item.state === "queued" ? "edit" : "parked"}
+            />
+          ) : (
+            <>
+              {item.description ? (
+                <p className="text-xs whitespace-pre-wrap">{item.description}</p>
+              ) : null}
+              {item.instructions ? (
+                <p className="text-xs whitespace-pre-wrap text-muted-foreground">
+                  {item.instructions}
+                </p>
+              ) : null}
+            </>
+          )}
+          {editable ? <WorkerPicker taskId={taskId} item={item} workers={workers} /> : null}
+          <TaskCardRowActions taskId={taskId} item={item} showStop={item.state === "running"} />
         </>
-      )}
-      {editable ? <WorkerPicker taskId={taskId} item={item} workers={workers} /> : null}
-      <TaskCardRowActions taskId={taskId} item={item} showStop={item.state === "running"} />
+      ) : null}
     </li>
   );
 }
@@ -479,6 +534,20 @@ export function TaskItemsPanel({
   matchedItemIds?: Set<string> | null;
 }) {
   const [adding, setAdding] = useState(false);
+  // In-memory expand state: items ship shrunk (title + state badge) and each
+  // row expands to its full editor/actions on click. Resets on remount.
+  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(() => new Set());
+  const toggleItemExpanded = (itemId: string) => {
+    setExpandedItemIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+  };
   const [expandedRecentDoneScope, setExpandedRecentDoneScope] = useState<string | null>(null);
   const recentDoneScope = `${taskId}:${selectedWorkerId ?? "all"}`;
   const recentDoneExpanded = expandedRecentDoneScope === recentDoneScope;
@@ -528,6 +597,8 @@ export function TaskItemsPanel({
               taskId={taskId}
               item={item}
               workers={dashboard.workers}
+              expanded={expandedItemIds.has(item.id)}
+              onToggle={() => toggleItemExpanded(item.id)}
               matched={matchedItemIds?.has(item.id) ?? false}
             />
           ))}
@@ -564,6 +635,8 @@ export function TaskItemsPanel({
                   taskId={taskId}
                   item={item}
                   workers={dashboard.workers}
+                  expanded={expandedItemIds.has(item.id)}
+                  onToggle={() => toggleItemExpanded(item.id)}
                   matched={matchedItemIds?.has(item.id) ?? false}
                 />
               ))}

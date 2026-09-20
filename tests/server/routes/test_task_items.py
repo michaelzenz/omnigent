@@ -7,6 +7,7 @@ import uuid
 import httpx
 
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 
 
 def _uid(seed: str) -> str:
@@ -27,23 +28,22 @@ async def test_list_task_items_filters_by_state(
         state="awaiting_grouping",
     )
 
+    task_id = _uid("items-list-task")
+    SqlAlchemyTaskStore(db_uri).create(task_id, "CI failure", "CI passes", state="active")
+    # Promote the event to routed on the task so the items endpoint can claim it.
+    event_store.update_event(event_id, task_id=task_id, state="routed")
+
     created = await client.post(
-        "/v1/agent-tasks/packages",
+        f"/v1/agent-tasks/{task_id}/items",
         json={
-            "title": "CI failure",
-            "goal": "CI passes",
-            "items": [
-                {
-                    "title": "Investigate CI",
-                    "event_ids": [event_id],
-                    "instructions": "Read workflow logs",
-                    "internal_note": "workflow run 42 failed on lint",
-                },
-            ],
+            "title": "Investigate CI",
+            "event_ids": [event_id],
+            "instructions": "Read workflow logs",
+            "internal_note": "workflow run 42 failed on lint",
+            "submit_for_user_ack": True,
         },
     )
-    assert created.status_code == 200
-    task_id = created.json()["id"]
+    assert created.status_code == 200, created.text
 
     resp = await client.get(
         f"/v1/agent-tasks/{task_id}/items",

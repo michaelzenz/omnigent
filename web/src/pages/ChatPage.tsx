@@ -1549,6 +1549,8 @@ interface MainAgentSurfaceProps {
   permissionLevel: number | null;
   /** Forces composer read-only with the given placeholder when non-null. See ``ComposerProps.readOnlyReason``. */
   readOnlyReason: string | null;
+  /** Forwarded to ``ComposerProps.focusOnConversationSwitch``. */
+  focusOnConversationSwitch?: boolean;
   effortLevels: readonly string[];
   /** Show effort controls. */
   showEffort: boolean;
@@ -1715,6 +1717,7 @@ export const MainAgentSurface = memo(function MainAgentSurfaceImpl({
   loadingMoreHistory,
   permissionLevel,
   readOnlyReason,
+  focusOnConversationSwitch = true,
   effortLevels,
   showEffort,
   showCompact,
@@ -2103,6 +2106,7 @@ export const MainAgentSurface = memo(function MainAgentSurfaceImpl({
             selectedAgentId={selectedAgentId}
             permissionLevel={permissionLevel}
             readOnlyReason={readOnlyReason}
+            focusOnConversationSwitch={focusOnConversationSwitch}
             replyQuotes={replyQuotes}
             onRemoveQuote={removeReplyQuote}
             onClearAllQuotes={clearReplyQuotes}
@@ -2302,6 +2306,15 @@ interface ComposerProps {
    * leaves the existing ``permissionLevel`` gate alone.
    */
   readOnlyReason: string | null;
+  /**
+   * Whether the composer grabs keyboard focus when the active conversation
+   * changes (mount included). Default true — the main chat page wants a
+   * session switch to land you ready to type. Embedded secondary surfaces
+   * (e.g. the PuppyGarden dock, which mounts long after the board is
+   * interactive) pass false so an async load never yanks focus from
+   * whatever the user is already typing in.
+   */
+  focusOnConversationSwitch?: boolean;
   /** Quoted texts to prepend to the next message (one per "Reply ↵" click). */
   replyQuotes: ReplyQuote[];
   /** Removes the quote at the given index without submitting. */
@@ -3133,6 +3146,7 @@ function ComposerImpl({
   selectedAgentId,
   permissionLevel,
   readOnlyReason,
+  focusOnConversationSwitch = true,
   replyQuotes,
   onRemoveQuote,
   onClearAllQuotes,
@@ -3336,7 +3350,7 @@ function ComposerImpl({
     // hold the OUTGOING conversation's text during this commit — it waits for
     // this to settle rather than mistaking that for "the user is typing".
     setSettledConversationId(conversationId ?? null);
-    if (!isMobileRef.current) textareaRef.current?.focus();
+    if (focusOnConversationSwitch && !isMobileRef.current) textareaRef.current?.focus();
 
     return () => {
       if (!conversationId || !dirtyRef.current) return;
@@ -3345,7 +3359,7 @@ function ComposerImpl({
         files: filesRef.current,
       });
     };
-  }, [conversationId]);
+  }, [conversationId, focusOnConversationSwitch]);
 
   // Publish edits as they happen so the open sidebar updates immediately,
   // rather than only learning about a draft when this composer unmounts.

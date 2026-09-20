@@ -11,20 +11,13 @@ from omnigent.agent_tasks.constants import (
     CLASSIFIED_FYI_EVENT_STATE,
     FYI_CLUSTER_OPEN_STATE,
 )
-from omnigent.agent_tasks.task_packages import (
-    PackageItemSpec,
-    create_task_package,
-    reconcile_events_to_task,
-)
 from omnigent.db.utils import now_epoch
-from omnigent.entities import FyiCluster, TaskItem
+from omnigent.entities import FyiCluster
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
-from omnigent.stores.task_store import TaskStore
-from omnigent.stores.worker_store import WorkerStore
 
-FyiResolution = Literal["dismiss_fyi", "promote_to_routing"]
+FyiResolution = Literal["dismiss_fyi"]
 
 
 def _generate_cluster_id() -> str:
@@ -147,95 +140,25 @@ def list_fyi_board_cards(
     return cards
 
 
-def resolve_fyi_cluster(
+def dismiss_fyi_cluster(
     *,
     cluster: FyiCluster,
-    resolution: FyiResolution,
-    owner_user_id: str,
-    task_store: TaskStore,
-    task_item_store: TaskItemStore,
     task_event_store: TaskEventStore,
-    worker_store: WorkerStore,
-    routing_title: str | None = None,
-    routing_instructions: str | None = None,
-    suggested_task_id: str | None = None,
-    proposed_task_title: str | None = None,
-    proposed_task_goal: str | None = None,
-    proposed_task_internal_note: str | None = None,
-) -> tuple[FyiCluster, TaskItem | None]:
-    """Dismiss or promote an FYI cluster."""
+    task_item_store: TaskItemStore,
+) -> FyiCluster:
+    """Dismiss an FYI cluster and mark its events dismissed."""
     if cluster.state != FYI_CLUSTER_OPEN_STATE:
         raise OmnigentError(
             f"Cannot resolve FYI cluster in state {cluster.state!r}",
             code=ErrorCode.CONFLICT,
         )
 
-    event_ids = task_item_store.list_fyi_cluster_event_ids(cluster.id)
-    if resolution == "dismiss_fyi":
-        for event_id in event_ids:
-            task_event_store.update_event(event_id, state="dismissed", processed_at=now_epoch())
-        updated = task_item_store.update_fyi_cluster(
-            cluster.id,
-            state="dismissed",
-            resolved_at=now_epoch(),
-        )
-        assert updated is not None
-        return updated, None
-
-    for event_id in event_ids:
-        task_event_store.update_event(event_id, state="awaiting_grouping")
+    for event_id in task_item_store.list_fyi_cluster_event_ids(cluster.id):
+        task_event_store.update_event(event_id, state="dismissed", processed_at=now_epoch())
     updated = task_item_store.update_fyi_cluster(
         cluster.id,
         state="dismissed",
         resolved_at=now_epoch(),
     )
     assert updated is not None
-
-    title = routing_title or cluster.headline
-
-    if suggested_task_id is not None:
-        task = task_store.get(suggested_task_id)
-        if task is None:
-            raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
-        if task.state == "pending":
-            item = reconcile_events_to_task(
-                task=task,
-                spec=PackageItemSpec(
-                    title=title,
-                    event_ids=event_ids,
-                    instructions=routing_instructions,
-                ),
-                task_item_store=task_item_store,
-                task_event_store=task_event_store,
-                worker_store=worker_store,
-            )
-            if item is None:
-                raise OmnigentError(
-                    "No claimable ambiguous events for task package item",
-                    code=ErrorCode.CONFLICT,
-                )
-            return updated, item
-        raise OmnigentError(
-            "FYI promote to an active task requires batch-resolve",
-            code=ErrorCode.CONFLICT,
-        )
-
-    task = create_task_package(
-        owner_user_id=owner_user_id,
-        title=proposed_task_title or title,
-        goal=proposed_task_goal or title,
-        items=[
-            PackageItemSpec(
-                title=title,
-                event_ids=event_ids,
-                instructions=routing_instructions,
-            ),
-        ],
-        task_store=task_store,
-        task_item_store=task_item_store,
-        task_event_store=task_event_store,
-        worker_store=worker_store,
-        internal_note=proposed_task_internal_note,
-    )
-    items = task_item_store.list_items_for_task(task.id, state="pending")
-    return updated, items[0] if items else None
+    return updated

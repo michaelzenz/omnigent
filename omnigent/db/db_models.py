@@ -2252,7 +2252,7 @@ class SqlTask(OmnigentBase):
     resolved_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
-        CheckConstraint("state IN (1, 2, 3, 4, 5)", name="ck_tasks_state"),
+        CheckConstraint("state IN (1, 3, 4, 5)", name="ck_tasks_state"),
         CheckConstraint("priority BETWEEN 0 AND 3", name="ck_tasks_priority"),
         Index("ix_tasks_queue_rank", "workspace_id", "state", "queue_rank", "id"),
         Index("ix_tasks_state_updated", "workspace_id", "state", "updated_at", "id"),

@@ -379,17 +379,6 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
                 return None
             return _item_to_entity(row)
 
-    def get_event_ids_claimed_by_items(self, event_ids: list[str]) -> set[str]:
-        if not event_ids:
-            return set()
-        with self._session() as session:
-            stmt = (
-                select(SqlTaskItemEvent.event_id)
-                .where(SqlTaskItemEvent.workspace_id == current_workspace_id())
-                .where(SqlTaskItemEvent.event_id.in_(event_ids))
-            )
-            return {row[0] for row in session.execute(stmt).all()}
-
     def list_items_for_task(
         self,
         task_id: str,
@@ -512,64 +501,6 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             session.flush()
             return _item_event_to_entity(row)
 
-    def update_item_with_event_claims(
-        self,
-        task_item_id: str,
-        task_id: str,
-        event_ids: list[str],
-        *,
-        owner_user_id: str | None,
-        manager_id: str | None,
-        title: str | None = None,
-        description: str | None = _UNSET,
-        instructions: str | None = _UNSET,
-        internal_note: str | None = _UNSET,
-        relation: str = "triggered",
-        allow_unassigned: bool = False,
-    ) -> TaskItem:
-        if not event_ids:
-            raise ValueError("event_ids must not be empty")
-        with self._claim_session() as session:
-            row = session.get(
-                SqlTaskItem,
-                (current_workspace_id(), task_item_id),
-            )
-            if row is None or row.task_id != task_id:
-                raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
-            if decode_task_item_state(row.state) not in {"pending", "queued"}:
-                raise OmnigentError(
-                    f"Cannot extend item in state {decode_task_item_state(row.state)!r}",
-                    code=ErrorCode.CONFLICT,
-                )
-            unique_ids, now = self._claim_events(
-                session,
-                task_id=task_id,
-                owner_user_id=owner_user_id,
-                manager_id=manager_id,
-                event_ids=event_ids,
-                allow_unassigned=allow_unassigned,
-            )
-            if title is not None:
-                row.title = title
-            if description is not _UNSET:
-                row.description = description
-            if instructions is not _UNSET:
-                row.instructions = instructions
-            if internal_note is not _UNSET:
-                row.internal_note = internal_note
-            row.updated_at = now
-            session.add_all(
-                SqlTaskItemEvent(
-                    task_item_id=task_item_id,
-                    event_id=event_id,
-                    relation=relation,
-                    created_at=now,
-                )
-                for event_id in unique_ids
-            )
-            session.flush()
-            return _item_to_entity(row)
-
     def list_events_for_item(self, task_item_id: str) -> list[TaskItemEvent]:
         with self._session() as session:
             stmt = (
@@ -642,25 +573,6 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             if row is None:
                 return None
             return _fyi_cluster_to_entity(row)
-
-    def get_event_ids_claimed_by_fyi_clusters(self, event_ids: list[str]) -> set[str]:
-        if not event_ids:
-            return set()
-        with self._session() as session:
-            stmt = (
-                select(SqlFyiClusterEvent.event_id)
-                .join(
-                    SqlFyiCluster,
-                    (SqlFyiClusterEvent.workspace_id == SqlFyiCluster.workspace_id)
-                    & (SqlFyiClusterEvent.cluster_id == SqlFyiCluster.id),
-                )
-                .where(SqlFyiClusterEvent.workspace_id == current_workspace_id())
-                .where(SqlFyiClusterEvent.event_id.in_(event_ids))
-                .where(
-                    SqlFyiCluster.state == encode_fyi_cluster_state("pending"),
-                )
-            )
-            return {row[0] for row in session.execute(stmt).all()}
 
     def list_fyi_clusters(
         self,

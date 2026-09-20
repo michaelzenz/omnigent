@@ -502,12 +502,11 @@ export function TaskCardSidebar({
   const [tab, setTab] = useState<"assets" | "workers">("assets");
   return (
     <aside
-      // Grid default stretch: the rail's bottom always lands on the card
-      // bottom (the row height comes from the tallest sibling). Two grid
-      // rows — pinned tab strip, then the scroll viewport filling ALL the
-      // remaining height — so the visible scroll area equals the rail and
-      // there is no blank strip between the last row and the bottom border.
-      className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] rounded-lg border border-border bg-muted/20"
+      // Absolute fill of the rail cell (see .puppy-task-card-rail): the rail
+      // never grows the card — row height comes from the main column only.
+      // Pinned tab strip, then the scroll viewport filling ALL the remaining
+      // height, so overflow scrolls inside instead of stretching the card.
+      className="puppy-task-card-rail grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] rounded-lg border border-border bg-muted/20"
       data-testid="task-card-sidebar"
     >
       <div

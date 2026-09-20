@@ -4,7 +4,7 @@ Manual scenarios for exercising task-event ingress, ingress auto-route,
 broker triage, and manager reconciliation. Run against a local server
 (`http://127.0.0.1:6767`) with host connected.
 
-Use a **fresh database** (no active tasks, no open packages) unless a
+Use a **fresh database** (no active tasks) unless a
 scenario says otherwise. Adjust `repo`, agent ids, and host headers to match your
 environment.
 
@@ -21,8 +21,8 @@ ready and waiting for merge approval. There are no managed tasks yet.
 
 ### Preconditions
 
-1. **Empty task state** — no active tasks, no open pending packages, no
-   stalled events in `awaiting_grouping` (wipe DB or use a clean server).
+1. **Empty task state** — no active tasks, no stalled events in
+   `awaiting_grouping` (wipe DB or use a clean server).
 2. Server and host running (`uv run omnigent server`, `uv run omnigent host`).
 3. Task broker session live (`POST /v1/agent-tasks/roles/broker/session`). This
    also launches the session runner when a host is connected (no separate
@@ -99,6 +99,6 @@ _To be defined._
 
 ```http
 GET /v1/task-events/ambiguous-inbox
-GET /v1/agent-tasks?state=pending
+GET /v1/agent-tasks?state=active
 GET /v1/agent-tasks/{task_id}/reconcile-queue
 ```

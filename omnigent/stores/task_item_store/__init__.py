@@ -72,10 +72,6 @@ class TaskItemStore(ABC):
         """Return the newest task item linked to an event."""
 
     @abstractmethod
-    def get_event_ids_claimed_by_items(self, event_ids: list[str]) -> set[str]:
-        """Subset of ``event_ids`` already linked to any task item."""
-
-    @abstractmethod
     def list_items_for_task(
         self,
         task_id: str,
@@ -120,24 +116,6 @@ class TaskItemStore(ABC):
         """Link a task item to a contributing event."""
 
     @abstractmethod
-    def update_item_with_event_claims(
-        self,
-        task_item_id: str,
-        task_id: str,
-        event_ids: list[str],
-        *,
-        owner_user_id: str | None,
-        manager_id: str | None,
-        title: str | None = None,
-        description: str | None = _UNSET,
-        instructions: str | None = _UNSET,
-        internal_note: str | None = _UNSET,
-        relation: str = "triggered",
-        allow_unassigned: bool = False,
-    ) -> TaskItem:
-        """Update an existing item while atomically claiming events."""
-
-    @abstractmethod
     def list_events_for_item(self, task_item_id: str) -> list[TaskItemEvent]:
         """List events linked to a task item."""
 
@@ -164,10 +142,6 @@ class TaskItemStore(ABC):
     @abstractmethod
     def get_fyi_cluster_for_event(self, event_id: str) -> FyiCluster | None:
         """Return the open FYI cluster for an event, if any."""
-
-    @abstractmethod
-    def get_event_ids_claimed_by_fyi_clusters(self, event_ids: list[str]) -> set[str]:
-        """Subset of ``event_ids`` linked to an open FYI cluster."""
 
     @abstractmethod
     def list_fyi_clusters(

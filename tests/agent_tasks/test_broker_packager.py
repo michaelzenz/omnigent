@@ -419,7 +419,7 @@ async def test_similar_events_packaged_without_task_selection_instructions(
         task_id,
         "Widget CI",
         "widget ci green",
-        state="pending",
+        state="active",
         tags=[TaskTag(task_id=task_id, tag_type="repo", tag="acme/widgets")],
     )
     shared = [
