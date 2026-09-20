@@ -50,6 +50,10 @@ class TaskAssetStore(ABC):
         """List assets for one task ordered by id."""
 
     @abstractmethod
+    def list_assets_for_tasks(self, task_ids: list[str]) -> list[TaskAsset]:
+        """List assets across many tasks in one query, ordered by task_id then id."""
+
+    @abstractmethod
     def delete_asset(self, task_id: str, asset_id: int) -> bool:
         """Delete one asset from a task. Return True if a row was removed."""
 

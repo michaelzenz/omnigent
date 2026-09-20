@@ -411,6 +411,23 @@ class SqlAlchemyTaskItemStore(TaskItemStore):
             rows = session.execute(stmt).scalars().all()
             return [_item_to_entity(row) for row in rows]
 
+    def list_items_for_tasks(self, task_ids: list[str]) -> list[TaskItem]:
+        if not task_ids:
+            return []
+        with self._session() as session:
+            stmt = (
+                select(SqlTaskItem)
+                .where(SqlTaskItem.workspace_id == current_workspace_id())
+                .where(SqlTaskItem.task_id.in_(task_ids))
+                .order_by(
+                    asc(SqlTaskItem.task_id),
+                    asc(SqlTaskItem.created_at),
+                    asc(SqlTaskItem.id),
+                )
+            )
+            rows = session.execute(stmt).scalars().all()
+            return [_item_to_entity(row) for row in rows]
+
     def delete_items_for_task(
         self, task_id: str, *, exclude_states: set[str] | None = None
     ) -> int:

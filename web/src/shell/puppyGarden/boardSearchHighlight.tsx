@@ -36,17 +36,6 @@ export function useSearchQuery(): string {
   return useContext(BoardSearchQueryContext);
 }
 
-/** Case-insensitive substring test; empty query never matches. */
-export function textMatches(text: string | null | undefined, query: string): boolean {
-  if (!query || !text) return false;
-  return text.toLowerCase().includes(query);
-}
-
-/** Whether any of the given strings matches the active search query. */
-export function anyTextMatches(texts: (string | null | undefined)[], query: string): boolean {
-  return texts.some((text) => textMatches(text, query));
-}
-
 const MARK_CLASSES =
   "rounded-[2px] bg-yellow-200/80 px-0.5 text-inherit dark:bg-yellow-400/30 dark:text-yellow-100";
 

@@ -310,6 +310,31 @@ export async function fetchTaskDashboard(taskId: string): Promise<TaskDashboard>
   return readJson<TaskDashboard>(res);
 }
 
+/** Server-side board search match for one task. Ids let the board ring the
+ * matched rows without any client-side text matching. */
+export interface AgentTaskBoardMatch {
+  task_id: string;
+  /** Coarse match sources: "task" | "item" | "asset" | "worker". */
+  matched_in: string[];
+  item_ids: string[];
+  asset_ids: number[];
+  worker_ids: string[];
+}
+
+/** Window size for the server-side board search: matches the server's
+ * default limit. When a query returns this many matches, more matches likely
+ * exist below the fetched window — the board hints at it instead of
+ * paginating (pagination comes later). */
+export const AGENT_TASK_BOARD_SEARCH_LIMIT = 100;
+
+export async function fetchAgentTaskBoardSearch(query: string): Promise<AgentTaskBoardMatch[]> {
+  const res = await authenticatedFetch(
+    `/v1/agent-tasks/board-search?q=${encodeURIComponent(query)}&limit=${AGENT_TASK_BOARD_SEARCH_LIMIT}`,
+  );
+  const body = await readJson<{ results: AgentTaskBoardMatch[] }>(res);
+  return body.results;
+}
+
 export interface CreateTaskItemRequest {
   title: string;
   description?: string | null;

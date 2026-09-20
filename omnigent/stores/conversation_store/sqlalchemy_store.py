@@ -3767,6 +3767,41 @@ class SqlAlchemyConversationStore(ConversationStore):
             has_more=has_more,
         )
 
+    def matching_conversation_ids(
+        self,
+        conversation_ids: list[str],
+        query: str,
+    ) -> set[str]:
+        """
+        Return the subset of ``conversation_ids`` whose item content contains
+        ``query`` (case-insensitive substring on ``search_text``).
+
+        Same content probe as the session search in ``list_conversations`` —
+        ``ILIKE`` on the raw ``search_text`` column so the probe rides the
+        ``(workspace_id, conversation_id)`` btree instead of the pg_trgm
+        index — but scoped to the caller-supplied ids, so it stays a handful
+        of per-conversation prefix scans rather than a workspace-wide scan.
+
+        :param conversation_ids: Conversations to probe.
+        :param query: Case-insensitive substring to look for.
+        :returns: The ids of the supplied conversations with at least one
+            matching item. Empty when either argument is empty.
+        """
+        if not conversation_ids or not query:
+            return set()
+        pattern = f"%{query.lower()}%"
+        with self._session("match_conversation_ids_by_content") as session:
+            rows = session.execute(
+                select(SqlConversationItem.conversation_id)
+                .where(
+                    SqlConversationItem.workspace_id == current_workspace_id(),
+                    SqlConversationItem.conversation_id.in_(conversation_ids),
+                    SqlConversationItem.search_text.ilike(pattern),
+                )
+                .distinct()
+            ).all()
+        return {row[0] for row in rows}
+
     @staticmethod
     def _resolve_sort_column(sort_by: str) -> QueryableAttribute[int]:
         """

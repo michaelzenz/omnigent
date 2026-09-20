@@ -58,6 +58,10 @@ class WorkerStore(ABC):
         """List workers for a task ordered by created_at asc, id asc."""
 
     @abstractmethod
+    def list_workers_for_tasks(self, task_ids: list[str]) -> list[Worker]:
+        """List workers across many tasks in one query, ordered by task_id then created_at."""
+
+    @abstractmethod
     def claim_initialization(self, worker_id: str) -> Worker | None:
         """Atomically move an uninitialized or failed Worker to initializing."""
 

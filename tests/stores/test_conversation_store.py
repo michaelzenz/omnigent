@@ -1726,6 +1726,43 @@ def test_list_conversations_search_query_content_only(
     assert page.data[0].id == conv.id
 
 
+def test_matching_conversation_ids_scopes_content_probe(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    """
+    ``matching_conversation_ids`` returns only the supplied conversations
+    whose item content contains the query — a scoped version of the session
+    search's content probe, used by the task board search. Title-only
+    matches are not considered (callers match titles themselves).
+
+    :param conversation_store: The conversation store fixture.
+    """
+    conv_match = conversation_store.create_conversation()
+    conversation_store.append(
+        conv_match.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="resp_mci1",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "fix the deployment pipeline"}],
+                ),
+            ),
+        ],
+    )
+    conv_other = conversation_store.create_conversation()
+    conv_title_only = conversation_store.create_conversation()
+    conversation_store.update_conversation(conv_title_only.id, title="deployment runbook")
+
+    matched = conversation_store.matching_conversation_ids(
+        [conv_match.id, conv_other.id, conv_title_only.id], "deployment"
+    )
+    assert matched == {conv_match.id}
+    assert conversation_store.matching_conversation_ids([], "deployment") == set()
+    assert conversation_store.matching_conversation_ids([conv_match.id], "") == set()
+
+
 def test_list_conversations_search_snippet_on_content_match(
     conversation_store: SqlAlchemyConversationStore,
 ) -> None:

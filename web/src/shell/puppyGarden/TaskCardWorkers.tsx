@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import {
   useAssignTaskItemWorker,
   useCreateTaskItem,
@@ -25,6 +26,7 @@ import {
   type TaskItemSummary,
   type TaskWorkerLane,
 } from "@/lib/agentTasksApi";
+import { Highlight } from "./boardSearchHighlight";
 import { TaskCardItemEditor } from "./TaskCardItemEditor";
 import { TaskCardItemStateBadge } from "./TaskCardItemStateBadge";
 import { TaskCardRowActions } from "./TaskCardRowActions";
@@ -317,7 +319,20 @@ function NewTaskItem({ taskId, onClose }: { taskId: string; onClose: () => void 
   );
 }
 
-function HumanActionItemRow({ taskId, item }: { taskId: string; item: TaskItemSummary }) {
+// Ring applied to item/worker/asset rows the server-side search matched —
+// same palette as the worker-card ring so one search reads as one style.
+const SEARCH_RING_CLASSES =
+  "border-amber-400/70 bg-amber-50/70 ring-1 ring-amber-400/50 dark:bg-amber-400/10";
+
+function HumanActionItemRow({
+  taskId,
+  item,
+  matched,
+}: {
+  taskId: string;
+  item: TaskItemSummary;
+  matched: boolean;
+}) {
   const resolveItem = useResolveTaskItem(taskId);
   const untrack = useUntrackWorker();
   const done = item.state === "done";
@@ -342,9 +357,16 @@ function HumanActionItemRow({ taskId, item }: { taskId: string; item: TaskItemSu
     await resolveItem.mutateAsync({ taskItemId: item.id, resolution: "reject_item" });
   };
   return (
-    <li className="space-y-2 rounded-lg border border-border bg-background p-3 shadow-xs">
+    <li
+      className={cn(
+        "space-y-2 rounded-lg border border-border bg-background p-3 shadow-xs",
+        matched && SEARCH_RING_CLASSES,
+      )}
+    >
       <div className="flex min-w-0 items-start justify-between gap-2">
-        <h4 className="min-w-0 flex-1 text-sm leading-snug font-semibold">{item.title}</h4>
+        <h4 className="min-w-0 flex-1 text-sm leading-snug font-semibold">
+          <Highlight text={item.title} />
+        </h4>
         <Badge
           variant="outline"
           className="shrink-0 gap-1 border-sky-200 bg-sky-50 text-[10px] text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300"
@@ -354,7 +376,9 @@ function HumanActionItemRow({ taskId, item }: { taskId: string; item: TaskItemSu
         </Badge>
       </div>
       {item.description ? (
-        <p className="text-xs whitespace-pre-wrap text-muted-foreground">{item.description}</p>
+        <p className="text-xs whitespace-pre-wrap text-muted-foreground">
+          <Highlight text={item.description} />
+        </p>
       ) : null}
       {!done ? (
         <div className="flex justify-end gap-1.5 pt-0.5">
@@ -389,20 +413,29 @@ function ItemRow({
   taskId,
   item,
   workers,
+  matched,
 }: {
   taskId: string;
   item: TaskItemSummary;
   workers: TaskWorkerLane[];
+  matched: boolean;
 }) {
   if (item.kind === "human_action") {
-    return <HumanActionItemRow taskId={taskId} item={item} />;
+    return <HumanActionItemRow taskId={taskId} item={item} matched={matched} />;
   }
   const worker = workers.find((lane) => lane.worker_id === item.worker_id);
   const editable = isEditableItemState(item.state);
   return (
-    <li className="space-y-2 rounded-lg border border-border bg-background p-3 shadow-xs">
+    <li
+      className={cn(
+        "space-y-2 rounded-lg border border-border bg-background p-3 shadow-xs",
+        matched && SEARCH_RING_CLASSES,
+      )}
+    >
       <div className="flex min-w-0 items-start justify-between gap-2">
-        <h4 className="min-w-0 flex-1 text-sm leading-snug font-semibold">{item.title}</h4>
+        <h4 className="min-w-0 flex-1 text-sm leading-snug font-semibold">
+          <Highlight text={item.title} />
+        </h4>
         <TaskCardItemStateBadge state={item.state} />
       </div>
       {editable ? (
@@ -416,10 +449,14 @@ function ItemRow({
       ) : (
         <>
           {item.description ? (
-            <p className="text-xs whitespace-pre-wrap">{item.description}</p>
+            <p className="text-xs whitespace-pre-wrap">
+              <Highlight text={item.description} />
+            </p>
           ) : null}
           {item.instructions ? (
-            <p className="text-xs whitespace-pre-wrap text-muted-foreground">{item.instructions}</p>
+            <p className="text-xs whitespace-pre-wrap text-muted-foreground">
+              <Highlight text={item.instructions} />
+            </p>
           ) : null}
         </>
       )}
@@ -433,10 +470,13 @@ export function TaskItemsPanel({
   taskId,
   dashboard,
   selectedWorkerId,
+  matchedItemIds,
 }: {
   taskId: string;
   dashboard: TaskDashboard;
   selectedWorkerId: string | null;
+  /** Item ids the server-side search matched; null when not searching. */
+  matchedItemIds?: Set<string> | null;
 }) {
   const [adding, setAdding] = useState(false);
   const [expandedRecentDoneScope, setExpandedRecentDoneScope] = useState<string | null>(null);
@@ -483,7 +523,13 @@ export function TaskItemsPanel({
       {active.length ? (
         <ul className="space-y-2">
           {active.map((item) => (
-            <ItemRow key={item.id} taskId={taskId} item={item} workers={dashboard.workers} />
+            <ItemRow
+              key={item.id}
+              taskId={taskId}
+              item={item}
+              workers={dashboard.workers}
+              matched={matchedItemIds?.has(item.id) ?? false}
+            />
           ))}
         </ul>
       ) : (
@@ -513,7 +559,13 @@ export function TaskItemsPanel({
           {recentDoneExpanded ? (
             <ul className="space-y-2">
               {done.map((item) => (
-                <ItemRow key={item.id} taskId={taskId} item={item} workers={dashboard.workers} />
+                <ItemRow
+                  key={item.id}
+                  taskId={taskId}
+                  item={item}
+                  workers={dashboard.workers}
+                  matched={matchedItemIds?.has(item.id) ?? false}
+                />
               ))}
             </ul>
           ) : null}

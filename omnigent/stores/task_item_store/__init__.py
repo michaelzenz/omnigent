@@ -85,6 +85,10 @@ class TaskItemStore(ABC):
         """List task items ordered by created_at asc."""
 
     @abstractmethod
+    def list_items_for_tasks(self, task_ids: list[str]) -> list[TaskItem]:
+        """List items across many tasks in one query, ordered by task_id then created_at."""
+
+    @abstractmethod
     def delete_items_for_task(
         self, task_id: str, *, exclude_states: set[str] | None = None
     ) -> int:
