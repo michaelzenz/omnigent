@@ -111,6 +111,19 @@ class SqlAlchemyWorkerStore(WorkerStore):
             rows = session.execute(stmt).scalars().all()
             return [_worker_to_entity(row) for row in rows]
 
+    def list_workers_for_tasks(self, task_ids: list[str]) -> list[Worker]:
+        if not task_ids:
+            return []
+        with self._session() as session:
+            stmt = (
+                select(SqlWorker)
+                .where(SqlWorker.workspace_id == current_workspace_id())
+                .where(SqlWorker.task_id.in_(task_ids))
+                .order_by(asc(SqlWorker.task_id), asc(SqlWorker.created_at), asc(SqlWorker.id))
+            )
+            rows = session.execute(stmt).scalars().all()
+            return [_worker_to_entity(row) for row in rows]
+
     def claim_initialization(self, worker_id: str) -> Worker | None:
         with self._session() as session:
             stmt = (

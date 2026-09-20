@@ -149,6 +149,19 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
             rows = session.scalars(stmt).all()
             return [_asset_to_entity(row) for row in rows]
 
+    def list_assets_for_tasks(self, task_ids: list[str]) -> list[TaskAsset]:
+        if not task_ids:
+            return []
+        with self._session() as session:
+            stmt = (
+                select(SqlTaskAsset)
+                .where(SqlTaskAsset.workspace_id == current_workspace_id())
+                .where(SqlTaskAsset.task_id.in_(task_ids))
+                .order_by(asc(SqlTaskAsset.task_id), asc(SqlTaskAsset.id))
+            )
+            rows = session.scalars(stmt).all()
+            return [_asset_to_entity(row) for row in rows]
+
     def delete_asset(self, task_id: str, asset_id: int) -> bool:
         with self._session() as session:
             row = session.get(SqlTaskAsset, (current_workspace_id(), asset_id))

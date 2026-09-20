@@ -4,12 +4,9 @@ import { CheckIcon, Loader2Icon, MessageSquareIcon, PencilIcon, XIcon } from "lu
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  useMoveTaskToQueueEnd,
-  usePatchAgentTask,
-  useTaskDashboard,
-} from "@/hooks/useAgentTasks";
+import { useMoveTaskToQueueEnd, usePatchAgentTask, useTaskDashboard } from "@/hooks/useAgentTasks";
 import { relativeTime } from "@/lib/relativeTime";
+import type { AgentTaskBoardMatch } from "@/lib/agentTasksApi";
 import { cn } from "@/lib/utils";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { TaskCardSidebar } from "./TaskCardAssets";
@@ -38,6 +35,9 @@ interface TaskCardProps {
   state: string;
   /** Durable manager owning this task, when the board list knows it. */
   managerId?: string | null;
+  /** Server-side search match for this task while a search is active; the
+   * ids drive the amber rings on matched items/assets/workers. */
+  searchMatch?: AgentTaskBoardMatch;
   isLast?: boolean;
   onMovedToEnd?: (taskId: string) => () => void;
 }
@@ -142,6 +142,7 @@ export function TaskCard({
   priority = 2,
   state,
   managerId,
+  searchMatch,
   isLast = false,
   onMovedToEnd,
 }: TaskCardProps) {
@@ -167,11 +168,7 @@ export function TaskCard({
     return () => observer.disconnect();
   }, []);
 
-  const {
-    data: dashboard,
-    isLoading,
-    error,
-  } = useTaskDashboard(taskId, { enabled: inView });
+  const { data: dashboard, isLoading, error } = useTaskDashboard(taskId, { enabled: inView });
   const { target, openManager, isManagerSelected, dismissToRole } = usePuppyGardenChat();
   const moveToEnd = useMoveTaskToQueueEnd(taskId);
   const managerSelected = isManagerSelected(taskId);
@@ -362,6 +359,7 @@ export function TaskCard({
               taskId={taskId}
               dashboard={dashboard}
               selectedWorkerId={selectedWorkerId}
+              matchedItemIds={searchMatch ? new Set(searchMatch.item_ids) : null}
             />
           </div>
           <div className="puppy-task-card-rail-cell">
@@ -370,6 +368,8 @@ export function TaskCard({
               assets={dashboard.assets ?? []}
               workers={dashboard.workers}
               hostId={dashboard.workers.find((w) => w.host_id)?.host_id ?? null}
+              matchedWorkerIds={searchMatch ? new Set(searchMatch.worker_ids) : null}
+              matchedAssetIds={searchMatch ? new Set(searchMatch.asset_ids) : null}
             />
           </div>
         </div>

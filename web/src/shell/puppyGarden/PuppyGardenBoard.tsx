@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { Loader2Icon, SearchIcon, XIcon } from "lucide-react";
-import { useAgentTaskList } from "@/hooks/useAgentTasks";
+import { useAgentTaskList, useAgentTaskBoardSearch } from "@/hooks/useAgentTasks";
 import { Input } from "@/components/ui/input";
-import { useBoardSearch } from "./useBoardSearch";
 import { BoardSearchProvider } from "./boardSearchHighlight";
-import type { AgentTaskSummary } from "@/lib/agentTasksApi";
+import {
+  AGENT_TASK_BOARD_SEARCH_LIMIT,
+  type AgentTaskSummary,
+  type AgentTaskBoardMatch,
+} from "@/lib/agentTasksApi";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { BoardConfigPanel } from "./BoardConfigPanel";
 import { BoardFyiStream } from "./BoardFyiStream";
@@ -45,34 +47,28 @@ export function PuppyGardenBoard() {
   const allTasks = useMemo(() => rankTasks(activeData ?? []), [activeData]);
   const orderKey = allTasks.map((task) => task.id).join("|");
 
-  // Floating search: filters cards on title/description/goal/id (always) and
-  // assets/worker titles/session ids/item text (for cards whose dashboard is
-  // already loaded — search never triggers dashboard fetches).
+  // Floating search: the server matches board-visible task text, items,
+  // assets, worker lane text, and worker chat content; the board just filters
+  // its cards by the returned task ids and rings the matched entities.
   const [searchQuery, setSearchQuery] = useState("");
-  const queryClient = useQueryClient();
-  // Dashboards load asynchronously while the user types; subscribe to cache
-  // changes so newly-loaded dashboards re-run the filter (a dashboard that
-  // matches makes its card reappear without any user action).
-  const [dashboardsVersion, setDashboardsVersion] = useState(0);
-  useEffect(() => {
-    if (!searchQuery.trim()) return;
-    const cache = queryClient.getQueryCache();
-    const unsubscribe = cache.subscribe(() => setDashboardsVersion((v) => v + 1));
-    return unsubscribe;
-  }, [searchQuery, queryClient]);
-  const dashboards = useMemo(() => {
-    const map = new Map<string, unknown>();
-    if (!searchQuery.trim()) return map;
-    for (const task of allTasks) {
-      const cached = queryClient.getQueryData<unknown>(["agent-task-dashboard", task.id]);
-      if (cached) map.set(task.id, cached);
-    }
-    return map;
-    // dashboardsVersion re-runs this when any dashboard query lands/updates.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allTasks, searchQuery, queryClient, dashboardsVersion]);
-  const filteredTasks = useBoardSearch(allTasks, searchQuery, dashboards);
+  const { data: searchResults } = useAgentTaskBoardSearch(searchQuery);
   const searching = searchQuery.trim().length > 0;
+  // The server window caps the match list; at the cap, more matches likely
+  // exist below — hint at it instead of paginating (pagination comes later).
+  const searchTruncated =
+    searching && (searchResults?.length ?? 0) >= AGENT_TASK_BOARD_SEARCH_LIMIT;
+  const matchesById = useMemo(() => {
+    const map = new Map<string, AgentTaskBoardMatch>();
+    for (const match of searchResults ?? []) map.set(match.task_id, match);
+    return map;
+  }, [searchResults]);
+  // While the first request for a new query is in flight (no results yet),
+  // keep showing everything — same behavior as the command palette — instead
+  // of flashing an empty board.
+  const filteredTasks = useMemo(
+    () => (searching && searchResults ? allTasks.filter((t) => matchesById.has(t.id)) : allTasks),
+    [searching, searchResults, allTasks, matchesById],
+  );
   // New query: back to the first page so results start at the top.
   useEffect(() => {
     setRenderLimit(BOARD_PAGE_SIZE);
@@ -212,7 +208,7 @@ export function PuppyGardenBoard() {
                 }
               }}
               onClick={(event) => event.stopPropagation()}
-              placeholder="Search tasks — title, goal, assets, workers, session id…"
+              placeholder="Search tasks — title, goal, items, assets, workers, chat…"
               className="h-8 pl-8 pr-8"
               aria-label="Search tasks"
               data-testid="board-search-input"
@@ -268,6 +264,7 @@ export function PuppyGardenBoard() {
                     priority={task.priority}
                     state={task.state}
                     managerId={task.manager_id}
+                    searchMatch={searching ? matchesById.get(task.id) : undefined}
                     isLast={
                       index === visibleTasks.length - 1 && visibleTasks.length === allTasks.length
                     }
@@ -291,6 +288,15 @@ export function PuppyGardenBoard() {
                   data-testid="board-search-count"
                 >
                   {filteredTasks.length} of {allTasks.length} tasks match.
+                </p>
+              ) : null}
+              {searchTruncated ? (
+                <p
+                  className="pb-2 text-center text-xs text-amber-600 dark:text-amber-400"
+                  data-testid="board-search-truncated"
+                >
+                  More matches below — showing the first {searchResults?.length} matching tasks.
+                  Refine your search to narrow the results.
                 </p>
               ) : null}
             </>

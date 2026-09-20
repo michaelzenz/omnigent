@@ -960,6 +960,30 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
+    def matching_conversation_ids(
+        self,
+        conversation_ids: list[str],
+        query: str,
+    ) -> set[str]:
+        """
+        Return the subset of the given conversations whose chat content
+        matches the query.
+
+        Case-insensitive substring match on each conversation item's
+        ``search_text`` — the same content probe the session search uses
+        (``list_conversations(search_query=...)``), but scoped to the
+        caller-supplied conversation ids instead of the whole workspace.
+
+        :param conversation_ids: Conversations to probe, e.g. the worker
+            sessions of one or more managed tasks.
+        :param query: Case-insensitive substring to look for.
+        :returns: The ids of the supplied conversations that have at least
+            one item whose search text contains the query. Title-only
+            matches are not considered — callers match titles themselves.
+        """
+        ...
+
+    @abstractmethod
     def search(
         self,
         query: str,

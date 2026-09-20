@@ -1,4 +1,11 @@
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import {
   archiveAgentTask,
   assignTaskItemWorker,
@@ -9,6 +16,7 @@ import {
   ensureBrokerSession,
   ensureSecretarySession,
   fetchAgentTasks,
+  fetchAgentTaskBoardSearch,
   fetchBrokerProfile,
   fetchLiveAgentTasks,
   fetchSecretaryProfile,
@@ -31,6 +39,7 @@ import {
   type UpdateTaskItemRequest,
   type WorkerAssignmentInput,
   type TaskDashboard,
+  type AgentTaskBoardMatch,
 } from "@/lib/agentTasksApi";
 import { interrupt as interruptSession } from "@/lib/sessionsApi";
 import { useChatStore } from "@/store/chatStore";
@@ -99,6 +108,64 @@ export function useTaskDashboard(
       status: fixtureDashboard ? "success" : "pending",
       fetchStatus: "idle",
     } as UseQueryResult<TaskDashboard>;
+  }
+
+  return live;
+}
+
+/** Debounce matches the command-palette search (300ms) so keystrokes don't
+ * each hit the server. */
+const BOARD_SEARCH_DEBOUNCE_MS = 300;
+
+/** Server-side board search. Returns the matched tasks with per-entity match
+ * ids; ``data`` stays undefined while the first request for a query is in
+ * flight so the board can keep showing everything until results arrive. */
+export function useAgentTaskBoardSearch(query: string): UseQueryResult<AgentTaskBoardMatch[]> {
+  const trimmed = query.trim();
+  const [debounced, setDebounced] = useState(trimmed);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(trimmed), BOARD_SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [trimmed]);
+
+  const live = useQuery({
+    queryKey: ["agent-tasks-board-search", debounced],
+    queryFn: () => fetchAgentTaskBoardSearch(debounced),
+    enabled: !fixtureEnabled && debounced.length > 0,
+    // Keep the previous query's results visible while the next one fetches,
+    // so the board doesn't flash back to unfiltered on every keystroke.
+    placeholderData: keepPreviousData,
+  });
+
+  if (fixtureEnabled) {
+    // Fixture mode has no server; match against the fixture task list so the
+    // fixture board stays demonstrable.
+    const needle = debounced.toLowerCase();
+    const matches: AgentTaskBoardMatch[] = debounced
+      ? FIXTURE_TASK_LIST.filter(
+          (task) =>
+            task.title.toLowerCase().includes(needle) ||
+            (task.description?.toLowerCase().includes(needle) ?? false) ||
+            task.id.toLowerCase().includes(needle),
+        ).map((task) => ({
+          task_id: task.id,
+          matched_in: ["task"],
+          item_ids: [],
+          asset_ids: [],
+          worker_ids: [],
+        }))
+      : [];
+    return {
+      ...live,
+      data: matches,
+      isLoading: false,
+      isPending: false,
+      isError: false,
+      error: null,
+      isFetching: false,
+      status: "success",
+      fetchStatus: "idle",
+    } as UseQueryResult<AgentTaskBoardMatch[]>;
   }
 
   return live;

@@ -29,6 +29,7 @@ from omnigent.agent_tasks.agent_builtins import (
     TASK_MANAGER_ROLE,
     TASK_SECRETARY_ROLE,
 )
+from omnigent.agent_tasks.board_search import search_board_tasks
 from omnigent.agent_tasks.bootstrap import (
     bootstrap_task_manager,
     ensure_puppygarden_project,
@@ -140,6 +141,12 @@ from omnigent.tools.builtins.puppygarden_api import PUPPYGARDEN_CALLER_CONVERSAT
 _logger = logging.getLogger(__name__)
 
 _VALID_TASK_STATES = frozenset(TASK_STATE)
+
+# Board search result cap: the board itself lists pending + live tasks, so a
+# few hundred matches is already an outlier; beyond the cap the oldest matches
+# are dropped and the board shows the count via its own pagination line.
+BOARD_SEARCH_DEFAULT_LIMIT = 100
+BOARD_SEARCH_MAX_LIMIT = 500
 
 
 def _generate_task_id() -> str:
@@ -1901,6 +1908,75 @@ def create_agent_tasks_router(
             ],
             "matches": ranked_task_payload(matches),
             "tag_matches": ranked_task_payload(tag_matches),
+        }
+
+    @router.get("/agent-tasks/board-search")
+    async def board_search_tasks(
+        request: Request,
+        q: str = "",
+        limit: int = Query(default=BOARD_SEARCH_DEFAULT_LIMIT, ge=1, le=BOARD_SEARCH_MAX_LIMIT),
+    ) -> dict[str, Any]:
+        """Board search for the PuppyGarden task list.
+
+        Matches the query (case-insensitive substring) against board-visible
+        task text (title/goal/description/id), task items, assets, worker lane
+        text, and the chat content of the tasks' live worker sessions.
+        Executions and the manager conversation are deliberately not probed —
+        workers are the target.
+
+        The first ``limit`` matches are returned (oldest-id first). When the
+        full match count reaches the cap the board hints that more matches
+        exist below; full pagination comes later.
+
+        Returns per-entity match ids so the board can filter its cards and
+        ring the matched items/assets/workers without any client-side text
+        matching. An empty query returns no results (the board shows all
+        tasks when not searching).
+        """
+        user_id = get_user_id(request, auth_provider)
+        query = q.strip()
+        if not query:
+            return {"object": "agent.task.board_search", "results": []}
+        tasks = await asyncio.to_thread(task_store.list)
+        tasks = [t for t in _filter_tasks_for_user(tasks, user_id) if t.state != "archived"]
+        if not tasks:
+            return {"object": "agent.task.board_search", "results": []}
+        task_ids = [task.id for task in tasks]
+
+        items, workers, assets = await asyncio.gather(
+            asyncio.to_thread(task_item_store.list_items_for_tasks, task_ids),
+            asyncio.to_thread(worker_store.list_workers_for_tasks, task_ids),
+            asyncio.to_thread(task_asset_store.list_assets_for_tasks, task_ids),
+        )
+        # Mirror the dashboard: terminated/deleted workers are untracked and
+        # never rendered — their lane text and chats are out of scope.
+        workers = [w for w in workers if w.state not in ("terminated", "deleted")]
+
+        matched_conversation_ids: set[str] = set()
+        if conversation_store is not None:
+            conversation_ids = [w.target_id for w in workers if w.target_id]
+            # Chunked to stay under SQLite's 999 bind-variable limit on
+            # large boards; a no-op batch count on Postgres.
+            for start in range(0, len(conversation_ids), 500):
+                batch = conversation_ids[start : start + 500]
+                matched_conversation_ids |= await asyncio.to_thread(
+                    conversation_store.matching_conversation_ids,
+                    batch,
+                    query,
+                )
+
+        results = await asyncio.to_thread(
+            search_board_tasks,
+            tasks,
+            query=query,
+            items=items,
+            workers=workers,
+            assets=assets,
+            matched_conversation_ids=matched_conversation_ids,
+        )
+        return {
+            "object": "agent.task.board_search",
+            "results": results[:limit],
         }
 
     @router.get("/agent-tasks/{task_id}")
