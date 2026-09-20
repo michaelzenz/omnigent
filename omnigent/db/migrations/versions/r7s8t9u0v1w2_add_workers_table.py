@@ -100,6 +100,10 @@ def upgrade() -> None:
 def downgrade() -> None:
     from omnigent.db.db_models import Uuid16
 
+    # Drop before the batch block: batch recreates task_items, and an index
+    # referencing the dropped column would be re-created against the rebuilt
+    # table and fail.
+    op.drop_index("ix_task_items_worker", table_name="task_items")
     with op.batch_alter_table("task_items", schema=None) as batch_op:
         batch_op.add_column(
             sa.Column("priority", sa.SmallInteger(), nullable=False, server_default="0"),
@@ -109,7 +113,6 @@ def downgrade() -> None:
         batch_op.add_column(sa.Column("worker_agent_id", Uuid16(), nullable=True))
         batch_op.drop_column("worker_id")
 
-    op.drop_index("ix_task_items_worker", table_name="task_items")
     op.drop_index("ix_workers_profile", table_name="workers")
     op.drop_index("ix_workers_task", table_name="workers")
     op.drop_table("workers")

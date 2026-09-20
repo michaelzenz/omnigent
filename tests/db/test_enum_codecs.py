@@ -137,9 +137,9 @@ def test_shipped_codes_are_stable() -> None:
     }
     assert ec.TASK_STATE == {
         "active": 1,
-        "pending": 2,
         "idle": 3,
         "archived": 4,
+        "agent-resolved": 5,
     }
     assert ec.TASK_EVENT_STATE == {
         "received": 1,
@@ -149,6 +149,8 @@ def test_shipped_codes_are_stable() -> None:
         "dismissed": 8,
         "failed": 9,
         "classified_fyi": 12,
+        "broadcast": 13,
+        "pending_triage": 14,
     }
     # 3 was "approved" and is retired, not reused — a freed code stays free so an
     # old row can never be reinterpreted as a newer state.
@@ -170,7 +172,7 @@ def test_shipped_codes_are_stable() -> None:
         "dispatch_failed": 5,
         "interrupted": 6,
     }
-    assert ec.AGENT_QUEUE_STATE == {"active": 1, "paused": 2, "halted": 3}
+    assert ec.AGENT_QUEUE_STATE == {"active": 1, "paused": 2}
     assert ec.TASK_EVENT_EXECUTION_STATUS == {
         "queued": 1,
         "running": 2,

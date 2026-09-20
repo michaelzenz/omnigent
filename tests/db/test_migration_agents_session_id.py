@@ -310,8 +310,8 @@ def test_upgrade_does_not_cascade_delete_conversations(tmp_path: Path) -> None:
     clear_engine_cache()
 
 
-def test_agents_session_id_downgrade_refused_at_manager_identity(tmp_path: Path) -> None:
-    """Downgrading from head crosses the irreversible manager-identity migration.
+def test_agents_session_id_downgrade_across_manager_identity(tmp_path: Path) -> None:
+    """Downgrading from head traverses the whole chain below head.
 
     Uses a raw engine (no auto-migration) so PRAGMA foreign_keys stays OFF;
     the seeded rows also prove the upgraded (head) schema accepts them.
@@ -367,17 +367,17 @@ def test_agents_session_id_downgrade_refused_at_manager_identity(tmp_path: Path)
             )
         )
 
-    # Downgrade to n1a2b3c4d5e6 would traverse the whole chain below head,
-    # but the manager-identity migration refuses any downgrade crossing it.
+    # Downgrade to n1a2b3c4d5e6 traverses the whole chain below head,
+    # including the manager-identity migration (schema-only reverse; the
+    # data it erased stays gone).
     config2 = _build_alembic_config(uri)
-    with pytest.raises(NotImplementedError):
-        with raw_engine.begin() as conn:
-            config2.attributes["connection"] = conn
-            command.downgrade(config2, "n1a2b3c4d5e6")
+    with raw_engine.begin() as conn:
+        config2.attributes["connection"] = conn
+        command.downgrade(config2, "n1a2b3c4d5e6")
 
-    # The refused downgrade leaves the schema at head.
+    # n1a2b3c4d5e6 sits below o1a2b3c4d5e6, which added agents.kind.
     columns = {c["name"] for c in sa.inspect(raw_engine).get_columns("agents")}
-    assert "kind" in columns
+    assert "kind" not in columns
 
     raw_engine.dispose()
     clear_engine_cache()

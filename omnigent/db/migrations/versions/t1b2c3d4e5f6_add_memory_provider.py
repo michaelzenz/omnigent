@@ -31,4 +31,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column("memory_settings", "provider")
+    with op.batch_alter_table("memory_settings") as batch_op:
+        batch_op.drop_column("provider")

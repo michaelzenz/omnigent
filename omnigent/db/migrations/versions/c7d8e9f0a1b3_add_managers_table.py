@@ -254,4 +254,5 @@ def downgrade() -> None:
     op.drop_index("ix_managers_owner", table_name="managers")
     op.drop_table("managers")
     op.drop_index("ix_task_events_manager_state", table_name="task_events")
-    op.drop_column("task_events", "manager_conversation_id")
+    with op.batch_alter_table("task_events") as batch_op:
+        batch_op.drop_column("manager_conversation_id")
