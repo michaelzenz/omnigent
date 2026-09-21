@@ -1,11 +1,11 @@
-"""Board search: match a query against a task's board-visible text and the
-chat content of its worker sessions.
+"""Board search: match a query against a task's board-visible text.
 
 Powers ``GET /v1/agent-tasks/board-search`` — the PuppyGarden board's
 floating search bar. Server-side only: the board fetches matching task ids
 plus per-entity match ids (items, assets, workers) and renders rings from
-them. Executions are out of scope, as is the manager conversation — the
-search targets the task's rendered content and its live workers' chats.
+them. Executions, the manager conversation, and worker chat content are
+out of scope — the search targets the task's rendered content and its
+workers' lane text.
 """
 
 from __future__ import annotations
@@ -40,14 +40,11 @@ def search_board_tasks(
     items: list[TaskItem],
     workers: list[Worker],
     assets: list[TaskAsset],
-    matched_conversation_ids: set[str],
 ) -> list[dict[str, Any]]:
     """Match ``query`` against the board-visible text of ``tasks``.
 
-    Conversation content is already matched upstream: ``matched_conversation_ids``
-    holds the workers' sessions whose chat contains the query (the manager
-    conversation is never included). Everything else — task fields, items,
-    assets, worker lane text — is matched here against the loaded rows.
+    Everything — task fields, items, assets, worker lane text — is matched
+    against the loaded rows. Chat content is not probed.
 
     :param tasks: The caller's visible tasks (ACL + state filtering already
         applied; archived tasks excluded).
@@ -56,8 +53,6 @@ def search_board_tasks(
     :param workers: Workers across all candidate tasks (terminated/deleted
         excluded — they are untracked and never rendered).
     :param assets: Assets across all candidate tasks.
-    :param matched_conversation_ids: Worker conversation ids whose chat
-        content contains the query.
     :returns: One result dict per matching task:
         ``{"task_id", "matched_in", "item_ids", "asset_ids", "worker_ids"}``
         where ``matched_in`` is a subset of ``task|item|asset|worker``.
@@ -71,25 +66,12 @@ def search_board_tasks(
         items_by_task.setdefault(item.task_id, []).append(item)
 
     workers_by_task: dict[str, list[Worker]] = {}
-    worker_by_id: dict[str, Worker] = {}
     for worker in workers:
         workers_by_task.setdefault(worker.task_id, []).append(worker)
-        worker_by_id[worker.id] = worker
 
     assets_by_task: dict[str, list[TaskAsset]] = {}
     for asset in assets:
         assets_by_task.setdefault(asset.task_id, []).append(asset)
-
-    # Chat matches → the worker owning the conversation, and its task.
-    worker_conv: dict[str, str] = {}
-    for worker in workers:
-        if worker.target_id:
-            worker_conv[worker.target_id] = worker.id
-    chat_worker_ids_by_task: dict[str, set[str]] = {}
-    for conv_id in matched_conversation_ids:
-        worker = worker_by_id.get(worker_conv.get(conv_id, ""))
-        if worker is not None:
-            chat_worker_ids_by_task.setdefault(worker.task_id, set()).add(worker.id)
 
     results: list[dict[str, Any]] = []
     for task in tasks:
@@ -122,11 +104,8 @@ def search_board_tasks(
         if asset_ids:
             matched_in.add("asset")
 
-        task_chat_workers = chat_worker_ids_by_task.get(task.id, set())
         worker_ids = {
-            worker.id
-            for worker in task_workers
-            if worker.id in task_chat_workers or _worker_matches_query(worker, needle)
+            worker.id for worker in task_workers if _worker_matches_query(worker, needle)
         }
         if worker_ids:
             matched_in.add("worker")

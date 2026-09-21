@@ -1919,10 +1919,10 @@ def create_agent_tasks_router(
         """Board search for the PuppyGarden task list.
 
         Matches the query (case-insensitive substring) against board-visible
-        task text (title/goal/description/id), task items, assets, worker lane
-        text, and the chat content of the tasks' live worker sessions.
-        Executions and the manager conversation are deliberately not probed —
-        workers are the target.
+        task text (title/goal/description/id), task items, assets, and
+        worker lane text. Chat content, executions, and the manager
+        conversation are deliberately not probed — the search targets the
+        task's rendered content and its live workers' lane text.
 
         The first ``limit`` matches are returned (oldest-id first). When the
         full match count reaches the cap the board hints that more matches
@@ -1949,21 +1949,8 @@ def create_agent_tasks_router(
             asyncio.to_thread(task_asset_store.list_assets_for_tasks, task_ids),
         )
         # Mirror the dashboard: terminated/deleted workers are untracked and
-        # never rendered — their lane text and chats are out of scope.
+        # never rendered — their lane text is out of scope.
         workers = [w for w in workers if w.state not in ("terminated", "deleted")]
-
-        matched_conversation_ids: set[str] = set()
-        if conversation_store is not None:
-            conversation_ids = [w.target_id for w in workers if w.target_id]
-            # Chunked to stay under SQLite's 999 bind-variable limit on
-            # large boards; a no-op batch count on Postgres.
-            for start in range(0, len(conversation_ids), 500):
-                batch = conversation_ids[start : start + 500]
-                matched_conversation_ids |= await asyncio.to_thread(
-                    conversation_store.matching_conversation_ids,
-                    batch,
-                    query,
-                )
 
         results = await asyncio.to_thread(
             search_board_tasks,
@@ -1972,7 +1959,6 @@ def create_agent_tasks_router(
             items=items,
             workers=workers,
             assets=assets,
-            matched_conversation_ids=matched_conversation_ids,
         )
         return {
             "object": "agent.task.board_search",
@@ -2363,7 +2349,7 @@ def create_agent_tasks_router(
         ) -> dict[str, Any]:
             """Create one durable, uninitialized Worker from a provider snapshot."""
             user_id = require_user(request, auth_provider)
-            task = await _get_task_or_404(task_id, user_id)
+            await _get_task_or_404(task_id, user_id)
             worker = await asyncio.to_thread(
                 _create_worker_from_provider,
                 task_id,
@@ -3330,7 +3316,6 @@ def create_agent_tasks_router(
                 }
 
             return await asyncio.to_thread(_match)
-
 
         @router.get("/agent-tasks/board/pending")
         async def list_board_pending(request: Request) -> dict[str, Any]:
