@@ -3414,45 +3414,18 @@ def create_agent_tasks_router(
         ) -> dict[str, Any]:
             """Directly adopt a session to a task (Worker binding).
 
-            Idempotent: a session already bound to this task returns the
-            existing worker instead of creating a duplicate.
+            Idempotent: one worker row per (task, session) — re-adoption
+            updates the existing lane (title refresh, reviving an untracked
+            lane) instead of creating a duplicate.
             """
             user_id = require_user(request, auth_provider)
             await _require_session_or_404(session_id, user_id)
             task = await _get_task_or_404(body.task_id, user_id)
-
-            def _existing_binding() -> Worker | None:
-                worker = (
-                    worker_store.get_by_target_id(session_id) if worker_store is not None else None
-                )
-                if worker is None or worker.task_id != task.id:
-                    return None
-                return worker
-
-            existing = await asyncio.to_thread(_existing_binding)
-            if existing is not None:
-                if body.title is not None and body.title != existing.title:
-                    updated = await asyncio.to_thread(
-                        worker_store.update_worker,
-                        existing.id,
-                        title=body.title,
-                    )
-                    if updated is None:
-                        raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
-                    existing = updated
-                return {
-                    "object": "agent.task.session_adoption",
-                    "session_id": session_id,
-                    "task_id": body.task_id,
-                    "worker_id": existing.id,
-                    "already_bound": True,
-                }
-
             conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
             if conv is None:
                 raise OmnigentError("Session not found", code=ErrorCode.NOT_FOUND)
 
-            def _adopt() -> str:
+            def _adopt() -> tuple[Worker, bool]:
                 return adopt_session_to_task(
                     session_id=session_id,
                     task=task,
@@ -3461,12 +3434,13 @@ def create_agent_tasks_router(
                     owner_user_id=_effective_user_id(user_id),
                 )
 
-            worker_id = await asyncio.to_thread(_adopt)
+            worker, created = await asyncio.to_thread(_adopt)
             return {
                 "object": "agent.task.session_adoption",
                 "session_id": session_id,
                 "task_id": body.task_id,
-                "worker_id": worker_id,
+                "worker_id": worker.id,
+                "already_bound": not created,
             }
 
         # ── External session adoption (watcher-discovered) ──────────
@@ -3508,7 +3482,7 @@ def create_agent_tasks_router(
                 task_event_store,
                 session_hint,
             )
-            proposal_event, adopted_event = await adopt_external_session(
+            proposal_event, adopted_event, worker = await adopt_external_session(
                 session_hint=session_hint,
                 task_id=body.task_id,
                 task_store=task_store,
@@ -3520,19 +3494,21 @@ def create_agent_tasks_router(
                 app_state=request.app.state,
                 user_id=user_id,
             )
-            worker = await asyncio.to_thread(worker_store.get_by_target_id, session_hint)
             return {
                 "object": "agent.task.external_session_adoption",
                 "session_hint": session_hint,
                 "task_id": body.task_id,
-                "worker_id": worker.id if worker is not None else None,
+                "worker_id": worker.id,
+                "already_bound": adopted_event is None,
                 "proposal": (
                     _event_to_response(proposal_event)
                     if proposal_event is not None
                     and proposal_event.event_type == "session.adoption"
                     else None
                 ),
-                "event": _event_to_response(adopted_event),
+                "event": (
+                    _event_to_response(adopted_event) if adopted_event is not None else None
+                ),
             }
 
         @router.post("/agent-tasks/external-sessions/{session_hint}/reject-adoption")

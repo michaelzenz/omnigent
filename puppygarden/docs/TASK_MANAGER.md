@@ -222,7 +222,9 @@ max 20 words). Adoption is idempotent: call the same endpoint again with a new
 finished item.
 
 The worker roster (`GET /v1/agent-tasks/<task_id>/workers`) returns the current
-`title` per worker.
+`title` per worker. Adoption is deduplicated: one worker row per (task,
+session) — calling the endpoint again only updates the existing lane, never
+creates a second one.
 
 **Step 2c — harvest artifacts as task assets (turn-finished events).**
 When the transcript shows the session created an online artifact — a

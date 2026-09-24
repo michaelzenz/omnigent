@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from sqlalchemy import asc, select, update
+from sqlalchemy import asc, desc, select, update
 
 from omnigent.db.db_models import SqlWorker, current_workspace_id
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
 from omnigent.entities import Worker
+from omnigent.stores.worker_store import (
+    INACTIVE_WORKER_STATES as _INACTIVE_WORKER_STATES,
+)
 from omnigent.stores.worker_store import (
     WORKER_KIND_EXTERNAL,
     WORKER_KIND_INTERNAL,
@@ -87,8 +90,47 @@ class SqlAlchemyWorkerStore(WorkerStore):
             return _worker_to_entity(row)
 
     def get_by_target_id(self, target_id: str) -> Worker | None:
-        workers = self.list_workers_by_target_id(target_id)
-        return workers[0] if workers else None
+        """Return the oldest live worker bound to the session.
+
+        Inactive (terminated/deleted) lanes are excluded in SQL, so status
+        mirrors and routing never target a dead lane; None means unbound.
+        """
+        with self._session() as session:
+            row = (
+                session.execute(
+                    select(SqlWorker)
+                    .where(SqlWorker.workspace_id == current_workspace_id())
+                    .where(SqlWorker.target_id == target_id)
+                    .where(SqlWorker.state.not_in(_INACTIVE_WORKER_STATES))
+                    .order_by(asc(SqlWorker.created_at), asc(SqlWorker.id))
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+        return _worker_to_entity(row) if row is not None else None
+
+    def find_worker_by_target_task(self, task_id: str, target_id: str) -> Worker | None:
+        """Return the newest worker row for the (task, session) pair.
+
+        Any state — this is the lane adoption updates in place (and revives
+        when inactive). The dedup migration guarantees at most one row per
+        pair; newest is the safe pick if legacy duplicates remain.
+        """
+        with self._session() as session:
+            row = (
+                session.execute(
+                    select(SqlWorker)
+                    .where(SqlWorker.workspace_id == current_workspace_id())
+                    .where(SqlWorker.task_id == task_id)
+                    .where(SqlWorker.target_id == target_id)
+                    .order_by(desc(SqlWorker.created_at), desc(SqlWorker.id))
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+        return _worker_to_entity(row) if row is not None else None
 
     def list_workers_by_target_id(self, target_id: str) -> list[Worker]:
         with self._session() as session:
