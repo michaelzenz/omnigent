@@ -99,7 +99,7 @@ from omnigent.agent_tasks.task_search import (
     SEARCH_RECENT_LIMIT,
     rank_tasks_by_text,
 )
-from omnigent.agent_tasks.workers import worker_for_item
+from omnigent.agent_tasks.workers import worker_for_item, worker_last_active_map
 from omnigent.db.enum_codecs import TASK_STATE
 from omnigent.db.utils import now_epoch
 from omnigent.entities import (
@@ -660,7 +660,7 @@ def _tag_to_response(tag: TaskTag) -> dict[str, str]:
     return {"tag_type": tag.tag_type, "tag": tag.tag}
 
 
-def _worker_to_response(worker: Worker) -> dict[str, Any]:
+def _worker_to_response(worker: Worker, *, last_active_at: int | None = None) -> dict[str, Any]:
     try:
         snapshot = json.loads(worker.provider_configuration or "{}")
     except (TypeError, ValueError):
@@ -668,7 +668,7 @@ def _worker_to_response(worker: Worker) -> dict[str, Any]:
     launch = snapshot.get("launch") if isinstance(snapshot, dict) else None
     if not isinstance(launch, dict):
         launch = {}
-    return {
+    response = {
         "object": "agent.task.worker",
         "id": worker.id,
         "worker_id": worker.id,
@@ -684,6 +684,9 @@ def _worker_to_response(worker: Worker) -> dict[str, Any]:
         "failure_reason": worker.failure_reason,
         "last_observed_at": worker.last_observed_at,
     }
+    if last_active_at is not None:
+        response["last_active_at"] = last_active_at
+    return response
 
 
 def _task_to_response(task: Task, *, tags: list[TaskTag] | None = None) -> dict[str, Any]:
@@ -2284,6 +2287,7 @@ def create_agent_tasks_router(
                 task_item_store,
                 worker_store,
                 task_asset_store,
+                conversation_store,
             )
 
         @router.get("/agent-tasks/{task_id}/workers")
@@ -2291,14 +2295,20 @@ def create_agent_tasks_router(
             request: Request,
             task_id: str,
         ) -> dict[str, Any]:
-            """List the worker lanes on a task."""
+            """List the worker lanes on a task, most-recently-active first."""
             user_id = get_user_id(request, auth_provider)
             await _get_task_or_404(task_id, user_id)
             workers = await asyncio.to_thread(worker_store.list_workers_for_task, task_id)
             workers = [w for w in workers if w.state != "deleted"]
+            last_active = await asyncio.to_thread(
+                worker_last_active_map, workers, conversation_store
+            )
+            workers.sort(key=lambda w: (-(last_active.get(w.id) or 0), w.id))
             return {
                 "object": "list",
-                "data": [_worker_to_response(w) for w in workers],
+                "data": [
+                    _worker_to_response(w, last_active_at=last_active.get(w.id)) for w in workers
+                ],
             }
 
         def _create_worker_from_provider(

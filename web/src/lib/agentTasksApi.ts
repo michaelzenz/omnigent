@@ -90,6 +90,9 @@ export interface TaskWorkerLane {
   needs_response?: boolean;
   /** Manager-maintained label of recent work; falls back to provider_name. */
   title?: string | null;
+  /** Session last-update epoch seconds (item append, title change); external
+   *  lanes use the watcher's last observation. Lanes sort most-recent-first. */
+  last_active_at?: number | null;
   provider_name?: string | null;
   host_id?: string | null;
   workspace?: string | null;
