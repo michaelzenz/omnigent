@@ -7,8 +7,10 @@ import uuid
 import httpx
 import pytest
 import pytest_asyncio
+import sqlalchemy as sa
 
-from omnigent.db.utils import generate_agent_id
+from omnigent.db.db_models import SqlConversation
+from omnigent.db.utils import generate_agent_id, get_or_create_engine
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -243,6 +245,51 @@ async def test_adopt_session_same_task_repeated_is_single_worker(
 
     assert len(set(worker_ids)) == 1
     assert len(worker_store.list_workers_for_task(task_id)) == 1
+
+
+async def test_worker_roster_sorted_by_last_active(
+    client: httpx.AsyncClient,
+    manager_agent_id: str,
+    manager_id: str,
+    conversation_store: SqlAlchemyConversationStore,
+    worker_store: SqlAlchemyWorkerStore,
+    db_uri: str,
+) -> None:
+    """The roster lists lanes most-recently-active first, with last_active_at."""
+    _seed_live_host(db_uri, "host_test")
+    conv_old = conversation_store.create_conversation(title="Old activity")
+    conv_new = conversation_store.create_conversation(title="New activity")
+    task_id = await _create_task(client, manager_id, "Roster sort")
+
+    for conv in (conv_old, conv_new):
+        resp = await client.post(
+            f"/v1/agent-tasks/sessions/{conv.id}/adopt",
+            json={"task_id": task_id, "title": "Working"},
+        )
+        assert resp.status_code == 200, resp.text
+
+    # Pin distinct updated_at so the ordering is deterministic regardless of
+    # test speed. ORM update — Uuid16 stores ids as blobs on SQLite, raw
+    # string SQL would not match.
+    engine = get_or_create_engine(db_uri)
+    with engine.begin() as conn:
+        conn.execute(
+            sa.update(SqlConversation)
+            .where(SqlConversation.id == conv_old.id)
+            .values(updated_at=1000000000)
+        )
+        conn.execute(
+            sa.update(SqlConversation)
+            .where(SqlConversation.id == conv_new.id)
+            .values(updated_at=2000000000)
+        )
+
+    roster = await client.get(f"/v1/agent-tasks/{task_id}/workers")
+    assert roster.status_code == 200, roster.text
+    lanes = roster.json()["data"]
+    assert [lane["target_id"] for lane in lanes] == [conv_new.id, conv_old.id]
+    assert lanes[0]["last_active_at"] == 2000000000
+    assert lanes[1]["last_active_at"] == 1000000000
 
 
 async def test_adopt_session_after_untrack_resurrects_lane(
