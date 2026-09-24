@@ -273,6 +273,12 @@ report `activity`, `connected`, `needs_response`, and `failure_reason`;
 PuppyGarden observes those fields but does not route the user's response back
 to the external application.
 
+Adoption is deduplicated: one worker row per (task, session). A session may
+still be bound to several tasks (one lane each). Re-adopting a session for a
+task it already serves never creates a second lane — the existing row is
+updated in place (`title` refresh; a lane the user untracked is revived),
+and the response carries `"already_bound": true`.
+
 | Method | Path                                                               |
 | ------ | ------------------------------------------------------------------ |
 | POST   | `/v1/agent-tasks/sessions/{session_id}/propose-adoption`           |
