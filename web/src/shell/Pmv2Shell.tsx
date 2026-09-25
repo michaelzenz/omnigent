@@ -14,7 +14,7 @@ export function Pmv2Shell() {
         <div
           className="min-h-0 min-w-0 bg-white"
           data-testid="pmv2-board"
-          aria-label="GlobalHub board"
+          aria-label="Global Hub board"
         >
           <Pmv2Board />
         </div>

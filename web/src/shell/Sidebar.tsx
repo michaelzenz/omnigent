@@ -1075,6 +1075,29 @@ function SidebarImpl({
                   New session
                 </Link>
               </Button>
+              <Button
+                asChild
+                variant="ghost"
+                className={cn(
+                  SIDEBAR_ROW,
+                  "w-full justify-start border-0 font-normal",
+                  SIDEBAR_HOVER_HIGHLIGHT,
+                  isPmv2Page && SIDEBAR_ACTIVE_HIGHLIGHT,
+                )}
+                data-testid="sidebar-tab-pmv2"
+              >
+                <Link to="/pmv2" onClick={onNavClick}>
+                  <PawPrintIcon
+                    className={cn(
+                      "ui-icon",
+                      isPmv2Page
+                        ? "text-[var(--sidebar-active-foreground)]"
+                        : "text-muted-foreground",
+                    )}
+                  />
+                  Global Hub
+                </Link>
+              </Button>
               {/* Keep Scheduled in the primary nav group with the same row treatment as New session. */}
               <Button
                 asChild
@@ -1100,29 +1123,6 @@ function SidebarImpl({
                     )}
                   />
                   Automations
-                </Link>
-              </Button>
-              <Button
-                asChild
-                variant="ghost"
-                className={cn(
-                  SIDEBAR_ROW,
-                  "w-full justify-start border-0 font-normal",
-                  SIDEBAR_HOVER_HIGHLIGHT,
-                  isPmv2Page && SIDEBAR_ACTIVE_HIGHLIGHT,
-                )}
-                data-testid="sidebar-tab-pmv2"
-              >
-                <Link to="/pmv2" onClick={onNavClick}>
-                  <PawPrintIcon
-                    className={cn(
-                      "ui-icon",
-                      isPmv2Page
-                        ? "text-[var(--sidebar-active-foreground)]"
-                        : "text-muted-foreground",
-                    )}
-                  />
-                  GlobalHub
                 </Link>
               </Button>
               <Button

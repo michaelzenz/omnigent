@@ -1279,11 +1279,21 @@ describe("Sidebar tabs", () => {
     expect(screen.queryByText("conv_mine")).toBeNull();
   });
 
-  it("renders the GlobalHub nav button", () => {
+  it("renders the Global Hub nav button second, below New session", () => {
     mockConversations([conv("conv_mine", "Claude Code")]);
     renderSidebar();
-    const pmv2 = screen.getByTestId("sidebar-tab-pmv2");
+    const primaryNav = screen.getByTestId("sidebar-primary-nav");
+    const pmv2 = within(primaryNav).getByTestId("sidebar-tab-pmv2");
     expect(pmv2).toHaveAttribute("href", "/pmv2");
+    expect(pmv2).toHaveTextContent("Global Hub");
+
+    // Primary-nav order: New session → Global Hub → Automations (document order).
+    const rows = ["new-chat-button", "sidebar-tab-pmv2", "scheduled-tasks-nav"].map(
+      (testId) => within(primaryNav).getByTestId(testId),
+    );
+    for (const [prev, next] of rows.slice(0, -1).map((r, i) => [r, rows[i + 1]])) {
+      expect(prev.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
   });
 
   it("shows every pinned session in Pinned regardless of the My/Shared filter", () => {
