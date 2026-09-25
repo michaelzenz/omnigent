@@ -91,7 +91,7 @@ def ensure_pmv2_project(
     project_store: Any,
     user_id: str | None,
 ) -> str | None:
-    """Find or create the owner's "pmv2" project, return its id.
+    """Find or create the owner's "GlobalHub" project, return its id.
 
     Called by role session bootstraps so broker, secretary, and manager
     sessions are filed into one project instead of cluttering the flat
