@@ -414,9 +414,10 @@ def _upgrade_db_to_head(db_path: Path) -> None:
     # Run alembic upgrade via the CLI, pointing at the forked DB.
     env = {
         **os.environ,
-        # alembic.ini reads the DB URL from the environment or a hardcoded default.
-        # Override to point at our forked DB.
-        "OMNIGENT_DATABASE_URI": f"sqlite:///{db_path}",
+        # alembic's env.py reads the URL override from OMNIGENT_DB_URL;
+        # OMNIGENT_DATABASE_URI is the server-process var and is ignored here,
+        # so setting only that would silently migrate the repo-root dev DB.
+        "OMNIGENT_DB_URL": f"sqlite:///{db_path}",
     }
     result = subprocess.run(
         [
