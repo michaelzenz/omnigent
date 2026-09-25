@@ -1897,6 +1897,51 @@
         "title": "CreateSessionPolicyRequest",
         "type": "object"
       },
+      "CreateWorktreeRequest": {
+        "description": "Request body for `POST /v1/hosts/{host_id}/worktrees`.\n\nCreates a worktree WITHOUT launching or binding a runner \u2014 the\ncaller decides what to do with the returned folder (typically\nrelocate a session into it via `POST /v1/hosts/{id}/runners`).\n\nWith `session_id` set, creation goes through the managed\n(auto new worktree) path: the host may reuse a clean folder from\nits managed pool instead of creating a new one, and the returned\nfolder is leased to that session so other sessions' reuse sweeps\nskip it. Without `session_id` a plain worktree is created and\nleft unmanaged.",
+        "properties": {
+          "base_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional base ref to branch from, e.g. `\"main\"`. `None` branches from the repository's current `HEAD`.",
+            "title": "Base Branch"
+          },
+          "branch_name": {
+            "description": "New branch to create and check out, e.g. `\"feature/login\"`. Validated against git ref-format rules.",
+            "title": "Branch Name",
+            "type": "string"
+          },
+          "repo_path": {
+            "description": "Absolute path inside the source repository on the host, e.g. `\"/Users/alice/myrepo\"`.",
+            "title": "Repo Path",
+            "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional session to lease the managed worktree to, e.g. `\"conv_abc123\"`. Must exist and be owned by the caller.",
+            "title": "Session Id"
+          }
+        },
+        "required": [
+          "repo_path",
+          "branch_name"
+        ],
+        "title": "CreateWorktreeRequest",
+        "type": "object"
+      },
       "CreatedEvent": {
         "description": "Initial event emitted at the start of every streaming response.\n\nCarries the freshly-allocated\n`omnigent.server.schemas.ResponseObject` (status will\nbe `\"queued\"` or `\"in_progress\"` depending on whether the\ntask started immediately).",
         "properties": {
@@ -6501,6 +6546,12 @@
             "default": false,
             "description": "When `True`, bind to the pre-existing worktree at `workspace` instead of creating one (see above).",
             "title": "Existing Worktree",
+            "type": "boolean"
+          },
+          "managed": {
+            "default": false,
+            "description": "When `True`, create the branch's worktree through the managed auto-new-worktree path (the same machinery `auto_create` uses): the host may reuse a clean folder from its managed pool instead of always creating a new one, and the folder is leased to the session so reuse sweeps skip it. The branch name is the caller-supplied `branch_name` (unlike `auto_create`, which generates one). Requires a host that speaks managed worktree leases. Create mode only.",
+            "title": "Managed",
             "type": "boolean"
           }
         },
@@ -13150,6 +13201,60 @@
           }
         },
         "summary": "List Host Worktrees",
+        "tags": [
+          "hosts"
+        ]
+      },
+      "post": {
+        "description": "Create a git worktree on a host without launching a runner.\n\nWith `session_id` set, creation takes the managed auto-new-\nworktree path: the host may reuse a clean folder from its\nmanaged pool instead of creating a new one, and the returned\nfolder is leased to that session so reuse sweeps skip it. The\ncaller typically then relocates a session into the returned\nfolder via `POST /v1/hosts/{id}/runners` (whose boundary check\nadmits folders the session holds a managed claim on). Because\nsuch folders bypass the destination boundary check on launch,\nthe SOURCE repo must clear the leasing session's own\n`os_env.cwd` boundary \u2014 the same invariant the launch and\ncreate flows enforce on their worktree sources. Without\n`session_id` a plain worktree is created and left unmanaged;\nno boundary applies.\n\n**Parameters**\n\n- `body` \u2014 Source repo path, new branch, optional base ref, and optional lease-holder session id.\n\n**Returns:** `{\"worktree_path\": ..., \"branch\": ...}`.\n\n**Raises**\n\n- `HTTPException` \u2014 404 if host or session not found, 403 if not owned by caller, 409 if host is offline/unresponsive, 400 on path/branch validation, a host-reported git failure, or a source repo outside the leasing session's boundary.",
+        "operationId": "create_host_worktree_v1_hosts__host_id__worktrees_post",
+        "parameters": [
+          {
+            "description": "Host identifier, e.g. `\"host_a1b2c3d4...\"`.",
+            "in": "path",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "title": "Host Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorktreeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Host Worktree V1 Hosts  Host Id  Worktrees Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Host Worktree",
         "tags": [
           "hosts"
         ]

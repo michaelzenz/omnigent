@@ -319,10 +319,13 @@ async def worktree_lease_on_host(
 ) -> dict[str, object]:
     """Run a managed worktree lease op on the host.
 
-    :param op: ``"grant"`` (bind the session's lease at the folder's
-        current seq), ``"renew"`` (validate against the folder's seq and
-        extend), or ``"release"`` (drop the session's lease).
-    :returns: The host's result dict. For renew:
+    :param op: ``"check"`` (read-only: is the folder managed and does the
+        session hold a valid claim), ``"grant"`` (bind the session's
+        lease at the folder's current seq), ``"renew"`` (validate
+        against the folder's seq and extend), or ``"release"`` (drop the
+        session's lease).
+    :returns: The host's result dict. For check:
+        ``{managed, valid}``. For renew:
         ``{valid, managed}`` — ``managed=False`` means the session does
         not participate in the managed-worktree model; ``valid=False,
         managed=True`` means the folder was reassigned and the session
@@ -353,6 +356,55 @@ async def worktree_lease_on_host(
             f"worktree lease {op} failed: {result.get('error') or 'host reported no detail'}"
         )
     return result
+
+
+async def release_session_worktree_claim_best_effort(
+    *,
+    host_registry: HostRegistry,
+    host_id: str,
+    session_id: str,
+) -> None:
+    """Drop the session's managed-worktree claim on a host, best-effort.
+
+    Called when a launch rebinds a session away from its previous
+    workspace: the claim on the old folder would otherwise fence the
+    folder out of the reuse pool until the lease's TTL lapses. The old
+    host may be the same one (same-host move) or a different one
+    (cross-host move) — the lease lives on whichever host the session
+    was bound to. Never raises: an offline/replaced host, a plain
+    (unmanaged) folder, or a claim-less session are all no-ops or
+    logged; the lease also self-expires, so a skipped release is
+    bounded.
+
+    :param host_registry: Server-side registry of live host tunnels.
+    :param host_id: The host the session is moving AWAY from.
+    :param session_id: Session whose claim to release.
+    """
+    conn = host_registry.get(host_id)
+    if conn is None or not conn.hello.managed_worktree_leases:
+        return
+    try:
+        result = await worktree_lease_on_host(
+            host_registry=host_registry,
+            host_conn=conn,
+            op="release",
+            session_id=session_id,
+        )
+    except WorktreeProxyError as exc:
+        _logger.warning(
+            "Best-effort worktree claim release failed for session %s on %s: %s",
+            session_id,
+            host_id,
+            exc.message,
+        )
+        return
+    if result.get("released") is True:
+        _logger.debug(
+            "Released worktree claim for session %s on %s (folder %s)",
+            session_id,
+            host_id,
+            result.get("folder_path"),
+        )
 
 
 # Timeout for the worktree-sizes round-trip. The host's per-worktree du cap is
