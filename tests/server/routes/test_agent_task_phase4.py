@@ -324,8 +324,8 @@ async def test_item_accept_enqueues_worker(
     )
 
     resolve_resp = await client.post(
-        f"/v1/task-items/{item_id}/resolve",
-        json={"resolution": "accept_item", "edited_payload": _bootstrap_body()},
+        f"/v1/task-items/{item_id}/fire",
+        json={"edited_payload": _bootstrap_body()},
     )
     assert resolve_resp.status_code == 200
     resolved = resolve_resp.json()
@@ -373,9 +373,8 @@ async def test_item_edit_and_dispatch_enqueues(
         worker_provider_id=worker_provider_id,
     )
     resolve_resp = await client.post(
-        f"/v1/task-items/{item_id}/resolve",
+        f"/v1/task-items/{item_id}/fire",
         json={
-            "resolution": "edit_and_dispatch",
             "edited_payload": {
                 "instructions": "Apply the patch and run unit tests only.",
                 **_bootstrap_body(),
@@ -420,8 +419,8 @@ async def test_patch_queued_task_item(
         worker_provider_id=worker_provider_id,
     )
     accepted = await client.post(
-        f"/v1/task-items/{item_id}/resolve",
-        json={"resolution": "accept_item", "edited_payload": _bootstrap_body()},
+        f"/v1/task-items/{item_id}/fire",
+        json={"edited_payload": _bootstrap_body()},
     )
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["state"] == "queued"

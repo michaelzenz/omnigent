@@ -303,11 +303,8 @@ async def test_resolve_inbox_item_activates_accepted_package(
     assert assigned.status_code == 200, assigned.text
 
     resolved = await client.post(
-        f"/v1/task-items/{item.id}/resolve",
-        json={
-            "resolution": "edit_and_dispatch",
-            "edited_payload": _bootstrap_body(),
-        },
+        f"/v1/task-items/{item.id}/fire",
+        json={"edited_payload": _bootstrap_body()},
     )
     assert resolved.status_code == 200, resolved.text
     # Phase 4: accept no longer launches a worker synchronously — the item
@@ -352,11 +349,8 @@ async def test_resolve_inbox_item_requires_accepted_package(
     item = item_store.list_items_for_task(task_id, state="pending")[0]
 
     resolved = await client.post(
-        f"/v1/task-items/{item.id}/resolve",
-        json={
-            "resolution": "edit_and_dispatch",
-            "edited_payload": _bootstrap_body(),
-        },
+        f"/v1/task-items/{item.id}/fire",
+        json={"edited_payload": _bootstrap_body()},
     )
     assert resolved.status_code == 409
 
@@ -394,10 +388,7 @@ async def test_skip_inbox_items_keeps_paused_task(
     task_id = created.json()["id"]
 
     for item in item_store.list_items_for_task(task_id, state="pending"):
-        skipped = await client.post(
-            f"/v1/task-items/{item.id}/resolve",
-            json={"resolution": "reject_item"},
-        )
+        skipped = await client.post(f"/v1/task-items/{item.id}/cancel")
         assert skipped.status_code == 200
         assert skipped.json()["state"] == "cancelled"
 

@@ -617,23 +617,23 @@ export async function resetBrokerSession(): Promise<SecretarySession> {
   return resetAgentRoleSession(TASK_BROKER_ROLE);
 }
 
-export type ItemResolution = "accept_item" | "edit_and_dispatch" | "reject_item" | "mark_done";
-
-export async function resolveTaskItem(
+export async function fireTaskItem(
   taskItemId: string,
-  body: {
-    resolution: ItemResolution;
-    edited_payload?: DispatchPayload;
-  },
+  editedPayload?: DispatchPayload,
 ): Promise<void> {
-  const res = await authenticatedFetch(`/v1/task-items/${encodeURIComponent(taskItemId)}/resolve`, {
+  const res = await authenticatedFetch(`/v1/task-items/${encodeURIComponent(taskItemId)}/fire`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ edited_payload: editedPayload ?? null }),
   });
-  if (!res.ok) {
-    throw new Error(`${res.status} ${res.statusText}`);
-  }
+  if (!res.ok) await readJsonOrApiError(res);
+}
+
+export async function closeTaskItem(taskItemId: string): Promise<void> {
+  const res = await authenticatedFetch(`/v1/task-items/${encodeURIComponent(taskItemId)}/close`, {
+    method: "POST",
+  });
+  if (!res.ok) await readJsonOrApiError(res);
 }
 
 export async function updateTaskItem(

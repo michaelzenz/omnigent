@@ -13,8 +13,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   useAssignTaskItemWorker,
+  useCloseTaskItem,
   useCreateTaskItem,
-  useResolveTaskItem,
+  useRemoveTaskItem,
   useUntrackWorker,
 } from "@/hooks/useAgentTasks";
 import { useWorkerProviders } from "@/hooks/useWorkerProviders";
@@ -367,7 +368,8 @@ function HumanActionItemRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const resolveItem = useResolveTaskItem(taskId);
+  const closeItem = useCloseTaskItem(taskId);
+  const removeItem = useRemoveTaskItem(taskId);
   const untrack = useUntrackWorker();
   const done = item.state === "done";
 
@@ -388,7 +390,7 @@ function HumanActionItemRow({
         // untrack failed — still reject the item
       }
     }
-    await resolveItem.mutateAsync({ taskItemId: item.id, resolution: "reject_item" });
+    await removeItem.mutateAsync({ taskItemId: item.id });
   };
   return (
     <li className="space-y-2 rounded-lg border border-border bg-background p-3 shadow-xs">
@@ -413,7 +415,7 @@ function HumanActionItemRow({
                 variant="outline"
                 size="sm"
                 aria-label="Dismiss human action"
-                disabled={resolveItem.isPending || untrack.isPending}
+                disabled={removeItem.isPending || untrack.isPending}
                 onClick={() => void handleDismiss()}
               >
                 <XIcon aria-hidden /> Dismiss
@@ -421,11 +423,9 @@ function HumanActionItemRow({
               <Button
                 type="button"
                 size="sm"
-                disabled={resolveItem.isPending}
+                disabled={closeItem.isPending}
                 aria-label="Mark human action done"
-                onClick={() =>
-                  void resolveItem.mutateAsync({ taskItemId: item.id, resolution: "mark_done" })
-                }
+                onClick={() => void closeItem.mutateAsync(item.id)}
               >
                 <CheckIcon aria-hidden /> Done
               </Button>

@@ -144,23 +144,36 @@ DELETE /v1/agent-tasks/{id}/event-subscriptions/{subscription_id}
 
 | Method | Path                                     |
 | ------ | ---------------------------------------- |
-| POST   | `/v1/task-items/{id}/resolve`            |
+| POST   | `/v1/task-items/{id}/fire`               |
+| POST   | `/v1/task-items/{id}/close`              |
+| POST   | `/v1/task-items/{id}/cancel`             |
 | PATCH  | `/v1/task-items/{id}`                    |
 | POST   | `/v1/task-items/{id}/dispatch`           |
 | POST   | `/v1/task-items/{id}/retry-dispatch`     |
-| POST   | `/v1/task-items/{id}/cancel`             |
 | POST   | `/v1/task-items/{id}/edit-lease`         |
 | DELETE | `/v1/task-items/{id}/edit-lease/{token}` |
+
+Verbs, one meaning each: `fire` dispatches an approved inbox work item to its
+assigned worker (the Go button) — work items in `draft`/`pending` only;
+`edited_payload` applies edits before firing. `close` marks an item `done`
+without dispatching — human_action items from `pending` (emits the
+`item.human_action.done` manager-wake event); work items from any
+non-terminal state (an open queue delivery is cancelled first), so work that
+finished outside the item flow can be settled. `cancel` marks an item
+`cancelled` without dispatching from any non-terminal state; from `running` it
+best-effort interrupts the in-flight worker turn first. There is no `resolve`
+endpoint — the old resolve/accept_item verb that dispatched as a side effect
+was removed; firing is always an explicit `POST .../fire`.
 
 Task items carry a `kind`: `work` (default) dispatches to a worker lane;
 `human_action` is completed by the user by hand. Human action items carry only
 `title` + `description` (what/why/how) — `worker_id` and `instructions` are
 rejected at creation, and worker assignment is refused. The user settles one
-from the task card: `POST /v1/task-items/{id}/resolve` with
-`{"resolution": "mark_done"}` moves it to `done` and emits an
-`item.human_action.done` event born `routed` to the task (payload:
+from the task card: `POST /v1/task-items/{id}/close` marks it `done` and emits
+an `item.human_action.done` event born `routed` to the task (payload:
 `{"item_id", "item_title", "kind"}`), so the manager packager wakes the
-manager; `reject_item` cancels it without an event. Create one via
+manager; `POST /v1/task-items/{id}/cancel` dismisses it without an event.
+Create one via
 `POST /v1/agent-tasks/{id}/items` with `kind: "human_action"`, no `worker_id`,
 and `submit_for_user_ack: true`.
 

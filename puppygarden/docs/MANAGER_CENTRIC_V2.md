@@ -51,13 +51,13 @@ By event kind, first rule that applies:
 2. **No subscription** → tag-similarity scorer: confident match → the matched task's manager; otherwise → broker.
 
 **Broker** (rules 2 and 4-else): cluster similar events (host-aware — never mix hosts) → split into subclusters when useful → distribute each to the correct manager → or spin up a new manager (scope, capacity, or host compatibility) → FYI the unplaceable.
-**Manager** receives the event → selects among its tasks using the three-list search (recent ≤3, text matches, tag matches; for bound-session events, the attached tasks ranked by recency) → reconciles (extend/split/resolve items, update Overview, ack) → or creates a new task, born **active** (born-pending is deprecating).
+**Manager** receives the event → selects among its tasks using the three-list search (recent ≤3, text matches, tag matches; for bound-session events, the attached tasks ranked by recency) → reconciles (extend/split/close items, update Overview, ack) → or creates a new task, born **active** (born-pending is deprecating).
 
 ### 3.2 Walkthrough: session drift
 
 1. User works on task A in session S → `session.turn.finished(S)` → ingress.
 2. S is unbound → surfaces **directly to the broker** → broker distributes to M (the owner's manager).
-3. M reconciles into task A — extend/split/resolve items, update Overview, ack — and may attach S to A so later turns route directly (rule 1). If A goes quiet for over a week, it turns idle automatically (display-only, end of queue).
+3. M reconciles into task A — extend/split/close items, update Overview, ack — and may attach S to A so later turns route directly (rule 1). If A goes quiet for over a week, it turns idle automatically (display-only, end of queue).
 4. User pivots to new work B in the **same** session → next `turn.finished(S)` → via S's binding (rule 1) or via the broker if still unbound → M.
 5. M's three-list search shows nothing fits → **M creates task B, born active**, attached to M (born-pending is deprecating).
 6. When A/B looks done, M marks it **agent-resolved** — same board card style as pending with a distinct badge, sorted to the end of the queue. Not final: a new relevant event moves it back to pending.

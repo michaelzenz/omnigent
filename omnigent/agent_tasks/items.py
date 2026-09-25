@@ -1,4 +1,4 @@
-"""TaskItem lifecycle — inbox, reconcile, and user resolve."""
+"""TaskItem lifecycle — inbox, reconcile, fire, close, and cancel."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Any, Literal
+from typing import Any
 
 from omnigent.agent_tasks.bootstrap import (
     bootstrap_task_manager,
@@ -43,7 +43,6 @@ def _require_worker_owner_scope(
         raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
 
 
-ItemResolution = Literal["accept_item", "edit_and_dispatch", "reject_item", "mark_done"]
 _INBOX_STATES = frozenset({"draft", "pending"})
 # Editable while the work is waiting: before it is handed over, and after it is
 # parked. A parked item is stopped precisely so its instructions can be fixed
@@ -183,23 +182,46 @@ def submit_item_for_user_ack(task_item_store: TaskItemStore, item_id: str) -> Ta
     return updated
 
 
-def reject_task_item(
+_NON_TERMINAL_ITEM_STATES = frozenset(
+    {"draft", "pending", "queued", "interrupted", "dispatch_failed", "running"}
+)
+
+
+def cancel_task_item(
     *,
     item: TaskItem,
     task_item_store: TaskItemStore,
     worker_store: WorkerStore | None = None,
+    agent_queue_store: AgentQueueStore | None = None,
 ) -> TaskItem:
-    """Cancel a user-inbox task item without dispatching.
+    """Cancel a task item without dispatching, from any non-terminal state.
 
-    If the item is an adoption human_action with a worker_id in internal_note,
-    soft-delete the worker so future turns from that session stop generating
-    events.
+    Cancels an open queue delivery for queued/parked items. If the item is an
+    adoption human_action with a worker_id in internal_note, soft-delete the
+    worker so future turns from that session stop generating events.
     """
-    if item.state not in _INBOX_STATES:
+    if item.state not in _NON_TERMINAL_ITEM_STATES:
         raise OmnigentError(
-            f"Cannot resolve item in state {item.state!r}",
+            f"Cannot cancel item in state {item.state!r}",
             code=ErrorCode.CONFLICT,
         )
+    if item.state in {"queued", "interrupted", "dispatch_failed", "running"}:
+        if agent_queue_store is None:
+            # Running items may predate the queue store; nothing to clean.
+            if item.state != "running":
+                raise OmnigentError("Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR)
+        else:
+            queue_item = agent_queue_store.find_open_item_for_source(item.id, role="worker")
+            if queue_item is None:
+                if item.state == "queued":
+                    raise OmnigentError("Queued delivery not found", code=ErrorCode.CONFLICT)
+            elif agent_queue_store.cancel_item(queue_item.id, now=now_epoch()) is None:
+                # A dispatched (in-flight) delivery is not cancelable — reclaim
+                # and the terminal-item guards cover the late-arriving case.
+                if item.state != "running":
+                    raise OmnigentError(
+                        "Queued delivery could not be cancelled", code=ErrorCode.CONFLICT
+                    )
     updated = task_item_store.update_item(item.id, state="cancelled")
     if updated is None:
         raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
@@ -262,10 +284,9 @@ def complete_human_action(
     return updated
 
 
-async def resolve_task_item(
+async def fire_task_item(
     *,
     item: TaskItem,
-    resolution: ItemResolution,
     task: Task,
     task_store: TaskStore,
     task_item_store: TaskItemStore,
@@ -280,41 +301,24 @@ async def resolve_task_item(
     app_state: Any | None = None,
     user_id: str | None = None,
 ) -> tuple[TaskItem, TaskEventExecution | None]:
-    """Accept, edit, or reject a user-inbox task item.
+    """Fire an approved inbox work item to its assigned worker.
 
-    Accept/edit-and-dispatch no longer launch a worker synchronously when an
-    agent queue store is wired: the item moves to ``queued`` and an
-    ``item.dispatch`` queue item is enqueued for the worker slot, and the
-    dispatcher spawns the worker session off the request path. When no queue
-    store is provided (single-process tests, older setups) the legacy
-    synchronous dispatch path is used so behaviour is preserved.
+    The item moves to ``queued`` and an ``item.dispatch`` queue item is
+    enqueued for the worker slot; the dispatcher spawns the worker session off
+    the request path. When no queue store is provided (single-process tests,
+    older setups) the legacy synchronous dispatch path is used so behaviour is
+    preserved. ``edited_payload`` applies edits before firing.
     """
+    if item.kind != "work":
+        raise OmnigentError(
+            "Only work items can be fired; human action items are closed, not fired",
+            code=ErrorCode.CONFLICT,
+        )
     if item.state not in _INBOX_STATES:
         raise OmnigentError(
-            f"Cannot resolve item in state {item.state!r}",
+            f"Cannot fire item in state {item.state!r}",
             code=ErrorCode.CONFLICT,
         )
-    if resolution == "mark_done":
-        updated = complete_human_action(
-            item=item,
-            task=task,
-            task_item_store=task_item_store,
-            task_event_store=task_event_store,
-        )
-        return updated, None
-    if resolution == "reject_item":
-        updated = await asyncio.to_thread(
-            reject_task_item,
-            item=item,
-            task_item_store=task_item_store,
-        )
-        return updated, None
-    if item.kind == "human_action":
-        raise OmnigentError(
-            "Human action items can only be marked done or dismissed",
-            code=ErrorCode.CONFLICT,
-        )
-
     payload = _merge_payload(item_dispatch_payload(item), edited_payload)
     task = await ensure_task_manager_for_dispatch(
         task=task,
@@ -324,14 +328,14 @@ async def resolve_task_item(
         app_state=app_state,
         user_id=user_id,
     )
-    if resolution == "edit_and_dispatch":
+    if edited_payload is not None:
         update_kwargs: dict[str, Any] = {
             "title": str(payload.get("title", item.title)),
             "instructions": str(payload.get("instructions", item.instructions or "")),
         }
-        if edited_payload is not None and "description" in edited_payload:
+        if "description" in edited_payload:
             update_kwargs["description"] = str(payload.get("description") or "")
-        if edited_payload is not None and "internal_note" in edited_payload:
+        if "internal_note" in edited_payload:
             update_kwargs["internal_note"] = str(payload.get("internal_note") or "")
         await asyncio.to_thread(task_item_store.update_item, item.id, **update_kwargs)
         refreshed = await asyncio.to_thread(task_item_store.get_item, item.id)
@@ -342,7 +346,7 @@ async def resolve_task_item(
     worker = worker_for_item(item, worker_store=worker_store)
     if worker is None:
         raise OmnigentError(
-            "Item has no worker lane; assign one before resolving",
+            "Item has no worker lane; assign one before firing",
             code=ErrorCode.CONFLICT,
         )
 
@@ -357,6 +361,17 @@ async def resolve_task_item(
     if agent_queue_store is not None:
         # Phase 4: enqueue for the worker slot; the dispatcher launches the
         # worker session off the request path. No execution/runner here.
+        # Re-check the inbox state: a concurrent close during worker init must
+        # win over this stale fire.
+        refreshed = await asyncio.to_thread(task_item_store.get_item, item.id)
+        if refreshed is None:
+            raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
+        if refreshed.state not in _INBOX_STATES:
+            raise OmnigentError(
+                f"Cannot fire item in state {refreshed.state!r}",
+                code=ErrorCode.CONFLICT,
+            )
+        item = refreshed
         updated = await asyncio.to_thread(
             task_item_store.update_item,
             item.id,
@@ -405,6 +420,55 @@ async def resolve_task_item(
         task_item_store=task_item_store,
     )
     return updated, execution
+
+
+def close_task_item(
+    *,
+    item: TaskItem,
+    task: Task,
+    task_item_store: TaskItemStore,
+    task_event_store: TaskEventStore,
+    agent_queue_store: AgentQueueStore | None = None,
+) -> TaskItem:
+    """Close an item as done without dispatching.
+
+    Human action items keep the mark-done semantics (pending only, with a
+    manager-wake event). Work items close from any non-terminal state so work
+    that finished outside the item flow — or a stale approval-gated item — can
+    be settled; an open queue delivery is cancelled first.
+    """
+    if item.kind == "human_action":
+        return complete_human_action(
+            item=item,
+            task=task,
+            task_item_store=task_item_store,
+            task_event_store=task_event_store,
+        )
+    if item.state not in _NON_TERMINAL_ITEM_STATES:
+        raise OmnigentError(
+            f"Cannot close item in state {item.state!r}",
+            code=ErrorCode.CONFLICT,
+        )
+    if item.state in {"queued", "interrupted", "dispatch_failed", "running"}:
+        if agent_queue_store is None:
+            # Running items may predate the queue store; nothing to clean.
+            if item.state != "running":
+                raise OmnigentError("Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR)
+        else:
+            queue_item = agent_queue_store.find_open_item_for_source(item.id, role="worker")
+            if queue_item is not None and agent_queue_store.cancel_item(
+                queue_item.id, now=now_epoch()
+            ) is None:
+                # A dispatched (in-flight) delivery is not cancelable — reclaim
+                # and the terminal-item guards cover the late-arriving case.
+                if item.state != "running":
+                    raise OmnigentError(
+                        "Queued delivery could not be cancelled", code=ErrorCode.CONFLICT
+                    )
+    updated = task_item_store.update_item(item.id, state="done")
+    if updated is None:
+        raise OmnigentError("Task item not found", code=ErrorCode.NOT_FOUND)
+    return updated
 
 
 def reconcile_events(

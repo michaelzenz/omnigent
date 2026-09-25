@@ -179,7 +179,9 @@ async def notify_worker_execution_status(
             )
 
     item_state = "done" if terminal_status == "succeeded" else "queued"
-    _context.task_item_store.update_item(execution.task_item_id, state=item_state)
+    current_item = _context.task_item_store.get_item(execution.task_item_id)
+    if current_item is not None and current_item.state not in {"done", "cancelled"}:
+        _context.task_item_store.update_item(execution.task_item_id, state=item_state)
 
     # The execution row carries the task; a shared worker lane serves many
     # tasks, so worker.task_id (home task) is not the right parent here.

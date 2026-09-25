@@ -55,13 +55,13 @@ from omnigent.agent_tasks.fyi_clusters import (
 from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.agent_tasks.internal_worker import initialize_internal_worker
 from omnigent.agent_tasks.items import (
-    complete_human_action,
+    cancel_task_item,
+    close_task_item,
     create_task_item,
+    fire_task_item,
     item_dispatch_payload,
     patch_task_item,
     reconcile_events,
-    reject_task_item,
-    resolve_task_item,
     submit_item_for_user_ack,
 )
 from omnigent.agent_tasks.manager_discovery import (
@@ -485,10 +485,9 @@ class DispatchTaskItemRequest(BaseModel):
     model: str | None = None
 
 
-class ResolveTaskItemRequest(BaseModel):
-    """Request body for ``POST /v1/task-items/{item_id}/resolve``."""
+class FireTaskItemRequest(BaseModel):
+    """Request body for ``POST /v1/task-items/{item_id}/fire``."""
 
-    resolution: Literal["accept_item", "edit_and_dispatch", "reject_item", "mark_done"]
     edited_payload: dict[str, Any] | None = None
 
 
@@ -2874,47 +2873,30 @@ def create_agent_tasks_router(
             await _get_task_or_404(item.task_id, user_id)
             return item
 
-        @router.post("/task-items/{item_id}/resolve")
-        async def resolve_task_item_route(
+        async def _stop_in_flight_worker(request: Request, item: TaskItem) -> None:
+            """Best-effort interrupt of the item's in-flight worker turn."""
+            worker = worker_for_item(item, worker_store=worker_store)
+            if worker is None or worker.target_id is None:
+                return
+            try:
+                await _control_worker(worker, "interrupt", request)
+            except Exception:
+                # The runner may be gone — exactly when a force close/cancel is
+                # needed. The item transition must still proceed.
+                _logger.exception("failed to interrupt worker for item %s", item.id)
+
+        async def _fire_task_item_handler(
             request: Request,
-            item_id: str,
-            body: ResolveTaskItemRequest,
+            item: TaskItem,
+            edited_payload: dict[str, Any] | None,
         ) -> dict[str, Any]:
-            """Accept, edit, or reject a user-inbox task item."""
             user_id = require_user(request, auth_provider)
-            item = await _get_item_or_404(item_id, user_id)
-            # Rejection cancels the item outright — no manager profile, dispatch
-            # params, or worker runner are needed, so short-circuit before them.
-            if body.resolution == "reject_item":
-                updated = await asyncio.to_thread(
-                    reject_task_item,
-                    item=item,
-                    task_item_store=task_item_store,
-                    worker_store=worker_store,
-                )
-                return _item_to_response(updated)
-            # mark_done settles a human action without dispatch — short-circuit
-            # before worker lookup/initialization like reject_item.
-            if body.resolution == "mark_done":
-                task = await _get_task_or_404(item.task_id, user_id)
-                updated = await asyncio.to_thread(
-                    complete_human_action,
-                    item=item,
-                    task=task,
-                    task_item_store=task_item_store,
-                    task_event_store=task_event_store,
-                )
-                return _item_to_response(updated)
-            if body.resolution == "edit_and_dispatch" and body.edited_payload is None:
-                raise OmnigentError("edited_payload is required", code=ErrorCode.INVALID_INPUT)
-            # Accept/edit dispatch to a worker — refuse human actions here too so
-            # the error names the kind instead of the missing worker lane.
-            if item.kind == "human_action":
+            task = await _get_task_or_404(item.task_id, user_id)
+            if item.kind != "work":
                 raise OmnigentError(
-                    "Human action items can only be marked done or dismissed",
+                    "Only work items can be fired; human action items are closed, not fired",
                     code=ErrorCode.CONFLICT,
                 )
-            task = await _get_task_or_404(item.task_id, user_id)
             worker = worker_for_item(item, worker_store=worker_store)
             if worker is None:
                 raise OmnigentError(
@@ -2950,16 +2932,15 @@ def create_agent_tasks_router(
             worker_profile = await _manager_role_profile_for_task(task, user_id)
             manager_profile = await _manager_role_profile_for_task(task, user_id)
 
-            updated, execution = await resolve_task_item(
+            updated, execution = await fire_task_item(
                 item=item,
-                resolution=body.resolution,
                 task=task,
                 task_store=task_store,
                 task_item_store=task_item_store,
                 task_event_store=task_event_store,
                 worker_store=worker_store,
                 conversation_store=conversation_store,
-                edited_payload=body.edited_payload,
+                edited_payload=edited_payload,
                 role_profile=worker_profile or manager_profile,
                 agent_queue_store=agent_queue_store,
                 owner_user_id=_effective_user_id(user_id),
@@ -2972,6 +2953,53 @@ def create_agent_tasks_router(
                 response["execution_id"] = execution.id
                 response["worker_conversation_id"] = execution.conversation_id
             return response
+
+        async def _close_task_item_handler(request: Request, item: TaskItem) -> dict[str, Any]:
+            user_id = require_user(request, auth_provider)
+            task = await _get_task_or_404(item.task_id, user_id)
+            if item.kind == "work" and item.state == "running":
+                await _stop_in_flight_worker(request, item)
+            updated = await asyncio.to_thread(
+                close_task_item,
+                item=item,
+                task=task,
+                task_item_store=task_item_store,
+                task_event_store=task_event_store,
+                agent_queue_store=agent_queue_store,
+            )
+            return _item_to_response(updated)
+
+        async def _cancel_task_item_handler(request: Request, item: TaskItem) -> dict[str, Any]:
+            if item.kind == "work" and item.state == "running":
+                await _stop_in_flight_worker(request, item)
+            updated = await asyncio.to_thread(
+                cancel_task_item,
+                item=item,
+                task_item_store=task_item_store,
+                worker_store=worker_store,
+                agent_queue_store=agent_queue_store,
+            )
+            return _item_to_response(updated)
+
+        @router.post("/task-items/{item_id}/fire")
+        async def fire_task_item_route(
+            request: Request,
+            item_id: str,
+            body: FireTaskItemRequest | None = None,
+        ) -> dict[str, Any]:
+            """Fire an approved inbox work item to its assigned worker."""
+            user_id = require_user(request, auth_provider)
+            item = await _get_item_or_404(item_id, user_id)
+            return await _fire_task_item_handler(
+                request, item, body.edited_payload if body is not None else None
+            )
+
+        @router.post("/task-items/{item_id}/close")
+        async def close_task_item_route(request: Request, item_id: str) -> dict[str, Any]:
+            """Close an item as done without dispatching (stops an in-flight turn)."""
+            user_id = require_user(request, auth_provider)
+            item = await _get_item_or_404(item_id, user_id)
+            return await _close_task_item_handler(request, item)
 
         @router.post("/task-items/{item_id}/edit-lease")
         async def acquire_task_item_edit_lease(
@@ -3095,34 +3123,11 @@ def create_agent_tasks_router(
             return _item_to_response(updated)
 
         @router.post("/task-items/{item_id}/cancel")
-        async def cancel_task_item(request: Request, item_id: str) -> dict[str, Any]:
-            """Remove queued or parked work from dispatch and hide it from the board."""
+        async def cancel_task_item_route(request: Request, item_id: str) -> dict[str, Any]:
+            """Cancel an item without dispatching (stops an in-flight turn first)."""
             user_id = require_user(request, auth_provider)
             item = await _get_item_or_404(item_id, user_id)
-            if item.state not in {"queued", "interrupted", "dispatch_failed"}:
-                raise OmnigentError(
-                    f"Cannot cancel item in state {item.state!r}", code=ErrorCode.CONFLICT
-                )
-            if agent_queue_store is None:
-                raise OmnigentError("Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR)
-            queue_item = await asyncio.to_thread(
-                agent_queue_store.find_open_item_for_source, item.id, role="worker"
-            )
-            if queue_item is None and item.state == "queued":
-                raise OmnigentError("Queued delivery not found", code=ErrorCode.CONFLICT)
-            if queue_item is not None:
-                cancelled = await asyncio.to_thread(
-                    agent_queue_store.cancel_item, queue_item.id, now=now_epoch()
-                )
-                if cancelled is None:
-                    raise OmnigentError(
-                        "Queued delivery could not be cancelled", code=ErrorCode.CONFLICT
-                    )
-            updated = await asyncio.to_thread(
-                task_item_store.update_item, item.id, state="cancelled"
-            )
-            assert updated is not None
-            return _item_to_response(updated)
+            return await _cancel_task_item_handler(request, item)
 
         @router.post("/task-items/{item_id}/retry-dispatch")
         async def retry_task_item_dispatch(

@@ -5,16 +5,17 @@ import type { TaskDashboard, TaskItemSummary } from "@/lib/agentTasksApi";
 import type * as agentTasksHooks from "@/hooks/useAgentTasks";
 import { TaskItemsPanel } from "./TaskCardWorkers";
 
-const resolveMutateAsync = vi.fn();
+const closeMutateAsync = vi.fn();
+const removeMutateAsync = vi.fn();
 
 vi.mock("@/hooks/useAgentTasks", async (importOriginal) => ({
   ...(await importOriginal<typeof agentTasksHooks>()),
-  useResolveTaskItem: vi.fn(() => ({ mutateAsync: resolveMutateAsync, isPending: false })),
+  useCloseTaskItem: vi.fn(() => ({ mutateAsync: closeMutateAsync, isPending: false })),
   useUpdateTaskItem: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   useAssignTaskItemWorker: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   useCreateTaskItem: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   useStopTaskItem: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
-  useRemoveTaskItem: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useRemoveTaskItem: vi.fn(() => ({ mutateAsync: removeMutateAsync, isPending: false })),
   useRetryTaskItem: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   useUntrackWorker: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
 }));
@@ -69,7 +70,8 @@ function renderPanel(dashboard: TaskDashboard) {
 describe("human action task items", () => {
   afterEach(() => {
     cleanup();
-    resolveMutateAsync.mockClear();
+    closeMutateAsync.mockClear();
+    removeMutateAsync.mockClear();
   });
 
   it("renders badge and description with Done/Dismiss and no worker controls once expanded", () => {
@@ -87,16 +89,10 @@ describe("human action task items", () => {
     expect(screen.queryByText("Accept")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByLabelText("Mark human action done"));
-    expect(resolveMutateAsync).toHaveBeenCalledWith({
-      taskItemId: "ha-1",
-      resolution: "mark_done",
-    });
+    expect(closeMutateAsync).toHaveBeenCalledWith("ha-1");
 
     fireEvent.click(screen.getByLabelText("Dismiss human action"));
-    expect(resolveMutateAsync).toHaveBeenCalledWith({
-      taskItemId: "ha-1",
-      resolution: "reject_item",
-    });
+    expect(removeMutateAsync).toHaveBeenCalledWith({ taskItemId: "ha-1" });
   });
 
   it("renders recently done human actions without action buttons", () => {

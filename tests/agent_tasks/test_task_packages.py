@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from omnigent.agent_tasks.broker_inbox import build_ambiguous_inbox
-from omnigent.agent_tasks.items import create_task_item, resolve_task_item
+from omnigent.agent_tasks.items import cancel_task_item, create_task_item, fire_task_item
 from omnigent.agent_tasks.task_match import rank_tasks_for_events, routable_tasks
 from omnigent.agent_tasks.task_packages import (
     PackageItemSpec,
@@ -574,9 +574,8 @@ async def test_resolve_inbox_item_enqueues_accepted_package(stores, db_uri: str)
             workspace=body.workspace,
         )
 
-    updated, execution = await resolve_task_item(
+    updated, execution = await fire_task_item(
         item=item_store.get_item(item.id),
-        resolution="edit_and_dispatch",
         task=task,
         task_store=task_store,
         task_item_store=item_store,
@@ -639,18 +638,12 @@ async def test_skip_inbox_items_keeps_paused_task(stores) -> None:
     )
     worker_store = stores["worker"]
     for item in item_store.list_items_for_task(task.id, state="pending"):
-        updated, execution = await resolve_task_item(
+        updated = cancel_task_item(
             item=item,
-            resolution="reject_item",
-            task=task,
-            task_store=task_store,
             task_item_store=item_store,
-            task_event_store=event_store,
             worker_store=worker_store,
-            conversation_store=conversation_store,
         )
         assert updated.state == "cancelled"
-        assert execution is None
 
     unchanged = task_store.get(task.id)
     assert unchanged is not None

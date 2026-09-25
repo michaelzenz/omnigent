@@ -14,6 +14,8 @@ import {
   fetchLiveAgentTasks,
   fetchSecretaryProfile,
   fetchTaskDashboard,
+  fireTaskItem,
+  closeTaskItem,
   interruptAgentQueueItem,
   moveTaskToQueueEnd,
   permanentlyDeleteAgentTask,
@@ -22,13 +24,11 @@ import {
   resetBrokerSession,
   resetSecretarySession,
   patchAgentTask,
-  resolveTaskItem,
   retryTaskItemDispatch,
   untrackWorker,
   updateTaskItem,
   type CreateTaskItemRequest,
   type DispatchPayload,
-  type ItemResolution,
   type UpdateAgentTaskRequest,
   type UpdateTaskItemRequest,
   type WorkerAssignmentInput,
@@ -39,9 +39,10 @@ import { useChatStore } from "@/store/chatStore";
 import { FIXTURE_TASK_LIST } from "@/shell/puppyGarden/fixtures/mockTaskDashboard";
 import { isPuppyGardenFixtureMode } from "@/shell/puppyGarden/fixtures/puppyGardenFixtureMode";
 import {
+  fixtureCloseItem,
+  fixtureFireItem,
   fixtureRemoveAsset,
   fixtureRemoveItem,
-  fixtureResolveInboxItem,
   fixtureRetryItem,
   fixtureStopRunning,
   fixtureUpdateItem,
@@ -178,23 +179,17 @@ export function useResetBrokerSession() {
   });
 }
 
-export function useResolveTaskItem(taskId: string) {
+export function useFireTaskItem(taskId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({
       taskItemId,
-      resolution,
       edited_payload,
     }: {
       taskItemId: string;
-      resolution: ItemResolution;
-      edited_payload?: DispatchPayload & { description?: string };
+      edited_payload?: DispatchPayload;
     }) => {
       if (fixtureEnabled) {
-        if (resolution === "reject_item" || resolution === "mark_done") {
-          fixtureResolveInboxItem(taskId, taskItemId, resolution);
-          return;
-        }
         if (edited_payload) {
           fixtureUpdateItem(taskId, taskItemId, {
             title: edited_payload.title,
@@ -202,10 +197,26 @@ export function useResolveTaskItem(taskId: string) {
             description: edited_payload.description ?? null,
           });
         }
-        fixtureResolveInboxItem(taskId, taskItemId, "accept_item");
+        fixtureFireItem(taskId, taskItemId);
         return;
       }
-      await resolveTaskItem(taskItemId, { resolution, edited_payload });
+      await fireTaskItem(taskItemId, edited_payload);
+    },
+    onSuccess: async () => {
+      await invalidateTaskQueries(queryClient, taskId);
+    },
+  });
+}
+
+export function useCloseTaskItem(taskId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (taskItemId: string) => {
+      if (fixtureEnabled) {
+        fixtureCloseItem(taskId, taskItemId);
+        return;
+      }
+      await closeTaskItem(taskItemId);
     },
     onSuccess: async () => {
       await invalidateTaskQueries(queryClient, taskId);

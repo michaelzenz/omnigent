@@ -562,3 +562,40 @@ async def test_status_hooks_skip_deleted_workers(completion_setup: dict) -> None
     refreshed = worker_store.get_worker(worker.id)
     assert refreshed is not None
     assert refreshed.state == "deleted"
+
+
+@pytest.mark.asyncio
+async def test_status_settle_does_not_resurrect_terminal_item(completion_setup: dict) -> None:
+    """A late settle must not flip an already-terminal item back to done/queued.
+
+    Closing or cancelling an item while its turn is still in flight marks the
+    item terminal immediately; stopping the session is async. When the session
+    settles afterwards, the completion hook must leave the terminal state alone.
+    """
+    item_store: SqlAlchemyTaskItemStore = completion_setup["item_store"]
+    worker_conv_id = completion_setup["worker_conv_id"]
+
+    item_store.update_item(completion_setup["task_item_id"], state="cancelled")
+
+    handled = await notify_worker_session_status(worker_conv_id, "idle", output="late settle")
+    assert handled is True
+
+    refreshed = item_store.get_item(completion_setup["task_item_id"])
+    assert refreshed is not None
+    assert refreshed.state == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_failed_settle_does_not_resurrect_terminal_item(completion_setup: dict) -> None:
+    """A late failed settle must not flip a terminal item back to queued."""
+    item_store: SqlAlchemyTaskItemStore = completion_setup["item_store"]
+    worker_conv_id = completion_setup["worker_conv_id"]
+
+    item_store.update_item(completion_setup["task_item_id"], state="cancelled")
+
+    handled = await notify_worker_session_status(worker_conv_id, "failed", output="late boom")
+    assert handled is True
+
+    refreshed = item_store.get_item(completion_setup["task_item_id"])
+    assert refreshed is not None
+    assert refreshed.state == "cancelled"
