@@ -15,13 +15,13 @@ if TYPE_CHECKING:
 ONIH_SETTINGS_KEY = "omniharness"
 ONIH_OPENAI_AGENTS_TARGET = "onih-openai-agents"
 ONIH_PI_TARGET = "onih-pi"
-ONIH_PUPPYGARDEN_TARGET = "onih-puppygarden"
-ONIH_TARGET_NAMES = frozenset({ONIH_OPENAI_AGENTS_TARGET, ONIH_PI_TARGET, ONIH_PUPPYGARDEN_TARGET})
-# Restricted read-only profile for PuppyGarden broker and manager
+ONIH_PMV2_TARGET = "onih-pmv2"
+ONIH_TARGET_NAMES = frozenset({ONIH_OPENAI_AGENTS_TARGET, ONIH_PI_TARGET, ONIH_PMV2_TARGET})
+# Restricted read-only profile for pmv2 broker and manager
 # roles. NOT in ONIH_TARGET_NAMES so it does not appear as a
 # user-selectable Onih variant in the session picker — only used
 # internally by the task system.
-ONIH_PUPPYGARDEN_RO_TARGET = ONIH_PUPPYGARDEN_TARGET
+ONIH_PMV2_RO_TARGET = ONIH_PMV2_TARGET
 ONIH_DISPLAY_NAME = "Onih"
 # Settings and telemetry keep their existing namespace. This alias is retained
 # while call sites are migrated away from treating the settings key as a target.
@@ -29,17 +29,17 @@ OMNIHARNESS_AGENT_NAME = ONIH_SETTINGS_KEY
 OMNIHARNESS_DISPLAY_NAME = ONIH_DISPLAY_NAME
 
 
-# Role predicates for the restricted read-only PuppyGarden profile.
+# Role predicates for the restricted read-only pmv2 profile.
 # Imported lazily to keep the dependency one-directional.
-_PUPPYGARDEN_RO_ROLE_KEYS: frozenset[str] = frozenset()
+_PMV2_RO_ROLE_KEYS: frozenset[str] = frozenset()
 _is_manager_role_key: Callable[[str], bool] | None = None
 _SECRETARY_ROLE_KEY: str | None = None
-_PUPPYGARDEN_RO_INITIALIZED = False
+_PMV2_RO_INITIALIZED = False
 
 
-def _ensure_puppygarden_ro_predicates() -> None:
-    global _PUPPYGARDEN_RO_ROLE_KEYS, _is_manager_role_key, _PUPPYGARDEN_RO_INITIALIZED
-    if _PUPPYGARDEN_RO_INITIALIZED:
+def _ensure_pmv2_ro_predicates() -> None:
+    global _PMV2_RO_ROLE_KEYS, _is_manager_role_key, _PMV2_RO_INITIALIZED
+    if _PMV2_RO_INITIALIZED:
         return
     from omnigent.agent_tasks.role_keys import (
         TASK_BROKER_ROLE_KEY,
@@ -47,27 +47,27 @@ def _ensure_puppygarden_ro_predicates() -> None:
         is_manager_role_key,
     )
 
-    _PUPPYGARDEN_RO_ROLE_KEYS = frozenset({TASK_BROKER_ROLE_KEY})
+    _PMV2_RO_ROLE_KEYS = frozenset({TASK_BROKER_ROLE_KEY})
     _is_manager_role_key = is_manager_role_key
     global _SECRETARY_ROLE_KEY
     _SECRETARY_ROLE_KEY = TASK_SECRETARY_ROLE_KEY
-    _PUPPYGARDEN_RO_INITIALIZED = True
+    _PMV2_RO_INITIALIZED = True
 
 
 def execution_target_for_role(role: str) -> str:
-    """Map a PuppyGarden role key to its execution-target agent name.
+    """Map a pmv2 role key to its execution-target agent name.
 
     Broker and all manager roles (``manager:default``, custom manager
-    templates) use the restricted read-only ``onih-puppygarden`` profile
-    (file read, search, MCP access, PuppyGarden APIs only). The secretary
+    templates) use the restricted read-only ``onih-pmv2`` profile
+    (file read, search, MCP access, pmv2 APIs only). The secretary
     role runs the ``onih-pi`` profile (Pi agent runtime); any other role
     uses the general-purpose ``onih-openai-agents`` profile.
     """
-    _ensure_puppygarden_ro_predicates()
-    if role in _PUPPYGARDEN_RO_ROLE_KEYS or (
+    _ensure_pmv2_ro_predicates()
+    if role in _PMV2_RO_ROLE_KEYS or (
         _is_manager_role_key is not None and _is_manager_role_key(role)
     ):
-        return ONIH_PUPPYGARDEN_RO_TARGET
+        return ONIH_PMV2_RO_TARGET
     if role == _SECRETARY_ROLE_KEY:
         return ONIH_PI_TARGET
     return ONIH_OPENAI_AGENTS_TARGET

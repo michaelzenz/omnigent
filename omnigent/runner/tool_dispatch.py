@@ -95,9 +95,9 @@ from omnigent.tools.builtins.os_env import (
     SysOsShellTool,
     SysOsWriteTool,
 )
-from omnigent.tools.builtins.puppygarden_api import (
-    PUPPYGARDEN_CALLER_CONVERSATION_HEADER,
-    PuppyGardenApiTool,
+from omnigent.tools.builtins.pmv2_api import (
+    PMV2_CALLER_CONVERSATION_HEADER,
+    Pmv2ApiTool,
     is_task_api_path,
 )
 from omnigent.tools.builtins.session_rename import SysSessionRenameTool
@@ -480,7 +480,7 @@ _SCHEDULED_TASK_TOOLS = frozenset(
 # none. See omnigent/tools/builtins/browser.py for the schema-only classes.
 _BROWSER_TOOLS = BROWSER_TOOL_NAMES
 
-# Priority 5n: PuppyGarden task-API proxy — ``puppygarden_api``.
+# Priority 5n: pmv2 task-API proxy — ``pmv2_api``.
 # Auto-registered by ToolManager. The runner proxies the Omnigent server's
 # task REST endpoints (tasks, events, items, workers, providers, queues, and
 # triage) over ``server_client`` so agents call the API with a
@@ -488,7 +488,7 @@ _BROWSER_TOOLS = BROWSER_TOOL_NAMES
 # Tool.invoke) because it needs the runner's ``server_client`` that
 # ``ToolContext`` does not carry — same posture as _COMMENT_TOOLS /
 # _SCHEDULED_TASK_TOOLS.
-_PUPPYGARDEN_API_TOOLS = frozenset({PuppyGardenApiTool.name()})
+_PMV2_API_TOOLS = frozenset({Pmv2ApiTool.name()})
 
 # Runner-side outer HTTP read timeout for a browser action POST. The read
 # budget (60s) MUST exceed the server-side browser-action await (30s) so the
@@ -554,10 +554,10 @@ _NATIVE_RELAY_BUILTIN_TOOLS = (
     # what discovers host-scope skills (``.agents/skills`` and friends), and a
     # native session's only tool surface is this relay.
     | _SKILL_TOOLS
-    # PuppyGarden task-API proxy rides the native relay so native-harness role
+    # pmv2 task-API proxy rides the native relay so native-harness role
     # agents (claude/codex/pi) can call the task REST API the same way as SDK
     # agents — without the relay they'd never see the tool.
-    | _PUPPYGARDEN_API_TOOLS
+    | _PMV2_API_TOOLS
 )
 
 
@@ -1017,7 +1017,7 @@ _ALL_LOCAL_TOOLS = (
     | _AGENT_TOOLS
     | _POLICY_TOOLS
     | _SCHEDULED_TASK_TOOLS
-    | _PUPPYGARDEN_API_TOOLS
+    | _PMV2_API_TOOLS
 )
 _PLACEHOLDER_CWDS = (None, "", ".", "./")
 
@@ -4398,7 +4398,7 @@ async def _execute_scheduled_task_tool(
     return json.dumps(resp.json())
 
 
-async def _execute_puppygarden_api_tool(
+async def _execute_pmv2_api_tool(
     tool_name: str,
     arguments: str,
     *,
@@ -4406,15 +4406,15 @@ async def _execute_puppygarden_api_tool(
     caller_conversation_id: str | None = None,
 ) -> str:
     """
-    Runner-local handler for ``puppygarden_api``.
+    Runner-local handler for ``pmv2_api``.
 
-    Proxies any PuppyGarden task REST endpoint over ``server_client`` so an
+    Proxies any pmv2 task REST endpoint over ``server_client`` so an
     agent calls the API with a typed function call instead of curling. The
     path is validated against the task-API prefixes so a misbehaving model
     can't use this tool as an arbitrary server proxy. Same posture as
     :func:`_execute_scheduled_task_tool` / :func:`_execute_comment_tool`.
 
-    :param tool_name: ``"puppygarden_api"``.
+    :param tool_name: ``"pmv2_api"``.
     :param arguments: JSON-encoded arguments string from the LLM, with
         ``method`` (GET/POST/PUT/PATCH/DELETE), ``path`` (``/v1/...``), and
         optional ``body`` / ``query`` objects.
@@ -4439,14 +4439,14 @@ async def _execute_puppygarden_api_tool(
     if not isinstance(path, str) or not path:
         return json.dumps({"error": f"{tool_name} requires 'path' (e.g. /v1/agent-tasks/<id>)"})
     if not is_task_api_path(path):
-        return json.dumps({"error": (f"{tool_name} only proxies PuppyGarden API paths")})
+        return json.dumps({"error": (f"{tool_name} only proxies pmv2 API paths")})
 
     body = args.get("body")
     query = args.get("query")
     kwargs: dict[str, Any] = {"timeout": 30.0}
     if caller_conversation_id is not None:
         kwargs["headers"] = {
-            PUPPYGARDEN_CALLER_CONVERSATION_HEADER: caller_conversation_id,
+            PMV2_CALLER_CONVERSATION_HEADER: caller_conversation_id,
         }
         tunnel_token = os.environ.get(RUNNER_TUNNEL_BINDING_TOKEN_ENV_VAR, "").strip()
         if tunnel_token:
@@ -6653,8 +6653,8 @@ async def execute_tool(
                 server_client=server_client,
                 conversation_id=conversation_id,
             )
-        elif tool_name in _PUPPYGARDEN_API_TOOLS:
-            output = await _execute_puppygarden_api_tool(
+        elif tool_name in _PMV2_API_TOOLS:
+            output = await _execute_pmv2_api_tool(
                 tool_name,
                 arguments,
                 server_client=server_client,

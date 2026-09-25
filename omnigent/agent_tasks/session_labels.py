@@ -20,7 +20,7 @@ def presentation_labels_for_harness(harness: str | None) -> dict[str, str]:
     Returns an empty dict for non-native harnesses (notably the in-process
     ``openai-agents`` SDK harness), so role sessions on the SDK harness get no
     wrapper label — which is correct, since the composer's model picker is
-    native-wrapper-only and the PuppyGarden dock surfaces its own switcher for
+    native-wrapper-only and the pmv2 dock surfaces its own switcher for
     them. Secretary/broker/worker/manager bootstraps share this so a role
     switched to a native harness picks up the composer picker consistently.
     """

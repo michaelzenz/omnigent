@@ -1,4 +1,4 @@
-"""Validation and metadata for PuppyGarden role keys."""
+"""Validation and metadata for pmv2 role keys."""
 
 from __future__ import annotations
 
@@ -91,7 +91,7 @@ def normalize_role_profile_key(role: str) -> str:
         normalize_template_slug(normalized[len(MANAGER_ROLE_PREFIX) :])
         return normalized
     raise OmnigentError(
-        f"Unsupported PuppyGarden role: {role}",
+        f"Unsupported pmv2 role: {role}",
         code=ErrorCode.NOT_FOUND,
     )
 

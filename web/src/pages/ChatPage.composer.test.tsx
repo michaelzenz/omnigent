@@ -3450,7 +3450,7 @@ describe("Composer conversation-switch focus", () => {
   });
 
   it("does not steal focus when focusOnConversationSwitch is false", () => {
-    // Embedded surfaces (PuppyGarden dock) pass false: the dock mounts after
+    // Embedded surfaces (pmv2 dock) pass false: the dock mounts after
     // an async bootstrap and must not yank focus from whatever the user is
     // typing in (e.g. the board's search bar).
     render(<Composer {...composerProps({ focusOnConversationSwitch: false })} />);

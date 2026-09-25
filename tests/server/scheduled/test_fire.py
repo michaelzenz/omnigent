@@ -347,7 +347,7 @@ async def test_sweep_fire_routes_by_name_when_registry_cold() -> None:
     _clear_sweep_state()
     task = _task(
         id="sweep_1",
-        name="puppygarden-manager-sweep:mgr1",
+        name="pmv2-manager-sweep:mgr1",
         prompt="sweep prompt",
         workspace=None,
         host_id=None,
@@ -385,7 +385,7 @@ async def test_sweep_fire_releases_overlap_guard() -> None:
     _clear_sweep_state()
     task = _task(
         id="sweep_1",
-        name="puppygarden-manager-sweep:mgr1",
+        name="pmv2-manager-sweep:mgr1",
         prompt="sweep prompt",
         workspace=None,
         host_id=None,
@@ -433,11 +433,11 @@ def test_rebuild_sweep_registry_registers_active_sweeps() -> None:
     _clear_sweep_state()
     rows = {
         "sweep_a": _task(
-            id="sweep_a", name="puppygarden-manager-sweep:mgrA", workspace=None, host_id=None
+            id="sweep_a", name="pmv2-manager-sweep:mgrA", workspace=None, host_id=None
         ),
         "sweep_paused": _task(
             id="sweep_paused",
-            name="puppygarden-manager-sweep:mgrB",
+            name="pmv2-manager-sweep:mgrB",
             state="paused",
             workspace=None,
             host_id=None,

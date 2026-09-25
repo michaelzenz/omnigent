@@ -78,8 +78,7 @@ class ScriptPollPluginsPoller:
         plugin_dirs, duplicates = iter_plugin_dirs_with_collisions(config_path=self._config_path)
         self._health.set_warnings(
             duplicates,
-            "duplicate plugin name exists in both ~/.omnigent and puppygarden; "
-            "using the local copy",
+            "duplicate plugin name exists in both ~/.omnigent and pmv2; using the local copy",
         )
 
         # Collect built-in plugin names so we can skip directory plugins with the same name.

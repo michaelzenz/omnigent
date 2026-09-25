@@ -1,4 +1,4 @@
-"""Target-independent contract implemented by PuppyGarden Worker adapters."""
+"""Target-independent contract implemented by pmv2 Worker adapters."""
 
 from __future__ import annotations
 

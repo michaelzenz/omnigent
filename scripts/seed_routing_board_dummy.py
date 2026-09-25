@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Seed Puppy Garden with demo routing cards, tasks, and worker lanes."""
+"""Seed pmv2 with demo routing cards, tasks, and worker lanes."""
 
 from __future__ import annotations
 
@@ -605,14 +605,14 @@ def main() -> int:
         goal="Routing docs reflect the shipped card-based flow",
         description="Routing UI shipped; docs still describe the old inbox flow.",
         instructions="Refresh TASK_BROKER.md and API_REFERENCE after routing cards shipped.",
-        internal_note="See PR #902 and puppygarden/docs/ for current API shapes.",
+        internal_note="See PR #902 and pmv2/docs/ for current API shapes.",
         event_ids=_create_events(
             host_header, repo="omnigent-fork", pr=902, offset_base=f"{offset_base}:10"
         ),
         asset_urls=[
             (
                 "API reference",
-                "https://github.com/databricks/omnigent-fork/blob/main/puppygarden/docs/API_REFERENCE.md",
+                "https://github.com/databricks/omnigent-fork/blob/main/pmv2/docs/API_REFERENCE.md",
             ),
             ("PR #902", "https://github.com/databricks/omnigent-fork/pull/902"),
         ],
@@ -674,7 +674,7 @@ def main() -> int:
     _create_task_asset(
         docs_task,
         "Routing board README",
-        "https://github.com/databricks/omnigent-fork/blob/main/puppygarden/docs/README.md",
+        "https://github.com/databricks/omnigent-fork/blob/main/pmv2/docs/README.md",
     )
     _create_unassigned_inbox_item(
         poll_task,
@@ -725,7 +725,7 @@ def main() -> int:
         rows = sum(len(w.get("rows", [])) for w in dash.get("workers", []))
         print(f"  {label}: {inbox} unassigned inbox, {workers} workers, {rows} lane rows")
 
-    print("\nDone — open Puppy Garden to review worker lanes and unassigned inbox.")
+    print("\nDone — open pmv2 to review worker lanes and unassigned inbox.")
     return 0
 
 

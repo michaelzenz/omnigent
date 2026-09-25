@@ -18,7 +18,7 @@
  *   connectivity checks.
  * - **Sandbox Integrations** — provider connections exposed to sandboxes.
  * - **Keyboard shortcuts** — the full shortcuts reference, shown inline.
- * - **Puppy Garden** — task-board behavior preferences.
+ * - **pmv2** — task-board behavior preferences.
  * - **Import sessions** — imports chats from local machines.
  * - **Account** — only when the accounts auth provider is active. Absorbs
  *   the old sidebar AccountMenu: signed-in identity, change password, and
@@ -196,10 +196,7 @@ import {
   readHideUnconfiguredHarnesses,
   writeHideUnconfiguredHarnesses,
 } from "@/lib/harnessVisibilityPreferences";
-import {
-  readAdoptExternalSessions,
-  writeAdoptExternalSessions,
-} from "@/lib/puppyGardenPreferences";
+import { readAdoptExternalSessions, writeAdoptExternalSessions } from "@/lib/pmv2Preferences";
 import {
   DEFAULT_ROUTING_NOTICES_ENABLED,
   readRoutingNoticesEnabled,
@@ -355,7 +352,7 @@ export function SettingsPage() {
       {section === "integrations" && <IntegrationsSection />}
       {section === "shortcuts" && <ShortcutsSection />}
       {section === "import" && <ImportSection />}
-      {section === "puppygarden" && <PuppyGardenSection />}
+      {section === "pmv2" && <Pmv2Section />}
       {section === "account" && hasAuthSession && <AccountSection />}
       {section === "archived" && <ArchivedSection />}
       {section === "cli" && isElectronShell() && <LocalCliSection />}
@@ -1978,8 +1975,8 @@ function ShortcutsSection() {
   );
 }
 
-/** Puppy Garden task board settings. */
-function PuppyGardenSection() {
+/** pmv2 task board settings. */
+function Pmv2Section() {
   const [adopt, setAdopt] = useState(() => readAdoptExternalSessions());
   const labelId = useId();
   const toggle = useCallback((next: boolean) => {
@@ -1987,7 +1984,7 @@ function PuppyGardenSection() {
     writeAdoptExternalSessions(next);
   }, []);
   return (
-    <Section title="Puppy Garden" description="Configure the Puppy Garden task board.">
+    <Section title="pmv2" description="Configure the pmv2 task board.">
       <div className="flex items-start justify-between gap-6">
         <div className="flex flex-col">
           <span id={labelId} className="text-sm font-medium">

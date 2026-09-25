@@ -3033,7 +3033,7 @@ def register_events_routes(
         deleted = await conversation_store.delete_conversation(session_id)
         if not deleted:
             raise _session_not_found()
-        # PuppyGarden workers bound to this session (worker.target_id) die
+        # pmv2 workers bound to this session (worker.target_id) die
         # with it: soft-delete every lane so the dispatcher never dispatches
         # another item into a session that no longer exists.
         worker_store_for_delete = getattr(request.app.state, "worker_store", None)
@@ -3055,7 +3055,7 @@ def register_events_routes(
             deleted_workers = await asyncio.to_thread(_soft_delete_workers_for_session)
             if deleted_workers:
                 _logger.info(
-                    "Soft-deleted %d PuppyGarden worker(s) bound to deleted session %s",
+                    "Soft-deleted %d pmv2 worker(s) bound to deleted session %s",
                     deleted_workers,
                     session_id,
                 )

@@ -1509,7 +1509,7 @@ interface MainAgentSurfaceProps {
   conversationKey?: string | null;
   /**
    * Legacy embedded-surface projection. Transcript now owns the equivalent
-   * store subscriptions; retained so PuppyGarden callers remain compatible.
+   * store subscriptions; retained so pmv2 callers remain compatible.
    */
   bubbles?: readonly unknown[];
   status: "idle" | "streaming";
@@ -1595,7 +1595,7 @@ interface MainAgentSurfaceProps {
    */
   subAgentLabel: string | null;
   /** Hide the prompt-profile row in the gear modal for role sessions
-   *  whose profile is system-managed (PuppyGarden broker/secretary/manager). */
+   *  whose profile is system-managed (pmv2 broker/secretary/manager). */
   hideProfileSelection?: boolean;
   /** The session's ``omnigent.wrapper`` label; see ``ComposerProps``. */
   wrapperLabel?: string | null;
@@ -2310,7 +2310,7 @@ interface ComposerProps {
    * Whether the composer grabs keyboard focus when the active conversation
    * changes (mount included). Default true — the main chat page wants a
    * session switch to land you ready to type. Embedded secondary surfaces
-   * (e.g. the PuppyGarden dock, which mounts long after the board is
+   * (e.g. the pmv2 dock, which mounts long after the board is
    * interactive) pass false so an async load never yanks focus from
    * whatever the user is already typing in.
    */
@@ -2415,7 +2415,7 @@ interface ComposerProps {
    */
   onViewportShrinkPinScroll?: () => void;
   /** Hide the prompt-profile row in the gear modal for role sessions
-   *  whose profile is system-managed (PuppyGarden broker/secretary/manager). */
+   *  whose profile is system-managed (pmv2 broker/secretary/manager). */
   hideProfileSelection?: boolean;
 }
 

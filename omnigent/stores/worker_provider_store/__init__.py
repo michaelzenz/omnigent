@@ -1,4 +1,4 @@
-"""Persistence contract for PuppyGarden worker providers."""
+"""Persistence contract for pmv2 worker providers."""
 
 from __future__ import annotations
 

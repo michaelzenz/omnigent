@@ -21,7 +21,7 @@ from omnigent.agent_tasks.broker_session import (
 )
 from omnigent.db.utils import generate_agent_id
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.execution_targets import ONIH_PUPPYGARDEN_TARGET
+from omnigent.execution_targets import ONIH_PMV2_TARGET
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -36,7 +36,7 @@ def _uid(seed: str) -> str:
 def test_get_or_create_role_profile_uses_first_live_host(db_uri: str) -> None:
     agent_store = SqlAlchemyAgentStore(db_uri)
     agent_id = generate_agent_id()
-    agent_store.create(agent_id, name=ONIH_PUPPYGARDEN_TARGET, bundle_location="test:///bundle")
+    agent_store.create(agent_id, name=ONIH_PMV2_TARGET, bundle_location="test:///bundle")
     host_store = HostStore(db_uri)
     host_id = _uid("broker_host")
     host_store.upsert_on_connect(host_id, "broker-host", RESERVED_USER_LOCAL)
@@ -62,7 +62,7 @@ def test_get_or_create_role_profile_uses_first_live_host(db_uri: str) -> None:
 def test_get_or_create_role_profile_fails_without_live_host(db_uri: str) -> None:
     agent_store = SqlAlchemyAgentStore(db_uri)
     agent_id = generate_agent_id()
-    agent_store.create(agent_id, name=ONIH_PUPPYGARDEN_TARGET, bundle_location="test:///bundle")
+    agent_store.create(agent_id, name=ONIH_PMV2_TARGET, bundle_location="test:///bundle")
     profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
 
     with pytest.raises(OmnigentError) as exc_info:
@@ -99,7 +99,7 @@ def test_ensure_role_profile_refreshes_stale_agent_id(db_uri: str) -> None:
     profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
 
     old_agent_id = generate_agent_id()
-    agent_store.create(old_agent_id, name=ONIH_PUPPYGARDEN_TARGET, bundle_location="test:///old")
+    agent_store.create(old_agent_id, name=ONIH_PMV2_TARGET, bundle_location="test:///old")
     # Simulate a profile created against the old agent.
     profile_store.upsert(
         TASK_BROKER_ROLE,
@@ -113,7 +113,7 @@ def test_ensure_role_profile_refreshes_stale_agent_id(db_uri: str) -> None:
     # Drop the old agent and re-seed with a new id (same name).
     agent_store.delete(old_agent_id)
     new_agent_id = generate_agent_id()
-    agent_store.create(new_agent_id, name=ONIH_PUPPYGARDEN_TARGET, bundle_location="test:///new")
+    agent_store.create(new_agent_id, name=ONIH_PMV2_TARGET, bundle_location="test:///new")
 
     profile = ensure_role_profile(
         role=TASK_BROKER_ROLE,
@@ -133,7 +133,7 @@ def test_get_or_create_role_profile_refreshes_stale_agent_id(db_uri: str) -> Non
     profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
 
     old_agent_id = generate_agent_id()
-    agent_store.create(old_agent_id, name=ONIH_PUPPYGARDEN_TARGET, bundle_location="test:///old")
+    agent_store.create(old_agent_id, name=ONIH_PMV2_TARGET, bundle_location="test:///old")
     profile_store.upsert(
         TASK_BROKER_ROLE,
         agent_profile_id=old_agent_id,
@@ -145,7 +145,7 @@ def test_get_or_create_role_profile_refreshes_stale_agent_id(db_uri: str) -> Non
 
     agent_store.delete(old_agent_id)
     new_agent_id = generate_agent_id()
-    agent_store.create(new_agent_id, name=ONIH_PUPPYGARDEN_TARGET, bundle_location="test:///new")
+    agent_store.create(new_agent_id, name=ONIH_PMV2_TARGET, bundle_location="test:///new")
 
     profile = get_or_create_role_profile(
         role=TASK_BROKER_ROLE,
@@ -221,7 +221,7 @@ def test_ensure_role_profile_keeps_deliberate_harness(db_uri: str) -> None:
     """A deliberately configured harness is never clobbered by the default."""
     agent_store = SqlAlchemyAgentStore(db_uri)
     agent_id = generate_agent_id()
-    agent_store.create(agent_id, name=ONIH_PUPPYGARDEN_TARGET, bundle_location="test:///bundle")
+    agent_store.create(agent_id, name=ONIH_PMV2_TARGET, bundle_location="test:///bundle")
     profile_store = SqlAlchemyTaskRoleProfileStore(db_uri)
     profile_store.upsert(
         TASK_BROKER_ROLE,

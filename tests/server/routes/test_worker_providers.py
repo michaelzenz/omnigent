@@ -1,4 +1,4 @@
-"""Focused tests for PuppyGarden Worker Provider configuration."""
+"""Focused tests for pmv2 Worker Provider configuration."""
 
 from __future__ import annotations
 

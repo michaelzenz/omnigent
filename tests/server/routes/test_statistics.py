@@ -241,7 +241,7 @@ def test_accumulate_session_usage_records_task_event_routing_purpose(
     db_uri: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """PuppyGarden queue-injected turns record purpose=task_event_routing."""
+    """pmv2 queue-injected turns record purpose=task_event_routing."""
     store = SqlAlchemyConversationStore(db_uri)
     conv = store.create_conversation(title="broker-routing")
     store.update_conversation(conv.id, harness_override="openai-agents")

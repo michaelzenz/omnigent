@@ -1,4 +1,4 @@
-"""Reusable definitions for initializing PuppyGarden workers."""
+"""Reusable definitions for initializing pmv2 workers."""
 
 from __future__ import annotations
 

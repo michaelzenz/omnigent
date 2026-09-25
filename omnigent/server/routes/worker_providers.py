@@ -1,4 +1,4 @@
-"""Worker Provider CRUD for PuppyGarden."""
+"""Worker Provider CRUD for pmv2."""
 
 from __future__ import annotations
 

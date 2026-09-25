@@ -129,10 +129,10 @@ def _lazy_packager(
     """Build a broker packager wired for on-demand session bootstrap, with no role."""
     agent_store = SqlAlchemyAgentStore(db_uri)
     agent_store.create(generate_agent_id(), name="task-broker", bundle_location="test:///bundle")
-    from omnigent.execution_targets import ONIH_PUPPYGARDEN_TARGET
+    from omnigent.execution_targets import ONIH_PMV2_TARGET
 
     agent_store.create(
-        generate_agent_id(), name=ONIH_PUPPYGARDEN_TARGET, bundle_location="test:///bundle"
+        generate_agent_id(), name=ONIH_PMV2_TARGET, bundle_location="test:///bundle"
     )
     conversation_store = SqlAlchemyConversationStore(db_uri)
     artifact_store = LocalArtifactStore(str(tmp_path / "artifacts"))

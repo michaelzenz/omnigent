@@ -1647,7 +1647,7 @@ class _SessionCreateRequestBase(BaseModel):
     smart_routing_message: str | None = None
     # First-class project to file this session into at creation time.
     # Set by managed-task role bootstraps (broker, secretary, manager) so
-    # their sessions land in the "PuppyGarden" project instead of the flat
+    # their sessions land in the "pmv2" project instead of the flat
     # sessions list. None = unfiled (the default for user-initiated creates).
 
     @model_validator(mode="after")

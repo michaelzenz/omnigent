@@ -116,7 +116,7 @@ export function computeUnreadBadgeIds(
   const unread = new Set<string>();
   for (const conversation of conversations) {
     if (conversation.archived) continue;
-    // PuppyGarden background roles (broker, managers) are not reading
+    // pmv2 background roles (broker, managers) are not reading
     // surfaces — their output lands on the board, so they never count toward
     // the unread badge.
     if (isBackgroundRoleSession(conversation.labels)) continue;

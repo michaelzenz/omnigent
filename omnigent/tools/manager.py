@@ -21,7 +21,7 @@ from omnigent.tools.base import Tool, ToolContext, is_valid_tool_name
 from omnigent.tools.builtins import (
     ListCommentsTool,
     LoadSkillTool,
-    PuppyGardenApiTool,
+    Pmv2ApiTool,
     ReadSkillFileTool,
     SysAdviseModelsTool,
     SysAgentDownloadTool,
@@ -203,10 +203,10 @@ class ToolManager:
         # can drive the desktop app's browser without the spec opting in
         # (framework-owned).
         self._register_browser_tools()
-        # PuppyGarden task-API proxy is always auto-registered so any agent
+        # pmv2 task-API proxy is always auto-registered so any agent
         # can call the task REST endpoints without shelling out to curl
         # (framework-owned, runner-dispatched).
-        self._register_puppygarden_api_tool()
+        self._register_pmv2_api_tool()
 
     def _register_policy_tools(self) -> None:
         """
@@ -619,18 +619,18 @@ class ToolManager:
         ):
             self._tools[_cls.name()] = _cls()
 
-    def _register_puppygarden_api_tool(self) -> None:
+    def _register_pmv2_api_tool(self) -> None:
         """
-        Auto-register ``puppygarden_api``.
+        Auto-register ``pmv2_api``.
 
         Framework-owned and always available so any agent can call the
-        PuppyGarden task REST API without shelling out to curl. The class is
+        pmv2 task REST API without shelling out to curl. The class is
         schema-only; execution lives in the runner's
-        ``_PUPPYGARDEN_API_TOOLS`` dispatch branch
+        ``_PMV2_API_TOOLS`` dispatch branch
         (``omnigent/runner/tool_dispatch.py``), which needs the runner's
         ``server_client`` that ``ToolContext`` does not carry.
         """
-        self._tools[PuppyGardenApiTool.name()] = PuppyGardenApiTool()
+        self._tools[Pmv2ApiTool.name()] = Pmv2ApiTool()
 
     def _register_os_env_tools(self) -> None:
         """
