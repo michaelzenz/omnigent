@@ -48,4 +48,5 @@ def downgrade() -> None:
         "uq_task_event_executions_agent_queue_item",
         table_name="task_event_executions",
     )
-    op.drop_column("task_event_executions", "agent_queue_item_id")
+    with op.batch_alter_table("task_event_executions") as batch_op:
+        batch_op.drop_column("agent_queue_item_id")

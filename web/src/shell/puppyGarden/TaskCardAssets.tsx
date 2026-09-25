@@ -24,8 +24,7 @@ import { fetchSshConnections } from "@/lib/sshApi";
 import type { SshConnection } from "@/lib/sshConnectionPreferences";
 import { useQuery } from "@tanstack/react-query";
 import { readWorkspaceEditor } from "@/lib/puppyGardenPreferences";
-import { Highlight, anyTextMatches, useSearchQuery } from "./boardSearchHighlight";
-import { assetProvenanceTexts, laneTexts } from "./useBoardSearch";
+import { Highlight } from "./boardSearchHighlight";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
 import { RebindWorkerDialog } from "./RebindWorkerDialog";
 
@@ -36,6 +35,10 @@ interface TaskCardAssetsProps {
   workers: TaskWorkerLane[];
   /** Session host id, for SSH-remote workspace launches. */
   hostId?: string | null;
+  /** Worker/asset ids the server-side search matched; null when not searching.
+   * Asset ids are DB ints, worker ids are uuid strings. */
+  matchedWorkerIds?: Set<string> | null;
+  matchedAssetIds?: Set<number> | null;
 }
 
 const CATEGORIES: { value: TaskAssetCategory; label: string }[] = [
@@ -154,10 +157,15 @@ function AssetProvenance({
   );
 }
 
-export function TaskCardAssets({ taskId, assets, workers, hostId }: TaskCardAssetsProps) {
+export function TaskCardAssets({
+  taskId,
+  assets,
+  workers,
+  hostId,
+  matchedAssetIds,
+}: TaskCardAssetsProps) {
   const deleteAsset = useDeleteTaskAsset(taskId);
   const openWorkspace = useWorkspaceAssetOpener();
-  const searchQuery = useSearchQuery();
   if (!assets.length) return <p className="p-3 text-sm text-muted-foreground">No assets yet.</p>;
 
   return (
@@ -179,14 +187,9 @@ export function TaskCardAssets({ taskId, assets, workers, hostId }: TaskCardAsse
                 const handleOpenWorkspace = () => {
                   if (workspaceOpenable && asset.url) openWorkspace(asset.url, hostId);
                 };
-                // Search highlight: ring the row when the asset matched (by
-                // title or url); if only the url matched, surface the url text
-                // (highlighted) so the reason for the match is visible.
-                const assetMatched =
-                  searchQuery !== "" &&
-                  anyTextMatches(assetProvenanceTexts(asset, workers), searchQuery);
-                const urlIsMatch =
-                  assetMatched && asset.url != null && !anyTextMatches([asset.title], searchQuery);
+                // Search highlight: ring the row when the server-side search
+                // matched the asset (by title or url).
+                const assetMatched = matchedAssetIds?.has(asset.id) ?? false;
                 return (
                   <li
                     key={asset.id}
@@ -242,7 +245,7 @@ export function TaskCardAssets({ taskId, assets, workers, hostId }: TaskCardAsse
                     >
                       <XIcon className="size-3.5" />
                     </button>
-                    {urlIsMatch && asset.url ? (
+                    {assetMatched && asset.url ? (
                       <span className="break-all text-[11px] text-muted-foreground">
                         <Highlight text={asset.url} />
                       </span>
@@ -321,10 +324,17 @@ function useWorkspaceAssetOpener(): ((path: string, hostId?: string | null) => v
   };
 }
 
-function WorkersTab({ taskId, workers }: { taskId: string; workers: TaskWorkerLane[] }) {
+function WorkersTab({
+  taskId,
+  workers,
+  matchedWorkerIds,
+}: {
+  taskId: string;
+  workers: TaskWorkerLane[];
+  matchedWorkerIds?: Set<string> | null;
+}) {
   const { openWorker, isWorkerSelected } = usePuppyGardenChat();
   const untrack = useUntrackWorker();
-  const searchQuery = useSearchQuery();
   const [confirmUntrack, setConfirmUntrack] = useState<string | null>(null);
   const [rebindWorker, setRebindWorker] = useState<{ id: string; name: string } | null>(null);
   if (!workers.length) return <p className="p-3 text-sm text-muted-foreground">No workers yet.</p>;
@@ -336,7 +346,7 @@ function WorkersTab({ taskId, workers }: { taskId: string; workers: TaskWorkerLa
           const label = worker.title ?? worker.provider_name ?? "Worker";
           const selected = isWorkerSelected(taskId, worker.worker_id);
           const canOpen = Boolean(worker.target_id && worker.kind !== "external");
-          const matched = searchQuery !== "" && anyTextMatches(laneTexts(worker), searchQuery);
+          const matched = matchedWorkerIds?.has(worker.worker_id) ?? false;
           return (
             <li key={worker.worker_id}>
               <div
@@ -479,11 +489,15 @@ export function TaskCardSidebar({
   assets,
   workers,
   hostId,
+  matchedWorkerIds,
+  matchedAssetIds,
 }: {
   taskId: string;
   assets: TaskAssetSummary[];
   workers: TaskWorkerLane[];
   hostId?: string | null;
+  matchedWorkerIds?: Set<string> | null;
+  matchedAssetIds?: Set<number> | null;
 }) {
   const [tab, setTab] = useState<"assets" | "workers">("assets");
   return (
@@ -526,9 +540,15 @@ export function TaskCardSidebar({
       </div>
       <div className="min-h-0 overflow-y-auto">
         {tab === "assets" ? (
-          <TaskCardAssets taskId={taskId} assets={assets} workers={workers} hostId={hostId} />
+          <TaskCardAssets
+            taskId={taskId}
+            assets={assets}
+            workers={workers}
+            hostId={hostId}
+            matchedAssetIds={matchedAssetIds}
+          />
         ) : (
-          <WorkersTab taskId={taskId} workers={workers} />
+          <WorkersTab taskId={taskId} workers={workers} matchedWorkerIds={matchedWorkerIds} />
         )}
       </div>
     </aside>

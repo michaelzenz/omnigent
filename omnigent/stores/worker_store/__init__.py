@@ -18,6 +18,10 @@ WORKER_KIND_INTERNAL = "internal"
 # running outside this server) — not addressable as local conversations.
 WORKER_KIND_EXTERNAL = "external"
 
+# Untracked/dead lanes: hidden from rosters and dashboards, skipped by
+# live-worker lookups, but revivable by an explicit re-adoption.
+INACTIVE_WORKER_STATES = frozenset({"terminated", "deleted"})
+
 
 class WorkerStore(ABC):
     """Abstract base for worker persistence."""
@@ -47,7 +51,11 @@ class WorkerStore(ABC):
 
     @abstractmethod
     def get_by_target_id(self, target_id: str) -> Worker | None:
-        """Return one worker bound to the session (first match)."""
+        """Return one worker bound to the session (first live match)."""
+
+    @abstractmethod
+    def find_worker_by_target_task(self, task_id: str, target_id: str) -> Worker | None:
+        """Return the newest worker bound to (task_id, target_id), any state."""
 
     @abstractmethod
     def list_workers_by_target_id(self, target_id: str) -> list[Worker]:
@@ -56,6 +64,10 @@ class WorkerStore(ABC):
     @abstractmethod
     def list_workers_for_task(self, task_id: str) -> list[Worker]:
         """List workers for a task ordered by created_at asc, id asc."""
+
+    @abstractmethod
+    def list_workers_for_tasks(self, task_ids: list[str]) -> list[Worker]:
+        """List workers across many tasks in one query, ordered by task_id then created_at."""
 
     @abstractmethod
     def claim_initialization(self, worker_id: str) -> Worker | None:

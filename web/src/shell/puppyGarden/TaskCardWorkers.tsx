@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import {
   useAssignTaskItemWorker,
   useCloseTaskItem,
@@ -29,8 +30,14 @@ import {
 import { TaskCardItemEditor } from "./TaskCardItemEditor";
 import { TaskCardItemStateBadge } from "./TaskCardItemStateBadge";
 import { TaskCardRowActions } from "./TaskCardRowActions";
+import { Highlight } from "./boardSearchHighlight";
 import { isPuppyGardenFixtureMode } from "./fixtures/puppyGardenFixtureMode";
 import { isEditableItemState } from "./taskCardUtils";
+
+// Ring applied to item rows the server-side search matched — same palette
+// as the worker-card ring so one search reads as one style.
+const SEARCH_RING_CLASSES =
+  "border-amber-400/70 bg-amber-50/70 ring-1 ring-amber-400/50 dark:bg-amber-400/10";
 
 const ACTIVE_STATES = new Set([
   "draft",
@@ -350,7 +357,9 @@ function ItemRowHead({
             aria-hidden
           />
         )}
-        <span className="min-w-0 text-sm leading-snug font-semibold">{title}</span>
+        <span className="min-w-0 text-sm leading-snug font-semibold">
+          <Highlight text={title} />
+        </span>
       </span>
       {children}
     </button>
@@ -362,11 +371,13 @@ function HumanActionItemRow({
   item,
   expanded,
   onToggle,
+  matched,
 }: {
   taskId: string;
   item: TaskItemSummary;
   expanded: boolean;
   onToggle: () => void;
+  matched: boolean;
 }) {
   const closeItem = useCloseTaskItem(taskId);
   const removeItem = useRemoveTaskItem(taskId);
@@ -393,7 +404,12 @@ function HumanActionItemRow({
     await removeItem.mutateAsync({ taskItemId: item.id });
   };
   return (
-    <li className="space-y-2 rounded-lg border border-border bg-background p-3 shadow-xs">
+    <li
+      className={cn(
+        "space-y-2 rounded-lg border border-border bg-background p-3 shadow-xs",
+        matched && SEARCH_RING_CLASSES,
+      )}
+    >
       <ItemRowHead title={item.title} expanded={expanded} onToggle={onToggle}>
         <Badge
           variant="outline"
@@ -443,22 +459,35 @@ function ItemRow({
   workers,
   expanded,
   onToggle,
+  matched,
 }: {
   taskId: string;
   item: TaskItemSummary;
   workers: TaskWorkerLane[];
   expanded: boolean;
   onToggle: () => void;
+  matched: boolean;
 }) {
   if (item.kind === "human_action") {
     return (
-      <HumanActionItemRow taskId={taskId} item={item} expanded={expanded} onToggle={onToggle} />
+      <HumanActionItemRow
+        taskId={taskId}
+        item={item}
+        expanded={expanded}
+        onToggle={onToggle}
+        matched={matched}
+      />
     );
   }
   const worker = workers.find((lane) => lane.worker_id === item.worker_id);
   const editable = isEditableItemState(item.state);
   return (
-    <li className="space-y-2 rounded-lg border border-border bg-background p-3 shadow-xs">
+    <li
+      className={cn(
+        "space-y-2 rounded-lg border border-border bg-background p-3 shadow-xs",
+        matched && SEARCH_RING_CLASSES,
+      )}
+    >
       <ItemRowHead title={item.title} expanded={expanded} onToggle={onToggle}>
         <TaskCardItemStateBadge state={item.state} />
       </ItemRowHead>
@@ -496,10 +525,13 @@ export function TaskItemsPanel({
   taskId,
   dashboard,
   selectedWorkerId,
+  matchedItemIds,
 }: {
   taskId: string;
   dashboard: TaskDashboard;
   selectedWorkerId: string | null;
+  /** Item ids the server-side search matched; null when not searching. */
+  matchedItemIds?: Set<string> | null;
 }) {
   const [adding, setAdding] = useState(false);
   // In-memory expand state: items ship shrunk (title + state badge) and each
@@ -567,6 +599,7 @@ export function TaskItemsPanel({
               workers={dashboard.workers}
               expanded={expandedItemIds.has(item.id)}
               onToggle={() => toggleItemExpanded(item.id)}
+              matched={matchedItemIds?.has(item.id) ?? false}
             />
           ))}
         </ul>
@@ -604,6 +637,7 @@ export function TaskItemsPanel({
                   workers={dashboard.workers}
                   expanded={expandedItemIds.has(item.id)}
                   onToggle={() => toggleItemExpanded(item.id)}
+                  matched={matchedItemIds?.has(item.id) ?? false}
                 />
               ))}
             </ul>

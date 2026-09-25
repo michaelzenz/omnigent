@@ -159,11 +159,6 @@ async def ensure_task_manager_for_dispatch(
     user_id: str | None = None,
 ) -> Task:
     """Ensure the task's manager has a live session before dispatch."""
-    if task.state == "pending":
-        raise OmnigentError(
-            "Accept the task package before dispatching work",
-            code=ErrorCode.CONFLICT,
-        )
     return await bootstrap_task_manager(
         task=task,
         task_store=task_store,

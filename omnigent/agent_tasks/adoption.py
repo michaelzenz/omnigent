@@ -14,7 +14,7 @@ from omnigent.agent_tasks.manager_discovery import _LIVE_TASK_STATES
 from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.agent_tasks.workers import _generate_worker_id
 from omnigent.db.utils import now_epoch
-from omnigent.entities import Task, TaskEvent
+from omnigent.entities import Task, TaskEvent, Worker
 from omnigent.entities.conversation import Conversation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.routing import RunnerRouter
@@ -30,6 +30,7 @@ from omnigent.stores.task_item_store import TaskItemStore
 from omnigent.stores.task_role_profile_store import TaskRoleProfileStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.worker_store import (
+    INACTIVE_WORKER_STATES,
     WORKER_KIND_EXTERNAL,
     WORKER_KIND_INTERNAL,
     WorkerStore,
@@ -163,15 +164,29 @@ def adopt_session_to_task(
     title: str | None = None,
     score: float = 0.0,
     owner_user_id: str | None = None,
-) -> str:
-    """Create a Worker for an adopted session.
-
-    :returns: worker_id
+) -> tuple[Worker, bool]:
+    """Bind a session to a task — find-or-create the (task, session) worker.
+    :returns: (worker, created)
     """
     del score, owner_user_id
     assert _context is not None
+    existing = _context.worker_store.find_worker_by_target_task(task.id, session_id)
+    if existing is not None:
+        updates: dict[str, Any] = {}
+        if existing.state in INACTIVE_WORKER_STATES:
+            updates.update(state="idle", needs_response=False, failure_reason=None)
+        if title is not None and title != existing.title:
+            updates["title"] = title
+        worker = existing
+        if updates:
+            updated = _context.worker_store.update_worker(existing.id, **updates)
+            if updated is not None:
+                worker = updated
+        if conv.workspace:
+            _ensure_workspace_asset(task.id, conv.workspace, source_worker_id=existing.id)
+        return worker, False
     worker_id = _generate_worker_id()
-    _context.worker_store.create_worker(
+    worker = _context.worker_store.create_worker(
         worker_id,
         task.id,
         # The session lives in this server's conversation store — an adopted
@@ -185,7 +200,7 @@ def adopt_session_to_task(
     )
     if conv.workspace:
         _ensure_workspace_asset(task.id, conv.workspace, source_worker_id=worker_id)
-    return worker_id
+    return worker, True
 
 
 def find_open_external_adoption_proposal(
@@ -276,14 +291,37 @@ async def adopt_external_session(
     session_creator: Any | None = None,
     app_state: Any | None = None,
     user_id: str | None = None,
-) -> tuple[TaskEvent, TaskEvent]:
-    """Bind a watcher-discovered external session to a task."""
+) -> tuple[TaskEvent | None, TaskEvent | None, Worker]:
+    """Bind a watcher-discovered external session to a task.
+    :returns: (processed proposal event, adopted event, worker)
+    """
     task = task_store.get(task_id)
     if task is None:
         raise OmnigentError("Task not found", code=ErrorCode.NOT_FOUND)
 
+    existing = worker_store.find_worker_by_target_task(task.id, session_hint)
+    if existing is not None:
+        updates: dict[str, Any] = {}
+        if existing.state in INACTIVE_WORKER_STATES:
+            updates.update(state="idle", needs_response=False, failure_reason=None)
+        worker = existing
+        if updates:
+            updated = worker_store.update_worker(existing.id, **updates)
+            if updated is not None:
+                worker = updated
+        processed_proposal = proposal_event
+        if proposal_event is not None:
+            updated = task_event_store.update_event(
+                proposal_event.id,
+                state="reconciled",
+                processed_at=now_epoch(),
+                task_id=task.id,
+            )
+            processed_proposal = updated if updated is not None else proposal_event
+        return processed_proposal, None, worker
+
     external_worker_id = _generate_worker_id()
-    worker_store.create_worker(
+    worker = worker_store.create_worker(
         external_worker_id,
         task.id,
         kind=WORKER_KIND_EXTERNAL,
@@ -292,10 +330,7 @@ async def adopt_external_session(
         provider_name="External session",
     )
     # External (harness) sessions have no local conversation row to read a
-    # workspace from — their watchers report updates without one. Attach the
-    # task's own workspace when known so the card still gets a jump target.
-    if task.workspace:
-        _ensure_workspace_asset(task.id, task.workspace, source_worker_id=external_worker_id)
+    # workspace from — their watchers report updates without one.
     adopted_event = task_event_store.create_event(
         uuid.uuid4().hex,
         SESSION_ADOPTED,
@@ -324,7 +359,7 @@ async def adopt_external_session(
             task_id=task.id,
         )
         processed_proposal = updated if updated is not None else proposal_event
-    return processed_proposal or routed, routed
+    return processed_proposal, routed, worker
 
 
 def reject_external_session_adoption(
@@ -340,7 +375,10 @@ def reject_external_session_adoption(
     from that session stop generating events.
     """
     if worker_store is not None:
-        worker = worker_store.get_by_target_id(session_hint)
+        if proposal_event is not None and proposal_event.task_id is not None:
+            worker = worker_store.find_worker_by_target_task(proposal_event.task_id, session_hint)
+        else:
+            worker = worker_store.get_by_target_id(session_hint)
         if worker is not None:
             worker_store.update_worker(worker.id, state="deleted")
     if proposal_event is None:

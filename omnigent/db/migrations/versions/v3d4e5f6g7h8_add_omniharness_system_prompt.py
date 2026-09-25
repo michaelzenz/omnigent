@@ -24,4 +24,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column("model_settings", "omniharness_system_prompt")
+    with op.batch_alter_table("model_settings") as batch_op:
+        batch_op.drop_column("omniharness_system_prompt")

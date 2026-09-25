@@ -37,7 +37,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column("model_settings", "prompt_profile_auto_include_limit")
+    with op.batch_alter_table("model_settings") as batch_op:
+        batch_op.drop_column("prompt_profile_auto_include_limit")
     with op.batch_alter_table("conversations") as batch_op:
         batch_op.drop_constraint("ck_conversations_prompt_profile_mode", type_="check")
         batch_op.alter_column(

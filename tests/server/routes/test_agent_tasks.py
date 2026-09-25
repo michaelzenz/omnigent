@@ -142,7 +142,7 @@ def _create_payload(**overrides: object) -> dict:
         "goal": "All S3 uploads eventually succeed without manual retry",
         "internal_note": "retry flaky uploads",
         "manager_id": _uid("task-manager"),
-        "state": "pending",
+        "state": "active",
         "tags": [{"tag_type": "domain", "tag": "s3"}],
     }
     base.update(overrides)  # type: ignore[arg-type]
@@ -155,7 +155,7 @@ async def test_create_and_get_task(client: httpx.AsyncClient) -> None:
     assert create_resp.status_code == 200, create_resp.text
     created = create_resp.json()
     assert created["object"] == "agent.task"
-    assert created["state"] == "pending"
+    assert created["state"] == "active"
     assert created["goal"] == "All S3 uploads eventually succeed without manual retry"
     assert created["manager_role_key"] == "manager:default"
     assert created["tags"] == [{"tag_type": "domain", "tag": "s3"}]
@@ -253,9 +253,9 @@ async def test_create_active_task_bootstraps_manager(
 
 async def test_list_tasks_filters_by_state(client: httpx.AsyncClient) -> None:
     """List endpoint filters by state query param."""
-    pending_task = await client.post(
+    active_task = await client.post(
         "/v1/agent-tasks",
-        json=_create_payload(title="Pending task"),
+        json=_create_payload(title="Active task"),
     )
     archived = await client.post(
         "/v1/agent-tasks",
@@ -263,10 +263,10 @@ async def test_list_tasks_filters_by_state(client: httpx.AsyncClient) -> None:
     )
     await client.delete(f"/v1/agent-tasks/{archived.json()['id']}")
 
-    list_resp = await client.get("/v1/agent-tasks?state=pending")
+    list_resp = await client.get("/v1/agent-tasks?state=active")
     assert list_resp.status_code == 200
     ids = {row["id"] for row in list_resp.json()["data"]}
-    assert pending_task.json()["id"] in ids
+    assert active_task.json()["id"] in ids
     assert archived.json()["id"] not in ids
 
 
@@ -275,12 +275,12 @@ async def test_patch_task(client: httpx.AsyncClient) -> None:
     created = (await client.post("/v1/agent-tasks", json=_create_payload())).json()
     patch_resp = await client.patch(
         f"/v1/agent-tasks/{created['id']}",
-        json={"title": "Renamed task", "state": "pending"},
+        json={"title": "Renamed task", "state": "active"},
     )
     assert patch_resp.status_code == 200
     body = patch_resp.json()
     assert body["title"] == "Renamed task"
-    assert body["state"] == "pending"
+    assert body["state"] == "active"
 
 
 async def test_patch_task_state_bumps_queue_rank(
@@ -312,11 +312,11 @@ async def test_patch_task_state_bumps_queue_rank(
     assert listed[-1]["id"] == resolved["id"], [t["id"] for t in listed[-2:]]
     assert patched["queue_rank"] is not None
 
-    # Unresolve (→ pending) → queue START (highest rank, sorts first).
+    # Unresolve (→ active) → queue START (highest rank, sorts first).
     revived_patch = (
         await client.patch(
             f"/v1/agent-tasks/{revived['id']}",
-            json={"state": "pending"},
+            json={"state": "active"},
         )
     ).json()
     listed = (await client.get("/v1/agent-tasks?limit=100")).json()["data"]
@@ -396,10 +396,10 @@ async def test_delete_archives_task(client: httpx.AsyncClient) -> None:
 
 
 async def test_permanent_delete_without_archive(client: httpx.AsyncClient) -> None:
-    """Permanent delete works on a pending task without archiving first."""
+    """Permanent delete works on a live task without archiving first."""
     created = (await client.post("/v1/agent-tasks", json=_create_payload())).json()
     task_id = created["id"]
-    assert created["state"] == "pending"
+    assert created["state"] == "active"
 
     perm_resp = await client.delete(f"/v1/agent-tasks/{task_id}/permanent")
     assert perm_resp.status_code == 200
@@ -1032,7 +1032,7 @@ async def test_create_and_delete_custom_manager_role(
     assert default_resp.status_code == 200
 
 
-async def test_patch_manager_role_key_pending_only(
+async def test_patch_manager_role_key_on_live_task(
     client: httpx.AsyncClient,
     db_uri: str,
 ) -> None:
@@ -1042,30 +1042,21 @@ async def test_patch_manager_role_key_pending_only(
         json={"slug": "alt"},
     )
     created = (await client.post("/v1/agent-tasks", json=_create_payload())).json()
-    pending_state = await client.patch(
-        f"/v1/agent-tasks/{created['id']}",
-        json={"state": "pending"},
-    )
-    assert pending_state.status_code == 200
+    assert created["state"] == "active"
 
-    pending_patch = await client.patch(
+    role_patch = await client.patch(
         f"/v1/agent-tasks/{created['id']}",
         json={"manager_role_key": "manager:alt"},
     )
-    assert pending_patch.status_code == 200
-    assert pending_patch.json()["manager_role_key"] == "manager:alt"
+    assert role_patch.status_code == 200
+    assert role_patch.json()["manager_role_key"] == "manager:alt"
 
-    active_patch = await client.patch(
-        f"/v1/agent-tasks/{created['id']}",
-        json={"state": "active"},
-    )
-    assert active_patch.status_code == 200
-
-    blocked_patch = await client.patch(
+    back_patch = await client.patch(
         f"/v1/agent-tasks/{created['id']}",
         json={"manager_role_key": "manager:default"},
     )
-    assert blocked_patch.status_code == 409
+    assert back_patch.status_code == 200
+    assert back_patch.json()["manager_role_key"] == "manager:default"
 
 
 async def test_secretary_profile_and_bootstrap(

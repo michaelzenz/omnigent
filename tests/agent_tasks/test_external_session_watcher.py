@@ -419,7 +419,7 @@ async def test_adopt_external_session_creates_worker_with_hint(db_uri: str) -> N
     )
     task_store.update(task.id, manager_id=manager_row.id)
 
-    _, adopted = await adopt_external_session(
+    _, adopted, _worker = await adopt_external_session(
         session_hint=hint,
         task_id=task.id,
         task_store=task_store,

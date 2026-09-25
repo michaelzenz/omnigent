@@ -31,8 +31,8 @@ The redesign goal: an immersive working environment where **deterministic code p
 | :---- | :---- | :---- |
 | Ingress / scorer | Emit events; tag-similarity scoring of **external** events routes them to the best-matching manager when confident. Session events skip the scorer — unbound ones surface directly to the broker | Auto-adopt thresholds |
 | Persisted routing (worker bindings + subscriptions) | Deterministic direct delivery: session events → the session's worker binding(s) → those tasks' manager(s) (can be multiple); source events → the managers of subscribed tasks | Broker as middleman for known routes |
-| Broker | Fallback router for events with no programmatic route — all unbound session events, and external events the scorer can't place: cluster similar events → distribute to the correct manager; spin up a new manager on scope/capacity; FYI the unplaceable | Task/item creation, pending-task management, orphan triage |
-| Manager (1:N) | Everything task-shaped: digest events, pick the task (three-list search), create tasks/items, steer, maintain Overview, ack noise, file events to FYI; task lifecycle: mark agent-resolved (end of queue), revive to pending on new events; idle is automatic after a quiet week | — |
+| Broker | Fallback router for events with no programmatic route — all unbound session events, and external events the scorer can't place: cluster similar events → distribute to the correct manager; spin up a new manager on scope/capacity; FYI the unplaceable | Task/item creation, orphan triage |
+| Manager (1:N) | Everything task-shaped: digest events, pick the task (three-list search), create tasks/items, steer, maintain Overview, ack noise, file events to FYI; task lifecycle: mark agent-resolved (end of queue), revive to active on new events; idle is automatic after a quiet week | — |
 | Worker | A shareable lane: **one worker = one lane = one queue**. All items assigned to the same worker share its lane — across tasks too. Tasks keep references to their worker lanes; managers propose items with a target lane and the user acks dispatch. The Worker row is only the binding — it does not own the session. Lane status (e.g. halted) broadcasts to every referencing task, and recovery broadcasts too (user resends/rewinds a message and the session works again → unblock all queues) | Auto-adoption |
 | Agent queue | One queue per manager session; one queue per worker | Per-task manager queues |
 | Task search | Three lists — recent (≤3, no state filter), text matches (≤20), tag matches (≤20) — the manager's tool for selecting among its tasks | — |
@@ -51,7 +51,7 @@ By event kind, first rule that applies:
 2. **No subscription** → tag-similarity scorer: confident match → the matched task's manager; otherwise → broker.
 
 **Broker** (rules 2 and 4-else): cluster similar events (host-aware — never mix hosts) → split into subclusters when useful → distribute each to the correct manager → or spin up a new manager (scope, capacity, or host compatibility) → FYI the unplaceable.
-**Manager** receives the event → selects among its tasks using the three-list search (recent ≤3, text matches, tag matches; for bound-session events, the attached tasks ranked by recency) → reconciles (extend/split/close items, update Overview, ack) → or creates a new task, born **active** (born-pending is deprecating).
+**Manager** receives the event → selects among its tasks using the three-list search (recent ≤3, text matches, tag matches; for bound-session events, the attached tasks ranked by recency) → reconciles (extend/split/close items, update Overview, ack) → or creates a new task, born **active**.
 
 ### 3.2 Walkthrough: session drift
 
@@ -59,8 +59,8 @@ By event kind, first rule that applies:
 2. S is unbound → surfaces **directly to the broker** → broker distributes to M (the owner's manager).
 3. M reconciles into task A — extend/split/close items, update Overview, ack — and may attach S to A so later turns route directly (rule 1). If A goes quiet for over a week, it turns idle automatically (display-only, end of queue).
 4. User pivots to new work B in the **same** session → next `turn.finished(S)` → via S's binding (rule 1) or via the broker if still unbound → M.
-5. M's three-list search shows nothing fits → **M creates task B, born active**, attached to M (born-pending is deprecating).
-6. When A/B looks done, M marks it **agent-resolved** — same board card style as pending with a distinct badge, sorted to the end of the queue. Not final: a new relevant event moves it back to pending.
+5. M's three-list search shows nothing fits → **M creates task B, born active**, attached to M.
+6. When A/B looks done, M marks it **agent-resolved** — same board card style with a distinct badge, sorted to the end of the queue. Not final: a new relevant event moves it back to active.
 
 A wrong route costs one manager ack (or a re-route, PR 10).
 
@@ -77,22 +77,18 @@ A worker is a single long-lived lane (one target session, one queue); the Worker
 ```mermaid
 stateDiagram-v2
     state "agent-resolved" as agent_resolved
-    [*] --> pending : manager creates task
-    [*] --> active : user creates task
-    pending --> active : user confirms
+    [*] --> active : manager or user creates task
     active --> idle : quiet for over a week (auto)
     idle --> active : new activity
     active --> agent_resolved : manager believes done
-    agent_resolved --> pending : new relevant event (not final)
-    pending --> archived
+    agent_resolved --> active : new relevant event (not final)
     active --> archived
     agent_resolved --> archived
-    note right of pending : Born pending — manager-created only.<br/>Same ranked list as active, badge distinguishes
     note right of idle : Display-only, end of queue
-    note right of agent_resolved : Pending-style card + distinct badge,<br/>end of queue
+    note right of agent_resolved : Distinct badge,<br/>end of queue
 ```
 
-All transitions except auto-idle are manager-initiated via `PATCH /v1/agent-tasks/<id>` (existing endpoint). `agent-resolved` is a new enum value — schema migration in PR 5, badge rendering in PR 11, manager guidance in PR 6.
+All transitions except auto-idle are manager-initiated via `PATCH /v1/agent-tasks/<id>` (existing endpoint). The born-pending package confirm flow (`/agent-tasks/packages`, accept/reject) has been removed — every task is born `active`.
 
 ## 4. Work plan
 
@@ -141,15 +137,15 @@ Today the manager queue key is `manager/<user>/<task_id>` (`packagers.py:490`), 
 
 **PR 5: Manager-side task creation +** `agent-resolved` **state** (M)
 
-* Managers call `POST /v1/agent-tasks` with `state: "active"` (born-pending via `/agent-tasks/packages` is deprecating); the task is attached to the calling manager. (`manager_conversation_id` on the legacy packages path = calling manager's session; the server resolves it because `puppygarden_api` is runner-dispatched.)
-* New task state `agent-resolved`: the manager believes the task is resolved → it sorts to the end of the board queue, sharing the pending card UI with a distinct badge (rendered in PR 11). Not final: the manager moves it back to `pending` when a new relevant event arrives.
+* Managers call `POST /v1/agent-tasks` with `state: "active"`; the task is attached to the calling manager. (The legacy born-pending `/agent-tasks/packages` confirm flow has been removed.)
+* New task state `agent-resolved`: the manager believes the task is resolved → it sorts to the end of the board queue with a distinct badge (rendered in PR 11). Not final: the manager moves it back to `active` when a new relevant event arrives.
 * Schema migration: extend `ck_tasks_state` (smallint 1–4 today) with value 5 for `agent-resolved`.
-* Manager transitions via PATCH /v1/agent-tasks/<id> (exists today): pending ↔ agent-resolved. (idle is automatic after >1 quiet week — display-only.)
+* Manager transitions via PATCH /v1/agent-tasks/<id> (exists today): active ↔ agent-resolved. (idle is automatic after >1 quiet week — display-only.)
 
 **PR 6: Manager prompt rewrite** (S)
 
 * TASK\_MANAGER.md: multi-task ownership; per-event task selection via the three-list search (recent ≤3, text, tag); creating tasks when nothing fits; notice labels `[task:<id>]`; listing own portfolio (`GET /v1/agent-tasks?manager_conversation_id=<self>`).
-* Task lifecycle: when to mark agent-resolved (looks done) and reviving to pending on new events. (No idle guidance — it's automatic.)
+* Task lifecycle: when to mark agent-resolved (looks done) and reviving to active on new events. (No idle guidance — it's automatic.)
 * FYI capability: managers can file events to FYI clusters (`POST /v1/task-events/fyi-clusters`, shared with the broker).
 * Notice formatter: roster footer (your tasks: id/title/state) so the manager always knows its portfolio without an extra call.
 
@@ -188,7 +184,7 @@ One worker = one lane = one queue (`worker/<user>/<worker_id>`, unchanged). Work
 
 * Task card shows its manager (multiple cards link to the same session); worker section distinguishes managed lanes vs attached sessions; attach/detach affordance.
 * Halted-lane indicator: red **!** badge on the worker, shown on every task card that references the lane (backend signal from PR 7).
-* `agent-resolved` rendering: same card style as pending with a distinct badge, sorted to the end of the queue; `idle` tasks also sort to the end.
+* `agent-resolved` rendering: same card style with a distinct badge, sorted to the end of the queue; `idle` tasks also sort to the end.
 
 ## 5. API delta summary
 
@@ -197,14 +193,14 @@ One worker = one lane = one queue (`worker/<user>/<worker_id>`, unchanged). Work
 | `GET /v1/agent-tasks/search` | **New** — three lists: recent (≤3, no state filter) + text matches (≤20) + tag matches (≤20) (manager task-selection; attach flow) |
 | `GET /v1/managers` | **New** — active managers with task portfolios + capacity; role profiles when none fit (broker distribution; attach flow) |
 | `POST /agent-tasks/{id}/bootstrap` | Attach-or-create |
-| `POST /v1/agent-tasks/packages` | Caller = manager; task born **pending**, attached to the calling manager |
+| `POST /v1/agent-tasks` | Caller = manager; task born **active**, attached to the calling manager |
 | `POST /v1/agent-tasks/sessions/{id}/adopt` | Repurposed: explicit attach (no proposal) |
 | `POST /v1/task-events/<id>/reroute` | **New** (or reconcile extension; cross-manager) |
 | `GET /v1/agent-tasks?manager_conversation_id=` | **New** filter — manager portfolio |
 | `POST /v1/agent-tasks/<id>/workers` | Accepts an existing `worker_id` — attach a shared lane (PR 7) |
 | `GET /v1/task-workers` (per owner) | **New** — list the owner's worker lanes for attach (PR 7) |
 | `POST /v1/task-events/fyi-clusters` | Unchanged; now also called by managers |
-| Task states | `agent-resolved` added (enum 5; migration extends `ck_tasks_state`); manager transitions `pending ↔ agent-resolved` / `idle` via existing `PATCH /v1/agent-tasks/<id>`; new events revive to `pending` |
+| Task states | `agent-resolved` added (enum 5; migration extends `ck_tasks_state`); manager transitions `active ↔ agent-resolved` / `idle` via existing `PATCH /v1/agent-tasks/<id>`; new events revive to `active` |
 | `workers.task_id` | Relaxed — task↔worker association (PR 7) |
 | Queue keys | `manager/<user>/<manager_conversation_id>` (re-keyed); `worker/<user>/<worker_id>` (unchanged) |
 
@@ -217,7 +213,7 @@ With capacity at 1M and threshold at 0, v2 converges to one manager per owner �
 
 ## 7. Deletions (the v2 discount)
 
-Auto-adopt · `session.orphan` triage · adoption proposals + tombstones · broker pending-task management · broker package/reconcile duties · per-task manager queues · session fan-out (delivery targets managers directly) · score-threshold auto-reconcile (the scorer only picks the manager) · broker as default event hub (persisted data routes first)
+Auto-adopt · `session.orphan` triage · adoption proposals + tombstones · per-task manager queues · session fan-out (delivery targets managers directly) · score-threshold auto-reconcile (the scorer only picks the manager) · broker as default event hub (persisted data routes first)
 
 ## 8. Test plan
 
@@ -246,7 +242,7 @@ Decided:
 * ✓ **Manager search**: three lists — recent (no state filter), text matches, tag matches.
 * ✓ **FYI**: broker-owned; both broker and managers can add events to FYI clusters.
 * ✓ **Workers shared across tasks**: one worker = one lane; tasks keep lane references; lane halts (including user-stopped sessions) broadcast to all referencing tasks with a red **!** badge.
-* ✓ **Task lifecycle**: tasks born active (born-pending deprecating); new agent-resolved state — pending-style card, distinct badge, end of queue; not final — new events move it back to `pending`. Tasks auto-idle after >1 week without manager updates (display-only).
+* ✓ **Task lifecycle**: tasks born active; new agent-resolved state — distinct badge, end of queue; not final — new events move it back to `active`. Tasks auto-idle after >1 week without manager updates (display-only).
 
 Still open:
 

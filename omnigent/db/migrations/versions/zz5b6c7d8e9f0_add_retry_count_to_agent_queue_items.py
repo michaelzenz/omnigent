@@ -28,4 +28,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column("agent_queue_items", "retry_count")
+    with op.batch_alter_table("agent_queue_items") as batch_op:
+        batch_op.drop_column("retry_count")

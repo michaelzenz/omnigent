@@ -1,6 +1,12 @@
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import {
-  acceptAgentTaskPackage,
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import {
   archiveAgentTask,
   assignTaskItemWorker,
   createTaskItem,
@@ -10,6 +16,7 @@ import {
   ensureBrokerSession,
   ensureSecretarySession,
   fetchAgentTasks,
+  fetchAgentTaskBoardSearch,
   fetchBrokerProfile,
   fetchLiveAgentTasks,
   fetchSecretaryProfile,
@@ -20,7 +27,6 @@ import {
   moveTaskToQueueEnd,
   permanentlyDeleteAgentTask,
   reassignWorker,
-  rejectAgentTaskPackage,
   resetBrokerSession,
   resetSecretarySession,
   patchAgentTask,
@@ -33,6 +39,7 @@ import {
   type UpdateTaskItemRequest,
   type WorkerAssignmentInput,
   type TaskDashboard,
+  type AgentTaskBoardMatch,
 } from "@/lib/agentTasksApi";
 import { interrupt as interruptSession } from "@/lib/sessionsApi";
 import { useChatStore } from "@/store/chatStore";
@@ -54,7 +61,6 @@ const fixtureEnabled = isPuppyGardenFixtureMode();
 function invalidateTaskQueries(queryClient: ReturnType<typeof useQueryClient>, taskId: string) {
   return Promise.all([
     queryClient.invalidateQueries({ queryKey: ["agent-task-dashboard", taskId] }),
-    queryClient.invalidateQueries({ queryKey: ["agent-tasks", "pending"] }),
     queryClient.invalidateQueries({ queryKey: ["agent-tasks", "live"] }),
     queryClient.invalidateQueries({ queryKey: ["agent-tasks", "active"] }),
     queryClient.invalidateQueries({ queryKey: ["agent-tasks", "idle"] }),
@@ -66,13 +72,8 @@ export function useAgentTaskList(state = "active") {
     queryKey: ["agent-tasks", state, fixtureEnabled ? "fixture" : "live"],
     queryFn: () => {
       if (fixtureEnabled) {
-        if (state === "pending") {
-          return FIXTURE_TASK_LIST.filter((task) => task.state === "pending");
-        }
         if (state === "live") {
-          return FIXTURE_TASK_LIST.filter(
-            (task) => task.state !== "pending" && task.state !== "archived",
-          );
+          return FIXTURE_TASK_LIST.filter((task) => task.state !== "archived");
         }
         return FIXTURE_TASK_LIST;
       }
@@ -108,6 +109,64 @@ export function useTaskDashboard(
       status: fixtureDashboard ? "success" : "pending",
       fetchStatus: "idle",
     } as UseQueryResult<TaskDashboard>;
+  }
+
+  return live;
+}
+
+/** Debounce matches the command-palette search (300ms) so keystrokes don't
+ * each hit the server. */
+const BOARD_SEARCH_DEBOUNCE_MS = 300;
+
+/** Server-side board search. Returns the matched tasks with per-entity match
+ * ids; ``data`` stays undefined while the first request for a query is in
+ * flight so the board can keep showing everything until results arrive. */
+export function useAgentTaskBoardSearch(query: string): UseQueryResult<AgentTaskBoardMatch[]> {
+  const trimmed = query.trim();
+  const [debounced, setDebounced] = useState(trimmed);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(trimmed), BOARD_SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [trimmed]);
+
+  const live = useQuery({
+    queryKey: ["agent-tasks-board-search", debounced],
+    queryFn: () => fetchAgentTaskBoardSearch(debounced),
+    enabled: !fixtureEnabled && debounced.length > 0,
+    // Keep the previous query's results visible while the next one fetches,
+    // so the board doesn't flash back to unfiltered on every keystroke.
+    placeholderData: keepPreviousData,
+  });
+
+  if (fixtureEnabled) {
+    // Fixture mode has no server; match against the fixture task list so the
+    // fixture board stays demonstrable.
+    const needle = debounced.toLowerCase();
+    const matches: AgentTaskBoardMatch[] = debounced
+      ? FIXTURE_TASK_LIST.filter(
+          (task) =>
+            task.title.toLowerCase().includes(needle) ||
+            (task.description?.toLowerCase().includes(needle) ?? false) ||
+            task.id.toLowerCase().includes(needle),
+        ).map((task) => ({
+          task_id: task.id,
+          matched_in: ["task"],
+          item_ids: [],
+          asset_ids: [],
+          worker_ids: [],
+        }))
+      : [];
+    return {
+      ...live,
+      data: matches,
+      isLoading: false,
+      isPending: false,
+      isError: false,
+      error: null,
+      isFetching: false,
+      status: "success",
+      fetchStatus: "idle",
+    } as UseQueryResult<AgentTaskBoardMatch[]>;
   }
 
   return live;
@@ -328,29 +387,6 @@ export function useUpdateAgentTaskManagerRole(taskId: string) {
       patchAgentTask(taskId, { manager_role_key: managerRoleKey }),
     onSuccess: async () => {
       await invalidateTaskQueries(queryClient, taskId);
-    },
-  });
-}
-
-export function useAcceptAgentTaskPackage(taskId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => acceptAgentTaskPackage(taskId),
-    onSuccess: async () => {
-      await invalidateTaskQueries(queryClient, taskId);
-      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "pending"] });
-      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "live"] });
-    },
-  });
-}
-
-export function useRejectAgentTaskPackage(taskId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => rejectAgentTaskPackage(taskId),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "pending"] });
-      await queryClient.invalidateQueries({ queryKey: ["agent-tasks", "live"] });
     },
   });
 }

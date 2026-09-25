@@ -35,4 +35,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_workers_external_hint", table_name="workers")
-    op.drop_column("workers", "external_session_hint")
+    with op.batch_alter_table("workers") as batch_op:
+        batch_op.drop_column("external_session_hint")

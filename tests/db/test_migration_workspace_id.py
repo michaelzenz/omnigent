@@ -124,8 +124,8 @@ def test_agent_round_trip_via_store(db_engine: Engine) -> None:
     assert fetched.id == "c8596df60b081551fdd8e352e7aef4ea"
 
 
-def test_downgrade_across_manager_identity_is_refused(tmp_path: Path) -> None:
-    """The manager-identity migration is irreversible; crossing it must raise."""
+def test_downgrade_across_manager_identity_reverts_schema(tmp_path: Path) -> None:
+    """Downgrading across the manager-identity migration reverts the schema."""
     db_path = tmp_path / "downgrade.db"
     uri = f"sqlite:///{db_path}"
     engine = get_or_create_engine(uri)
@@ -133,13 +133,12 @@ def test_downgrade_across_manager_identity_is_refused(tmp_path: Path) -> None:
     assert "workspace_id" in {c["name"] for c in sa.inspect(engine).get_columns("agents")}
 
     config = _build_alembic_config(uri)
-    with pytest.raises(NotImplementedError):
-        with engine.begin() as conn:
-            config.attributes["connection"] = conn
-            command.downgrade(config, "q1a2b3c4d5e6")
+    with engine.begin() as conn:
+        config.attributes["connection"] = conn
+        command.downgrade(config, "q1a2b3c4d5e6")
 
-    # The refused downgrade leaves the schema at head.
-    assert "workspace_id" in {c["name"] for c in sa.inspect(engine).get_columns("agents")}
+    # q1a2b3c4d5e6 sits below r1a2b3c4d5e6, which added workspace_id.
+    assert "workspace_id" not in {c["name"] for c in sa.inspect(engine).get_columns("agents")}
 
     engine.dispose()
     clear_engine_cache()

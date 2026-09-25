@@ -4,17 +4,11 @@ import { CheckIcon, Loader2Icon, MessageSquareIcon, PencilIcon, XIcon } from "lu
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  useAcceptAgentTaskPackage,
-  useMoveTaskToQueueEnd,
-  usePatchAgentTask,
-  useRejectAgentTaskPackage,
-  useTaskDashboard,
-} from "@/hooks/useAgentTasks";
+import { useMoveTaskToQueueEnd, usePatchAgentTask, useTaskDashboard } from "@/hooks/useAgentTasks";
 import { relativeTime } from "@/lib/relativeTime";
+import type { AgentTaskBoardMatch } from "@/lib/agentTasksApi";
 import { cn } from "@/lib/utils";
 import { usePuppyGardenChat } from "./PuppyGardenChatContext";
-import { TaskCardManagerRolePicker } from "./TaskCardManagerRolePicker";
 import { TaskCardSidebar } from "./TaskCardAssets";
 import { TaskItemsPanel } from "./TaskCardWorkers";
 import { TaskActionsMenu } from "./TaskActionsMenu";
@@ -24,8 +18,6 @@ import { TaskActionsMenu } from "./TaskActionsMenu";
 const TASK_STATE_BADGE_CLASSES: Record<string, string> = {
   active:
     "border-[rgba(34,197,94,0.55)] bg-[rgba(34,197,94,0.07)] text-[#15803d] dark:bg-[rgba(34,197,94,0.08)] dark:text-[#4ade80]",
-  pending:
-    "border-[rgba(234,179,8,0.6)] bg-[rgba(234,179,8,0.08)] text-[#a16207] dark:bg-[rgba(234,179,8,0.08)] dark:text-[#fde047]",
   "agent-resolved":
     "border-[rgba(59,130,246,0.55)] bg-[rgba(59,130,246,0.07)] text-[#1d4ed8] dark:bg-[rgba(59,130,246,0.08)] dark:text-[#60a5fa]",
   idle: "border-[rgba(100,116,139,0.45)] bg-[rgba(100,116,139,0.06)] text-[#64748b] dark:bg-[rgba(148,163,184,0.06)] dark:text-[#94a3b8]",
@@ -41,9 +33,11 @@ interface TaskCardProps {
   createdAt?: number;
   priority?: number;
   state: string;
-  managerRoleKey: string;
   /** Durable manager owning this task, when the board list knows it. */
   managerId?: string | null;
+  /** Server-side search match for this task while a search is active; the
+   * ids drive the amber rings on matched items/assets/workers. */
+  searchMatch?: AgentTaskBoardMatch;
   isLast?: boolean;
   onMovedToEnd?: (taskId: string) => () => void;
 }
@@ -147,8 +141,8 @@ export function TaskCard({
   createdAt,
   priority = 2,
   state,
-  managerRoleKey,
   managerId,
+  searchMatch,
   isLast = false,
   onMovedToEnd,
 }: TaskCardProps) {
@@ -158,7 +152,6 @@ export function TaskCard({
   // card is ready before it scrolls in.
   const cardRef = useRef<HTMLElement | null>(null);
   const [inView, setInView] = useState(false);
-  const isPending = state === "pending";
 
   useEffect(() => {
     const el = cardRef.current;
@@ -175,18 +168,10 @@ export function TaskCard({
     return () => observer.disconnect();
   }, []);
 
-  const {
-    data: dashboard,
-    isLoading,
-    error,
-  } = useTaskDashboard(taskId, {
-    enabled: inView && !isPending,
-  });
+  const { data: dashboard, isLoading, error } = useTaskDashboard(taskId, { enabled: inView });
   const { target, openManager, isManagerSelected, dismissToRole } = usePuppyGardenChat();
   const moveToEnd = useMoveTaskToQueueEnd(taskId);
-  const acceptPackage = useAcceptAgentTaskPackage(taskId);
-  const rejectPackage = useRejectAgentTaskPackage(taskId);
-  const managerSelected = !isPending && isManagerSelected(taskId);
+  const managerSelected = isManagerSelected(taskId);
   const selectedWorkerId =
     target.kind === "worker" && target.taskId === taskId ? target.workerId : null;
   const task = dashboard?.task;
@@ -195,10 +180,9 @@ export function TaskCard({
   const effectiveCreatedAt = task?.created_at ?? createdAt;
   const effectivePriority = task?.priority ?? priority;
   // The dashboard is fresher than the board list; fall back to the prop only
-  // before it loads. Pending packages are manager-less by design — not "unmanaged".
+  // before it loads.
   const effectiveManagerId = task ? (task.manager_id ?? null) : (managerId ?? null);
-  const unmanaged = !effectiveManagerId && !isPending;
-  const packageActionPending = acceptPackage.isPending || rejectPackage.isPending;
+  const unmanaged = !effectiveManagerId;
   const [managerHoldPending, setManagerHoldPending] = useState(false);
   const [managerHoldError, setManagerHoldError] = useState<string | null>(null);
 
@@ -276,57 +260,10 @@ export function TaskCard({
             <TaskActionsMenu taskId={taskId} taskState={state} />
           </div>
         </div>
-        {!isPending ? <EditableGoal taskId={taskId} goal={effectiveGoal} /> : null}
+        <EditableGoal taskId={taskId} goal={effectiveGoal} />
       </header>
 
-      {isPending ? (
-        <div className="space-y-4 p-4">
-          <EditableGoal taskId={taskId} goal={effectiveGoal} />
-          <section className="min-w-0 space-y-2">
-            <h3 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">
-              Overview
-            </h3>
-            {effectiveDescription ? (
-              <div className="prose prose-sm dark:prose-invert max-w-none break-words">
-                <HighlightedMarkdown>{effectiveDescription}</HighlightedMarkdown>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No overview yet.</p>
-            )}
-          </section>
-          <div className="flex flex-wrap items-center gap-2">
-            <TaskCardManagerRolePicker
-              taskId={taskId}
-              managerRoleKey={managerRoleKey}
-              editable
-              compact
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={packageActionPending}
-              onClick={(event) => {
-                event.stopPropagation();
-                rejectPackage.mutate();
-              }}
-            >
-              Dismiss Task
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={!managerRoleKey.trim() || packageActionPending}
-              onClick={(event) => {
-                event.stopPropagation();
-                acceptPackage.mutate();
-              }}
-            >
-              Create Task
-            </Button>
-          </div>
-        </div>
-      ) : isLoading ? (
+      {isLoading ? (
         <div className="flex min-h-64 items-center justify-center p-8 text-sm text-muted-foreground">
           <Loader2Icon className="mr-2 size-4 animate-spin" />
           Loading task…
@@ -422,6 +359,7 @@ export function TaskCard({
               taskId={taskId}
               dashboard={dashboard}
               selectedWorkerId={selectedWorkerId}
+              matchedItemIds={searchMatch ? new Set(searchMatch.item_ids) : null}
             />
           </div>
           <div className="puppy-task-card-rail-cell">
@@ -430,6 +368,8 @@ export function TaskCard({
               assets={dashboard.assets ?? []}
               workers={dashboard.workers}
               hostId={dashboard.workers.find((w) => w.host_id)?.host_id ?? null}
+              matchedWorkerIds={searchMatch ? new Set(searchMatch.worker_ids) : null}
+              matchedAssetIds={searchMatch ? new Set(searchMatch.asset_ids) : null}
             />
           </div>
         </div>

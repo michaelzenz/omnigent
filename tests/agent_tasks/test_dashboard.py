@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import uuid
 
+import sqlalchemy as sa
+
 from omnigent.agent_tasks.dashboard import build_task_dashboard
 from omnigent.agent_tasks.executions import start_execution_for_item
-from omnigent.db.utils import now_epoch
+from omnigent.db.db_models import SqlConversation
+from omnigent.db.utils import get_or_create_engine, now_epoch
+from omnigent.stores.conversation_store.sqlalchemy_store import (
+    SqlAlchemyConversationStore,
+)
 from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
@@ -214,3 +220,94 @@ def test_dashboard_excludes_deleted_workers(db_uri: str) -> None:
     lane_ids = {lane["worker_id"] for lane in dashboard["workers"]}
     assert live.id in lane_ids
     assert doomed.id not in lane_ids
+
+
+def test_worker_lanes_sort_by_last_active(db_uri: str) -> None:
+    """Lanes sort by the target session's last update within each state."""
+    task_store = SqlAlchemyTaskStore(db_uri)
+    item_store = SqlAlchemyTaskItemStore(db_uri)
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    worker_store = SqlAlchemyWorkerStore(db_uri)
+    conv_store = SqlAlchemyConversationStore(db_uri)
+    task_id = _uid("task_sort_active")
+    task_store.create(
+        task_id,
+        "Sort task",
+        "sort goal",
+        state="active",
+        manager_id=_uid("mgr_sort"),
+    )
+    task = task_store.get(task_id)
+    assert task is not None
+
+    conv_old = conv_store.create_conversation(title="Old session")
+    conv_new = conv_store.create_conversation(title="New session")
+    # create_conversation stamps updated_at=now for both; pin distinct values
+    # so the ordering is deterministic regardless of test speed. ORM update —
+    # Uuid16 stores ids as blobs on SQLite, raw string SQL would not match.
+    engine = get_or_create_engine(db_uri)
+    with engine.begin() as conn:
+        conn.execute(
+            sa.update(SqlConversation)
+            .where(SqlConversation.id == conv_old.id)
+            .values(updated_at=1000000000)
+        )
+        conn.execute(
+            sa.update(SqlConversation)
+            .where(SqlConversation.id == conv_new.id)
+            .values(updated_at=2000000000)
+        )
+
+    worker_old = worker_store.create_worker(
+        _uid("w_old"),
+        task_id,
+        kind="internal",
+        target_id=conv_old.id,
+        state="idle",
+    )
+    worker_new = worker_store.create_worker(
+        _uid("w_new"),
+        task_id,
+        kind="internal",
+        target_id=conv_new.id,
+        state="idle",
+    )
+
+    dashboard = build_task_dashboard(
+        task,
+        event_store,
+        item_store,
+        worker_store,
+        conversation_store=conv_store,
+    )
+    lanes = dashboard["workers"]
+    assert [lane["worker_id"] for lane in lanes] == [worker_new.id, worker_old.id]
+    assert lanes[0]["last_active_at"] == 2000000000
+    assert lanes[1]["last_active_at"] == 1000000000
+
+
+def test_worker_lanes_last_active_falls_back_without_conversations(
+    db_uri: str,
+) -> None:
+    """Without a conversation store, lanes still expose a fallback stamp."""
+    task_store = SqlAlchemyTaskStore(db_uri)
+    item_store = SqlAlchemyTaskItemStore(db_uri)
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    worker_store = SqlAlchemyWorkerStore(db_uri)
+    task_id = _uid("task_sort_fallback")
+    task_store.create(
+        task_id,
+        "Fallback task",
+        "fallback goal",
+        state="active",
+        manager_id=_uid("mgr_fallback"),
+    )
+    task = task_store.get(task_id)
+    assert task is not None
+
+    worker = worker_store.create_worker(_uid("w_fb"), task_id, kind="internal", state="idle")
+
+    dashboard = build_task_dashboard(task, event_store, item_store, worker_store)
+    lane = dashboard["workers"][0]
+    assert lane["worker_id"] == worker.id
+    assert lane["last_active_at"] is not None

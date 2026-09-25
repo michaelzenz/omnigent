@@ -90,6 +90,9 @@ export interface TaskWorkerLane {
   needs_response?: boolean;
   /** Manager-maintained label of recent work; falls back to provider_name. */
   title?: string | null;
+  /** Session last-update epoch seconds (item append, title change); external
+   *  lanes use the watcher's last observation. Lanes sort most-recent-first. */
+  last_active_at?: number | null;
   provider_name?: string | null;
   host_id?: string | null;
   workspace?: string | null;
@@ -295,7 +298,7 @@ export async function fetchAgentTasks(state = "idle"): Promise<AgentTaskSummary[
   return body.data;
 }
 
-/** Active and idle managed tasks (excludes pending packages and archived). */
+/** Live managed tasks (active/idle/agent-resolved; excludes archived). */
 export async function fetchLiveAgentTasks(): Promise<AgentTaskSummary[]> {
   const [active, idle, agentResolved] = await Promise.all([
     fetchAgentTasks("active"),
@@ -308,6 +311,31 @@ export async function fetchLiveAgentTasks(): Promise<AgentTaskSummary[]> {
 export async function fetchTaskDashboard(taskId: string): Promise<TaskDashboard> {
   const res = await authenticatedFetch(`/v1/agent-tasks/${encodeURIComponent(taskId)}/dashboard`);
   return readJson<TaskDashboard>(res);
+}
+
+/** Server-side board search match for one task. Ids let the board ring the
+ * matched rows without any client-side text matching. */
+export interface AgentTaskBoardMatch {
+  task_id: string;
+  /** Coarse match sources: "task" | "item" | "asset" | "worker". */
+  matched_in: string[];
+  item_ids: string[];
+  asset_ids: number[];
+  worker_ids: string[];
+}
+
+/** Window size for the server-side board search: matches the server's
+ * default limit. When a query returns this many matches, more matches likely
+ * exist below the fetched window — the board hints at it instead of
+ * paginating (pagination comes later). */
+export const AGENT_TASK_BOARD_SEARCH_LIMIT = 100;
+
+export async function fetchAgentTaskBoardSearch(query: string): Promise<AgentTaskBoardMatch[]> {
+  const res = await authenticatedFetch(
+    `/v1/agent-tasks/board-search?q=${encodeURIComponent(query)}&limit=${AGENT_TASK_BOARD_SEARCH_LIMIT}`,
+  );
+  const body = await readJson<{ results: AgentTaskBoardMatch[] }>(res);
+  return body.results;
 }
 
 export interface CreateTaskItemRequest {
@@ -523,22 +551,6 @@ export async function permanentlyDeleteAgentTask(taskId: string): Promise<void> 
   if (!res.ok) await readJsonOrApiError(res);
 }
 
-export async function acceptAgentTaskPackage(taskId: string): Promise<AgentTaskSummary> {
-  const res = await authenticatedFetch(
-    `/v1/agent-tasks/${encodeURIComponent(taskId)}/accept-package`,
-    { method: "POST" },
-  );
-  return readJsonOrApiError<AgentTaskSummary>(res);
-}
-
-export async function rejectAgentTaskPackage(taskId: string): Promise<AgentTaskSummary> {
-  const res = await authenticatedFetch(
-    `/v1/agent-tasks/${encodeURIComponent(taskId)}/reject-package`,
-    { method: "POST" },
-  );
-  return readJsonOrApiError<AgentTaskSummary>(res);
-}
-
 export interface SpawnManagerNoticeResult {
   unmanaged_count: number;
   superseded: number;
@@ -702,7 +714,7 @@ export interface BoardTriage {
   fyi: FyiClusterCard[];
 }
 
-export type FyiResolution = "dismiss_fyi" | "promote_to_routing";
+export type FyiResolution = "dismiss_fyi";
 
 export async function fetchBoardTriage(): Promise<BoardTriage> {
   const res = await authenticatedFetch("/v1/agent-tasks/board/pending");
@@ -713,11 +725,6 @@ export async function resolveFyiCluster(
   clusterId: string,
   body: {
     resolution: FyiResolution;
-    routing_title?: string;
-    routing_instructions?: string;
-    suggested_task_id?: string | null;
-    proposed_task_title?: string;
-    proposed_task_internal_note?: string;
   },
 ): Promise<void> {
   const res = await authenticatedFetch(
