@@ -1897,6 +1897,51 @@
         "title": "CreateSessionPolicyRequest",
         "type": "object"
       },
+      "CreateWorktreeRequest": {
+        "description": "Request body for `POST /v1/hosts/{host_id}/worktrees`.\n\nCreates a worktree WITHOUT launching or binding a runner \u2014 the\ncaller decides what to do with the returned folder (typically\nrelocate a session into it via `POST /v1/hosts/{id}/runners`).\n\nWith `session_id` set, creation goes through the managed\n(auto new worktree) path: the host may reuse a clean folder from\nits managed pool instead of creating a new one, and the returned\nfolder is leased to that session so other sessions' reuse sweeps\nskip it. Without `session_id` a plain worktree is created and\nleft unmanaged.",
+        "properties": {
+          "base_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional base ref to branch from, e.g. `\"main\"`. `None` branches from the repository's current `HEAD`.",
+            "title": "Base Branch"
+          },
+          "branch_name": {
+            "description": "New branch to create and check out, e.g. `\"feature/login\"`. Validated against git ref-format rules.",
+            "title": "Branch Name",
+            "type": "string"
+          },
+          "repo_path": {
+            "description": "Absolute path inside the source repository on the host, e.g. `\"/Users/alice/myrepo\"`.",
+            "title": "Repo Path",
+            "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional session to lease the managed worktree to, e.g. `\"conv_abc123\"`. Must exist and be owned by the caller.",
+            "title": "Session Id"
+          }
+        },
+        "required": [
+          "repo_path",
+          "branch_name"
+        ],
+        "title": "CreateWorktreeRequest",
+        "type": "object"
+      },
       "CreatedEvent": {
         "description": "Initial event emitted at the start of every streaming response.\n\nCarries the freshly-allocated\n`omnigent.server.schemas.ResponseObject` (status will\nbe `\"queued\"` or `\"in_progress\"` depending on whether the\ntask started immediately).",
         "properties": {
@@ -3473,7 +3518,7 @@
                 "type": "null"
               }
             ],
-            "description": "Optional git worktree options. In create mode the server creates a worktree for a new branch off `workspace` on the host and binds the runner to it (the fork-resume path; mirrors `POST /v1/sessions`). In bind mode (`existing_worktree=True`) `workspace` already IS a worktree \u2014 no worktree is created; `branch_name` is recorded as the session's `git_branch` for display and opt-in cleanup. `None` binds `workspace` directly. `host_id` is always present (it is in the path), so no host check is needed here."
+            "description": "Optional git worktree options. In create mode the server creates a worktree for a new branch off `workspace` on the host and binds the runner to it (the fork-resume path; mirrors `POST /v1/sessions`). With `auto_create=True` the server also names the branch itself (the same bounded, fail-open AI call the create flow uses) and creates a leased, auto-reusable managed worktree. In bind mode (`existing_worktree=True`) `workspace` already IS a worktree \u2014 no worktree is created; `branch_name` is recorded as the session's `git_branch` for display and opt-in cleanup. `None` binds `workspace` directly. `host_id` is always present (it is in the path), so no host check is needed here."
           },
           "session_id": {
             "description": "Session to bind the new runner to, e.g. `\"conv_abc123\"`.",
@@ -6400,6 +6445,31 @@
         "title": "SessionForkWorktreeOptions",
         "type": "object"
       },
+      "SessionGitBranchResponse": {
+        "description": "The live git branch of a session's workspace.\n\n`git_branch` is `None` when the workspace is not a git\ncheckout (or the host could not be asked). The value is refreshed\nfrom the host on every read \u2014 it is not the recorded\n`conversations.git_branch` column, which is write-once at\nsession creation.",
+        "properties": {
+          "git_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Branch"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "title": "SessionGitBranchResponse",
+        "type": "object"
+      },
       "SessionGitOptions": {
         "description": "Git worktree options for `POST /v1/sessions`.\n\nRequires `host_id` to be set (and therefore `workspace`, which\nis interpreted as the source repository directory). Two modes,\nselected by `existing_worktree`:\n\n- **create** (default): the server creates a git worktree on the\n  host for a new branch and starts the runner in that worktree\n  instead of the picked directory.\n- **bind** (`existing_worktree=True`): `workspace` already IS a\n  pre-existing worktree; no worktree is created. `branch_name` is\n  recorded as the session's `git_branch` for display and opt-in\n  cleanup, and `base_branch` must not be set.\n\nSee designs/SESSION_GIT_WORKTREE.md.",
         "properties": {
@@ -6460,6 +6530,12 @@
             "default": false,
             "description": "When `True`, bind to the pre-existing worktree at `workspace` instead of creating one (see above).",
             "title": "Existing Worktree",
+            "type": "boolean"
+          },
+          "managed": {
+            "default": false,
+            "description": "When `True`, create the branch's worktree through the managed auto-new-worktree path (the same machinery `auto_create` uses): the host may reuse a clean folder from its managed pool instead of always creating a new one, and the folder is leased to the session so reuse sweeps skip it. The branch name is the caller-supplied `branch_name` (unlike `auto_create`, which generates one). Requires a host that speaks managed worktree leases. Create mode only.",
+            "title": "Managed",
             "type": "boolean"
           }
         },
@@ -9436,6 +9512,23 @@
         "title": "SmartRoutingSourcesInfo",
         "type": "object"
       },
+      "SshClaimRequest": {
+        "description": "Body for `POST /host/ssh/connections/{id}/claim`.",
+        "properties": {
+          "lease_seconds": {
+            "format": "int64",
+            "maximum": 3600.0,
+            "minimum": 1.0,
+            "title": "Lease Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lease_seconds"
+        ],
+        "title": "SshClaimRequest",
+        "type": "object"
+      },
       "SshConnectionBody": {
         "description": "One SSH connection profile in API requests.",
         "properties": {
@@ -9507,6 +9600,107 @@
           "connections"
         ],
         "title": "SshConnectionsPutRequest",
+        "type": "object"
+      },
+      "SshLogEntryBody": {
+        "description": "One lifecycle log entry pushed by the executor.",
+        "properties": {
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase",
+          "level",
+          "message"
+        ],
+        "title": "SshLogEntryBody",
+        "type": "object"
+      },
+      "SshLogsRequest": {
+        "description": "Body for `POST /host/ssh/connections/{id}/logs`.",
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/SshLogEntryBody"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "title": "SshLogsRequest",
+        "type": "object"
+      },
+      "SshPhaseRequest": {
+        "description": "Body for `POST /host/ssh/connections/{id}/phase`.",
+        "properties": {
+          "generation": {
+            "format": "int64",
+            "title": "Generation",
+            "type": "integer"
+          },
+          "increment_attempt": {
+            "default": false,
+            "title": "Increment Attempt",
+            "type": "boolean"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "next_attempt_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Attempt At"
+          },
+          "phase": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Phase",
+            "type": "string"
+          },
+          "release": {
+            "default": false,
+            "title": "Release",
+            "type": "boolean"
+          },
+          "reset_attempt": {
+            "default": false,
+            "title": "Reset Attempt",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "generation",
+          "phase"
+        ],
+        "title": "SshPhaseRequest",
         "type": "object"
       },
       "SshTestRequest": {
@@ -11845,6 +12039,347 @@
         ]
       }
     },
+    "/v1/host/ssh/assignments": {
+      "get": {
+        "description": "List the calling daemon's owner's SSH connections and settings.",
+        "operationId": "get_assignments_v1_host_ssh_assignments_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Assignments V1 Host Ssh Assignments Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Assignments",
+        "tags": [
+          "ssh"
+        ]
+      }
+    },
+    "/v1/host/ssh/connections/{connection_id}/claim": {
+      "post": {
+        "description": "Lease one connection for execution; re-claiming by the same daemon renews.",
+        "operationId": "claim_connection_v1_host_ssh_connections__connection_id__claim_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SshClaimRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Claim Connection",
+        "tags": [
+          "ssh"
+        ]
+      }
+    },
+    "/v1/host/ssh/connections/{connection_id}/logs": {
+      "post": {
+        "description": "Append executor lifecycle log entries for the settings UI.",
+        "operationId": "push_logs_v1_host_ssh_connections__connection_id__logs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SshLogsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Push Logs",
+        "tags": [
+          "ssh"
+        ]
+      }
+    },
+    "/v1/host/ssh/connections/{connection_id}/phase": {
+      "post": {
+        "description": "Persist one executor phase transition (generation-checked).",
+        "operationId": "push_phase_v1_host_ssh_connections__connection_id__phase_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SshPhaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Push Phase",
+        "tags": [
+          "ssh"
+        ]
+      }
+    },
+    "/v1/host/ssh/connections/{connection_id}/register-remote-host": {
+      "post": {
+        "description": "Register the remote SSH host identity and mint its launch token.",
+        "operationId": "register_remote_host_v1_host_ssh_connections__connection_id__register_remote_host_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register Remote Host",
+        "tags": [
+          "ssh"
+        ]
+      }
+    },
+    "/v1/host/ssh/connections/{connection_id}/release-lease": {
+      "post": {
+        "description": "Drop the calling daemon's lease after durable intent superseded it.",
+        "operationId": "release_lease_v1_host_ssh_connections__connection_id__release_lease_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release Lease",
+        "tags": [
+          "ssh"
+        ]
+      }
+    },
+    "/v1/host/ssh/connections/{connection_id}/remote-host": {
+      "delete": {
+        "description": "Delete the remote SSH host row after a finished detach.",
+        "operationId": "delete_remote_host_v1_host_ssh_connections__connection_id__remote_host_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Remote Host",
+        "tags": [
+          "ssh"
+        ]
+      }
+    },
+    "/v1/host/ssh/connections/{connection_id}/remote-host-status": {
+      "get": {
+        "description": "Report whether the remote SSH host daemon is currently online.",
+        "operationId": "remote_host_status_v1_host_ssh_connections__connection_id__remote_host_status_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remote Host Status",
+        "tags": [
+          "ssh"
+        ]
+      }
+    },
     "/v1/hosts": {
       "get": {
         "description": "List all hosts owned by the authenticated user.\n\nReturns both online and offline hosts, with live runner\ninformation for online hosts.\n\n**Returns:** `{\"hosts\": [...]}` with host details \u2014 `host_id`, `name`, `owner`, `status`, `sandbox_provider`, `configured_harnesses`, and `gateway_inference` (`None` when no connected host has reported it to this replica).",
@@ -12642,6 +13177,60 @@
           }
         },
         "summary": "List Host Worktrees",
+        "tags": [
+          "hosts"
+        ]
+      },
+      "post": {
+        "description": "Create a git worktree on a host without launching a runner.\n\nWith `session_id` set, creation takes the managed auto-new-\nworktree path: the host may reuse a clean folder from its\nmanaged pool instead of creating a new one, and the returned\nfolder is leased to that session so reuse sweeps skip it. The\ncaller typically then relocates a session into the returned\nfolder via `POST /v1/hosts/{id}/runners` (whose boundary check\nadmits folders the session holds a managed claim on). Because\nsuch folders bypass the destination boundary check on launch,\nthe SOURCE repo must clear the leasing session's own\n`os_env.cwd` boundary \u2014 the same invariant the launch and\ncreate flows enforce on their worktree sources. Without\n`session_id` a plain worktree is created and left unmanaged;\nno boundary applies.\n\n**Parameters**\n\n- `body` \u2014 Source repo path, new branch, optional base ref, and optional lease-holder session id.\n\n**Returns:** `{\"worktree_path\": ..., \"branch\": ...}`.\n\n**Raises**\n\n- `HTTPException` \u2014 404 if host or session not found, 403 if not owned by caller, 409 if host is offline/unresponsive, 400 on path/branch validation, a host-reported git failure, or a source repo outside the leasing session's boundary.",
+        "operationId": "create_host_worktree_v1_hosts__host_id__worktrees_post",
+        "parameters": [
+          {
+            "description": "Host identifier, e.g. `\"host_a1b2c3d4...\"`.",
+            "in": "path",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "title": "Host Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorktreeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Host Worktree V1 Hosts  Host Id  Worktrees Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Host Worktree",
         "tags": [
           "hosts"
         ]
@@ -15947,6 +16536,50 @@
         "summary": "Update Comment",
         "tags": [
           "comments"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/git-branch": {
+      "get": {
+        "description": "Return the session workspace's current git branch, read live.\n\nThe conversation row's `git_branch` is written once at session\ncreation; this endpoint re-asks the session's host (the\n`host.stat` frame detects the branch of a directory path) so a\nbranch switched *inside* the worktree is reflected. Best-effort:\nan offline host or a non-git workspace returns the recorded value\n(or `None`) rather than erroring. When the live branch differs\nfrom the recorded one, the correction is persisted.\n\n**Returns:** `SessionGitBranchResponse` with the live branch (or the recorded one when the host can't be asked).",
+        "operationId": "get_session_git_branch_v1_sessions__session_id__git_branch_get",
+        "parameters": [
+          {
+            "description": "Session/conversation identifier, e.g. `\"conv_abc123\"`.",
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionGitBranchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session Git Branch",
+        "tags": [
+          "sessions"
         ]
       }
     },
@@ -19308,7 +19941,7 @@
     },
     "/v1/ssh/connections": {
       "get": {
-        "description": "List SSH connection profiles stored by this server.",
+        "description": "List the requesting user's SSH connection profiles.",
         "operationId": "list_ssh_connections_v1_ssh_connections_get",
         "responses": {
           "200": {
@@ -19330,7 +19963,7 @@
         ]
       },
       "put": {
-        "description": "Replace SSH connection profiles stored by this server.",
+        "description": "Replace the requesting user's SSH connection profiles.",
         "operationId": "put_ssh_connections_v1_ssh_connections_put",
         "requestBody": {
           "content": {
@@ -19466,7 +20099,7 @@
     },
     "/v1/ssh/test": {
       "post": {
-        "description": "Probe SSH connectivity from this host using a config alias.",
+        "description": "Probe SSH connectivity from the requesting user's desktop app.",
         "operationId": "test_ssh_connection_v1_ssh_test_post",
         "requestBody": {
           "content": {

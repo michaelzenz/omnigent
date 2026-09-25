@@ -347,6 +347,17 @@ _PROJECT_TOOLS = frozenset(
 # the harness type and rejects native terminal sessions.
 _SESSION_WORKSPACE_TOOLS = frozenset({"sys_session_set_workspace"})
 
+# Worktree/session-move tools. ``sys_session_create_worktree`` creates a
+# managed worktree for a new branch and relocates the session into it in
+# one shot (unbind via PATCH, then POST /v1/hosts/{id}/runners with
+# git.managed — the server creates, leases, binds, and launches
+# atomically). ``sys_session_relocate`` moves the session to an arbitrary
+# (host, folder) pair the same way, without creating anything.
+# Relocation replaces the session's runner, which is also what makes it
+# usable for native terminal harnesses.
+_SESSION_CREATE_WORKTREE_TOOLS = frozenset({"sys_session_create_worktree"})
+_SESSION_RELOCATE_TOOLS = frozenset({"sys_session_relocate"})
+
 # Grantee sentinel for an anonymous, public read-only share. Mirrors the
 # server's RESERVED_USER_PUBLIC; only specs with
 # ``agent_session_sharing: public`` may grant it (enforced in
@@ -525,6 +536,8 @@ _NATIVE_RELAY_BUILTIN_TOOLS = (
     | _SESSION_SELF_WRITE_TOOLS
     | _PROJECT_TOOLS
     | _SESSION_WORKSPACE_TOOLS
+    | _SESSION_CREATE_WORKTREE_TOOLS
+    | _SESSION_RELOCATE_TOOLS
     | _ASYNC_INBOX_TOOLS
     | _SUBAGENT_TOOLS
     | _LIST_MODELS_TOOLS
@@ -612,11 +625,15 @@ def build_native_relay_tool_schemas(spec: AgentSpec | None) -> list[_JsonObject]
         SysAgentListTool,
     )
     from omnigent.tools.builtins.list_comments import ListCommentsTool
+    from omnigent.tools.builtins.session_create_worktree import (
+        SysSessionCreateWorktreeTool,
+    )
     from omnigent.tools.builtins.session_project import (
         SysProjectCreateTool,
         SysProjectListTool,
         SysSessionSetProjectTool,
     )
+    from omnigent.tools.builtins.session_relocate import SysSessionRelocateTool
     from omnigent.tools.builtins.spawn import (
         SysSessionGetHistoryTool,
         SysSessionGetInfoTool,
@@ -663,6 +680,8 @@ def build_native_relay_tool_schemas(spec: AgentSpec | None) -> list[_JsonObject]
             SysProjectCreateTool,
             SysProjectListTool,
             SysSessionSetProjectTool,
+            SysSessionCreateWorktreeTool,
+            SysSessionRelocateTool,
             SysAgentGetTool,
             SysAgentListTool,
             SysAgentDownloadTool,
@@ -1003,6 +1022,8 @@ _ALL_LOCAL_TOOLS = (
     | _SESSION_SELF_WRITE_TOOLS
     | _PROJECT_TOOLS
     | _SESSION_WORKSPACE_TOOLS
+    | _SESSION_CREATE_WORKTREE_TOOLS
+    | _SESSION_RELOCATE_TOOLS
     | _WEB_FETCH_TOOLS
     | _CONVERSATION_SEARCH_TOOLS
     | _EXPORT_AGENT_TOOLS
@@ -5855,6 +5876,240 @@ async def _set_current_session_workspace_via_rest(
     return json.dumps(payload)
 
 
+async def _create_worktree_and_relocate_via_rest(
+    args: _JsonObject,
+    conversation_id: str | None,
+    server_client: httpx.AsyncClient | None,
+) -> str:
+    """Create a managed worktree and relocate the session into it.
+
+    One logical operation via two REST calls: unbind the current runner,
+    then launch on the target host with ``git: {branch_name,
+    base_branch, managed: true}`` — the server creates the managed
+    (auto-new-worktree) worktree for the target branch, leased to this
+    session, and atomically binds + launches the fresh runner inside it,
+    recording the branch on the session row.
+    """
+    if server_client is None:
+        return json.dumps({"error": "sys_session_create_worktree requires server access"})
+    if conversation_id is None:
+        return json.dumps({"error": "sys_session_create_worktree requires a session id"})
+    host = args.get("host")
+    parent_folder = args.get("parent_folder")
+    target_branch = args.get("target_branch")
+    if not isinstance(host, str) or not host.strip():
+        return json.dumps({"error": "sys_session_create_worktree requires a non-empty 'host'"})
+    if not isinstance(parent_folder, str) or not parent_folder.strip():
+        return json.dumps(
+            {"error": "sys_session_create_worktree requires a non-empty 'parent_folder'"}
+        )
+    if not isinstance(target_branch, str) or not target_branch.strip():
+        return json.dumps(
+            {"error": "sys_session_create_worktree requires a non-empty 'target_branch'"}
+        )
+    git_options: dict[str, Any] = {
+        "branch_name": target_branch.strip(),
+        "managed": True,
+    }
+    parent_branch = args.get("parent_branch")
+    if parent_branch is not None:
+        if not isinstance(parent_branch, str) or not parent_branch.strip():
+            return json.dumps(
+                {"error": "sys_session_create_worktree requires a non-empty 'parent_branch'"}
+            )
+        git_options["base_branch"] = parent_branch.strip()
+    ok, error = await _unbind_session_runner_via_rest(conversation_id, server_client)
+    if not ok:
+        return error
+    try:
+        # The launch endpoint validates the parent folder (exists, agent
+        # boundary), creates the managed worktree, and binds + launches
+        # atomically. A lost race or failed launch leaves the session
+        # unbound — the state field tells the agent it can retry.
+        launch = await server_client.post(
+            f"/v1/hosts/{quote(host.strip(), safe='')}/runners",
+            json={
+                "session_id": conversation_id,
+                "workspace": parent_folder.strip(),
+                "git": git_options,
+            },
+            timeout=300.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps(
+            {
+                "error": f"sys_session_create_worktree launch failed: {exc}",
+                "state": _UNBOUND_RETRY_STATE,
+            }
+        )
+    if launch.status_code >= 400:
+        return json.dumps(
+            {
+                "error": f"sys_session_create_worktree launch returned {launch.status_code}",
+                "detail": launch.text[:200],
+                "state": _UNBOUND_RETRY_STATE,
+            }
+        )
+    try:
+        payload = launch.json()
+    except ValueError as exc:
+        return json.dumps(
+            {
+                "error": f"sys_session_create_worktree returned invalid JSON: {exc}",
+                "state": _UNBOUND_RETRY_STATE,
+            }
+        )
+    if not isinstance(payload, dict):
+        return json.dumps(
+            {
+                "error": "sys_session_create_worktree returned a non-object response",
+                "state": _UNBOUND_RETRY_STATE,
+            }
+        )
+    result: dict[str, Any] = {
+        "relocated": True,
+        "host": host.strip(),
+        "runner_id": payload.get("runner_id"),
+        "status": payload.get("status"),
+    }
+    # The launch response does not carry the created worktree — fetch the
+    # session snapshot so the agent learns where it landed (and the
+    # branch) without a second tool call. Best-effort: a failed read
+    # doesn't undo a successful move.
+    try:
+        snapshot = await server_client.get(
+            f"/v1/sessions/{conversation_id}",
+            timeout=30.0,
+        )
+        if snapshot.status_code < 400:
+            snap_payload = snapshot.json()
+            if isinstance(snap_payload, dict):
+                result["workspace"] = snap_payload.get("workspace")
+                result["branch"] = snap_payload.get("git_branch")
+    except Exception:  # noqa: BLE001 — best-effort enrichment only
+        pass
+    return json.dumps(result)
+
+
+
+async def _unbind_session_runner_via_rest(
+    conversation_id: str,
+    server_client: httpx.AsyncClient,
+) -> tuple[bool, str]:
+    """Drop the current session's runner binding ahead of a relocation.
+
+    Shared by ``sys_session_relocate`` and ``sys_session_create_worktree``.
+    ``runner_id: ""`` is the clear sentinel; the model override is
+    host-bound (its catalog depends on that machine's credentials), so it
+    is cleared alongside the binding exactly like the web UI's switch-host
+    dialog — whose only server-side clear path is the ``default`` alias
+    (explicit JSON null is a no-op there). ``silent`` keeps the change off
+    the transcript.
+
+    :returns: ``(ok, error_json_or_empty)`` — ``ok=False`` carries the
+        ready-to-return error payload.
+    """
+    try:
+        unbind = await server_client.patch(
+            f"/v1/sessions/{conversation_id}",
+            json={"runner_id": "", "model_override": "default", "silent": True},
+            timeout=30.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, json.dumps({"error": f"session unbind failed: {exc}"})
+    if unbind.status_code >= 400:
+        return False, json.dumps(
+            {
+                "error": f"session unbind returned {unbind.status_code}",
+                "detail": unbind.text[:200],
+            }
+        )
+    return True, ""
+
+
+_UNBOUND_RETRY_STATE = "unbound — retry the tool call to complete the move"
+
+
+async def _relocate_session_via_rest(
+    args: _JsonObject,
+    conversation_id: str | None,
+    server_client: httpx.AsyncClient | None,
+) -> str:
+    """Relocate the current session via unbind + relaunch on the target host.
+
+    Mirrors the web UI's switch-host flow: drop the runner binding (and
+    the host-bound model override, silently), then launch a fresh runner
+    bound to the session at the target folder on the target host. Chat
+    history lives server-side, so the move preserves it.
+    """
+    if server_client is None:
+        return json.dumps({"error": "sys_session_relocate requires server access"})
+    if conversation_id is None:
+        return json.dumps({"error": "sys_session_relocate requires a session id"})
+    host = args.get("host")
+    folder = args.get("folder")
+    if not isinstance(host, str) or not host.strip():
+        return json.dumps({"error": "sys_session_relocate requires a non-empty 'host'"})
+    if not isinstance(folder, str) or not folder.strip():
+        return json.dumps({"error": "sys_session_relocate requires a non-empty 'folder'"})
+    host = host.strip()
+    folder = folder.strip()
+    ok, error = await _unbind_session_runner_via_rest(conversation_id, server_client)
+    if not ok:
+        return error
+    try:
+        # Step 2: launch a runner on the target host at the target folder.
+        # The endpoint validates the folder (exists, agent boundary) and
+        # binds atomically, so a lost race or a failed launch leaves the
+        # session unbound — the error tells the agent it can retry the
+        # launch alone via the same tool call.
+        launch = await server_client.post(
+            f"/v1/hosts/{quote(host, safe='')}/runners",
+            json={"session_id": conversation_id, "workspace": folder},
+            timeout=90.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps(
+            {
+                "error": f"sys_session_relocate launch failed: {exc}",
+                "state": "unbound — retry sys_session_relocate to complete the move",
+            }
+        )
+    if launch.status_code >= 400:
+        return json.dumps(
+            {
+                "error": f"sys_session_relocate launch returned {launch.status_code}",
+                "detail": launch.text[:200],
+                "state": "unbound — retry sys_session_relocate to complete the move",
+            }
+        )
+    try:
+        payload = launch.json()
+    except ValueError as exc:
+        return json.dumps(
+            {
+                "error": f"sys_session_relocate returned invalid JSON: {exc}",
+                "state": "unbound — retry sys_session_relocate to complete the move",
+            }
+        )
+    if not isinstance(payload, dict):
+        return json.dumps(
+            {
+                "error": "sys_session_relocate returned a non-object response",
+                "state": "unbound — retry sys_session_relocate to complete the move",
+            }
+        )
+    return json.dumps(
+        {
+            "relocated": True,
+            "host": host,
+            "folder": folder,
+            "runner_id": payload.get("runner_id"),
+            "status": payload.get("status"),
+        }
+    )
+
+
 async def _collect_sub_agents(
     conversation_id: str,
     server_client: httpx.AsyncClient,
@@ -6522,6 +6777,18 @@ async def execute_tool(
                 conversation_id,
                 server_client,
                 set_live_session_workspace=set_live_session_workspace,
+            )
+        elif tool_name in _SESSION_CREATE_WORKTREE_TOOLS:
+            output = await _create_worktree_and_relocate_via_rest(
+                args,
+                conversation_id,
+                server_client,
+            )
+        elif tool_name in _SESSION_RELOCATE_TOOLS:
+            output = await _relocate_session_via_rest(
+                args,
+                conversation_id,
+                server_client,
             )
         elif tool_name in _SESSION_QUERY_TOOLS:
             output = await _execute_session_query_tool(

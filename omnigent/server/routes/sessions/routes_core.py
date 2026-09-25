@@ -682,6 +682,7 @@ def register_core_routes(
                 auto_fetch_base=body.git.auto_fetch_base,
                 existing_branch=body.git.existing_branch,
                 auto_create=body.git.auto_create,
+                managed=body.git.managed,
                 initial_prompt=initial_prompt,
                 user_id=user_id,
                 conversation_store=conversation_store,

@@ -9822,6 +9822,7 @@ def _spawn_worktree_creation_task(
     auto_fetch_base: bool,
     existing_branch: bool = False,
     auto_create: bool = False,
+    managed: bool = False,
     initial_prompt: str | None = None,
     user_id: str | None,
     conversation_store: ConversationStore,
@@ -9858,6 +9859,7 @@ def _spawn_worktree_creation_task(
             auto_fetch_base=auto_fetch_base,
             existing_branch=existing_branch,
             auto_create=auto_create,
+            managed=managed,
             initial_prompt=initial_prompt,
             user_id=user_id,
             conversation_store=conversation_store,
@@ -9905,6 +9907,7 @@ async def _run_worktree_creation(
     auto_fetch_base: bool,
     existing_branch: bool = False,
     auto_create: bool = False,
+    managed: bool = False,
     initial_prompt: str | None = None,
     user_id: str | None,
     conversation_store: ConversationStore,
@@ -9962,12 +9965,12 @@ async def _run_worktree_creation(
     if host_conn is None:
         _publish_worktree_status(session_id, "failed", branch=branch_name, error="host is offline")
         return
-    if auto_create and not host_conn.hello.managed_worktree_leases:
+    if (auto_create or managed) and not host_conn.hello.managed_worktree_leases:
         _publish_worktree_status(
             session_id,
             "failed",
             branch=branch_name,
-            error="host must be upgraded before auto worktree creation can be used",
+            error="host must be upgraded before managed worktree creation can be used",
         )
         return
 
@@ -9976,7 +9979,9 @@ async def _run_worktree_creation(
 
     try:
         auto_options: dict[str, Any] = (
-            {"auto_reuse": True, "session_id": session_id} if auto_create else {}
+            {"auto_reuse": True, "session_id": session_id}
+            if (auto_create or managed)
+            else {}
         )
         created = await create_worktree_on_host(
             host_registry=host_registry,

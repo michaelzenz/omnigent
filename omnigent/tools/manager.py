@@ -39,9 +39,11 @@ from omnigent.tools.builtins import (
     SysScheduledTaskUpdateTool,
     SysSessionCloseTool,
     SysSessionCreateTool,
+    SysSessionCreateWorktreeTool,
     SysSessionGetHistoryTool,
     SysSessionGetInfoTool,
     SysSessionListTool,
+    SysSessionRelocateTool,
     SysSessionRenameTool,
     SysSessionSendTool,
     SysSessionSetProjectTool,
@@ -529,6 +531,13 @@ class ToolManager:
         self._tools[SysProjectCreateTool.name()] = SysProjectCreateTool()
         self._tools[SysProjectListTool.name()] = SysProjectListTool()
         self._tools[SysSessionSetProjectTool.name()] = SysSessionSetProjectTool()
+        # Worktree creation and relocation only mutate host/session state
+        # through REST endpoints, so they are available to every harness.
+        # Relocation relaunches the runner, which is also what makes it
+        # usable for native terminal harnesses (their process cwd cannot
+        # change in place, but a fresh runner starts at the new folder).
+        self._tools[SysSessionCreateWorktreeTool.name()] = SysSessionCreateWorktreeTool()
+        self._tools[SysSessionRelocateTool.name()] = SysSessionRelocateTool()
         from omnigent.execution_targets import is_omniharness_spec
 
         if is_omniharness_spec(self._spec):

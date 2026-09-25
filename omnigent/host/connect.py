@@ -99,6 +99,7 @@ from omnigent.host.frames import (
 from omnigent.host.git_worktree import (
     WorktreeError,
     acquire_auto_worktree_streaming,
+    check_auto_worktree_lease,
     create_worktree_streaming,
     grant_auto_worktree_lease,
     list_worktrees,
@@ -3676,6 +3677,25 @@ class HostProcess:
         self,
         frame: HostWorktreeLeaseFrame,
     ) -> HostWorktreeLeaseResultFrame:
+        if frame.op == "check":
+            try:
+                result = await asyncio.to_thread(
+                    check_auto_worktree_lease,
+                    worktree_path=frame.worktree_path,
+                    session_id=frame.session_id,
+                )
+            except (OSError, ValueError) as exc:
+                return HostWorktreeLeaseResultFrame(
+                    request_id=frame.request_id,
+                    status="failed",
+                    error=str(exc),
+                )
+            return HostWorktreeLeaseResultFrame(
+                request_id=frame.request_id,
+                status="ok",
+                valid=bool(result.get("valid")),
+                managed=bool(result.get("managed")),
+            )
         if frame.op == "grant":
             try:
                 granted = await asyncio.to_thread(

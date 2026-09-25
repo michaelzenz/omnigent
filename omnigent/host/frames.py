@@ -673,12 +673,13 @@ class HostListWorktreesResultFrame:
 
 @dataclass
 class HostWorktreeLeaseFrame:
-    """Server → host: grant, renew, or release a managed worktree lease.
+    """Server → host: check, grant, renew, or release a managed worktree lease.
 
-    ``op`` is ``"grant"`` (bind the session's lease at the folder's current
-    seq), ``"renew"`` (validate against the folder's seq and extend), or
-    ``"release"`` (drop the session's lease). ``worktree_path`` is ignored
-    for ``"release"``.
+    ``op`` is ``"check"`` (read-only: is the folder managed and does the
+    session hold a valid claim), ``"grant"`` (bind the session's lease at
+    the folder's current seq), ``"renew"`` (validate against the folder's
+    seq and extend), or ``"release"`` (drop the session's lease).
+    ``worktree_path`` is ignored for ``"release"``.
     """
 
     request_id: str
@@ -692,12 +693,13 @@ class HostWorktreeLeaseFrame:
 class HostWorktreeLeaseResultFrame:
     """Host → server: managed worktree lease op outcome.
 
-    ``valid``/``managed`` answer the renew op: ``managed=False`` means the
-    session does not participate in the managed-worktree model (plain
-    folder); ``valid=False, managed=True`` means the folder was reassigned
-    and the session must relocate. For release, ``released`` reports
-    whether a lease was removed, ``managed`` whether the folder is
-    managed, and ``folder_free`` whether no unexpired claims remain.
+    ``valid``/``managed`` answer the renew and check ops: ``managed=False``
+    means the session does not participate in the managed-worktree model
+    (plain folder); ``valid=False, managed=True`` means the folder was
+    reassigned and the session must relocate (renew) or holds no claim
+    (check). For release, ``released`` reports whether a lease was
+    removed, ``managed`` whether the folder is managed, and
+    ``folder_free`` whether no unexpired claims remain.
     """
 
     request_id: str

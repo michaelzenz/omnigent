@@ -33,6 +33,7 @@ from omnigent.host.frames import (
     HostLaunchRunnerFrame,
     HostRemoveWorktreeFrame,
     HostStatFrame,
+    HostWorktreeLeaseFrame,
     decode_host_frame,
 )
 from omnigent.runtime.agent_cache import AgentCache
@@ -103,11 +104,14 @@ class _HostCapture:
     :param launch: ``host.launch_runner`` frames received.
     :param remove: ``host.remove_worktree`` frames received (a non-empty
         list proves the rollback path fired).
+    :param leases: ``host.worktree_lease`` frames received (the launch
+        path's managed-folder boundary probe).
     """
 
     create: list[HostCreateWorktreeFrame] = field(default_factory=list)
     launch: list[HostLaunchRunnerFrame] = field(default_factory=list)
     remove: list[HostRemoveWorktreeFrame] = field(default_factory=list)
+    leases: list[HostWorktreeLeaseFrame] = field(default_factory=list)
 
 
 # register(*, create_status=, create_error=, launch_status=) -> _HostCapture
@@ -143,6 +147,9 @@ async def register_host(
         create_error: str | None = None,
         launch_status: str = "launched",
         managed_worktree_leases: bool = False,
+        lease_managed: bool = True,
+        lease_claim: bool = True,
+        lease_status: str = "ok",
     ) -> _HostCapture:
         HostStore(db_uri).upsert_on_connect(_HOST_ID, "wt-host", RESERVED_USER_LOCAL)
         conn = app.state.host_registry.register(
@@ -211,6 +218,21 @@ async def register_host(
                                     "runner_from_host" if launch_status == "launched" else None
                                 ),
                                 "error": None if launch_status == "launched" else "boom",
+                            }
+                        )
+                elif isinstance(frame, HostWorktreeLeaseFrame):
+                    cap.leases.append(frame)
+                    fut = conn.pending_worktree_leases.pop(frame.request_id, None)
+                    if fut is not None and not fut.done():
+                        fut.set_result(
+                            {
+                                "status": lease_status,
+                                # check op: managed = folder is a registered
+                                # managed worktree; valid = the requesting
+                                # session holds an unexpired claim on it.
+                                "valid": lease_claim,
+                                "managed": lease_managed,
+                                "error": None if lease_status == "ok" else "host lease error",
                             }
                         )
                 elif isinstance(frame, HostRemoveWorktreeFrame):
@@ -553,3 +575,431 @@ async def test_launch_runner_auto_create_requires_lease_capable_host(
 
     assert resp.status_code == 400, resp.text
     assert "upgraded" in resp.json()["detail"]
+
+
+async def test_launch_runner_boundary_admits_managed_worktree(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The W6 boundary check admits managed worktree folders the session
+    already holds a claim on.
+
+    Relocation into an Omnigent-created auto worktree must work even
+    though the folder sits outside the agent's ``os_env.cwd`` boundary:
+    the launch path re-checks via the host's managed-worktree registry
+    (the read-only claim probe) and binds the canonical path. An
+    arbitrary out-of-boundary folder still fails — see the rejection
+    tests below.
+    """
+    from omnigent.server.routes import _workspace_validation
+
+    cap = register_host(managed_worktree_leases=True)
+    session_id = await _bare_session(client, "wt-carveout-agent")
+    managed_path = f"{_SOURCE_REPO}-worktrees/feature-login"
+
+    async def _boundary_reject(
+        *,
+        host_registry: object,
+        host_id: str,
+        workspace: str,
+        spec_cwd: str | None,
+        host_name_for_errors: str | None = None,
+    ) -> object:
+        """Stand in for validate_workspace: always boundary-reject."""
+        raise _workspace_validation.WorkspaceValidationError(
+            f"workspace '{workspace}' is outside the agent's required path '{spec_cwd}'",
+            reason=_workspace_validation.WorkspaceValidationError.OUTSIDE_BOUNDARY,
+        )
+
+    monkeypatch.setattr(_workspace_validation, "validate_workspace", _boundary_reject)
+
+    resp = await client.post(
+        f"/v1/hosts/{_HOST_ID}/runners",
+        json={"session_id": session_id, "workspace": managed_path},
+    )
+    assert resp.status_code == 200, resp.text
+    # The carve-out probed the host's registry exactly once (read-only
+    # check op) and bound the canonical (echoed) worktree path — the
+    # launch frame carries it too.
+    assert len(cap.leases) == 1
+    assert cap.leases[0].worktree_path == managed_path
+    assert cap.leases[0].op == "check"
+    assert len(cap.launch) == 1
+    assert cap.launch[0].workspace == managed_path
+    conv = SqlAlchemyConversationStore(db_uri).get_conversation(session_id)
+    assert conv is not None
+    assert conv.workspace == managed_path
+
+
+async def test_launch_runner_boundary_still_rejects_plain_folder(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-managed folder outside the boundary is still a 400.
+
+    The carve-out must stay an Omnigent-worktree-only allowance: when the
+    host's registry does not know the folder (lease grant replies
+    managed=False), the boundary rejection stands.
+    """
+    from omnigent.server.routes import _workspace_validation
+
+    cap = register_host(managed_worktree_leases=True, lease_managed=False)
+    session_id = await _bare_session(client, "wt-carveout-plain-agent")
+
+    async def _boundary_reject(
+        *,
+        host_registry: object,
+        host_id: str,
+        workspace: str,
+        spec_cwd: str | None,
+        host_name_for_errors: str | None = None,
+    ) -> object:
+        """Stand in for validate_workspace: always boundary-reject."""
+        raise _workspace_validation.WorkspaceValidationError(
+            f"workspace '{workspace}' is outside the agent's required path '{spec_cwd}'",
+            reason=_workspace_validation.WorkspaceValidationError.OUTSIDE_BOUNDARY,
+        )
+
+    monkeypatch.setattr(_workspace_validation, "validate_workspace", _boundary_reject)
+
+    resp = await client.post(
+        f"/v1/hosts/{_HOST_ID}/runners",
+        json={"session_id": session_id, "workspace": "/etc"},
+    )
+    assert resp.status_code == 400, resp.text
+    assert "outside the agent's required path" in resp.json()["detail"]
+    # The probe ran (host advertises leases) but the folder is not managed.
+    assert len(cap.leases) == 1
+
+
+async def test_launch_runner_boundary_no_probe_without_leases(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A host without managed-worktree leases never probes — plain 400."""
+    from omnigent.server.routes import _workspace_validation
+
+    cap = register_host()  # default hello: managed_worktree_leases=False
+    session_id = await _bare_session(client, "wt-carveout-old-host-agent")
+
+    async def _boundary_reject(
+        *,
+        host_registry: object,
+        host_id: str,
+        workspace: str,
+        spec_cwd: str | None,
+        host_name_for_errors: str | None = None,
+    ) -> object:
+        """Stand in for validate_workspace: always boundary-reject."""
+        raise _workspace_validation.WorkspaceValidationError(
+            f"workspace '{workspace}' is outside the agent's required path '{spec_cwd}'",
+            reason=_workspace_validation.WorkspaceValidationError.OUTSIDE_BOUNDARY,
+        )
+
+    monkeypatch.setattr(_workspace_validation, "validate_workspace", _boundary_reject)
+
+    resp = await client.post(
+        f"/v1/hosts/{_HOST_ID}/runners",
+        json={"session_id": session_id, "workspace": f"{_SOURCE_REPO}-worktrees/x"},
+    )
+    assert resp.status_code == 400, resp.text
+    assert "outside the agent's required path" in resp.json()["detail"]
+    assert cap.leases == [], "the probe must short-circuit on lease-incapable hosts"
+
+
+async def test_launch_runner_boundary_rejects_foreign_managed_worktree(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A managed folder the session holds NO claim on stays rejected.
+
+    The carve-out requires the requesting session's own claim (from
+    creating the folder or binding it through a managed path) — another
+    session's worktree must not become a boundary escape.
+    """
+    from omnigent.server.routes import _workspace_validation
+
+    cap = register_host(managed_worktree_leases=True, lease_claim=False)
+    session_id = await _bare_session(client, "wt-carveout-foreign-agent")
+
+    async def _boundary_reject(
+        *,
+        host_registry: object,
+        host_id: str,
+        workspace: str,
+        spec_cwd: str | None,
+        host_name_for_errors: str | None = None,
+    ) -> object:
+        """Stand in for validate_workspace: always boundary-reject."""
+        raise _workspace_validation.WorkspaceValidationError(
+            f"workspace '{workspace}' is outside the agent's required path '{spec_cwd}'",
+            reason=_workspace_validation.WorkspaceValidationError.OUTSIDE_BOUNDARY,
+        )
+
+    monkeypatch.setattr(_workspace_validation, "validate_workspace", _boundary_reject)
+
+    resp = await client.post(
+        f"/v1/hosts/{_HOST_ID}/runners",
+        json={"session_id": session_id, "workspace": f"{_SOURCE_REPO}-worktrees/other"},
+    )
+    assert resp.status_code == 400, resp.text
+    assert "outside the agent's required path" in resp.json()["detail"]
+    assert len(cap.leases) == 1
+    assert cap.launch == [], "a rejected launch must not reach the host launch frame"
+
+
+async def test_launch_runner_boundary_probe_host_failure_keeps_boundary_400(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A host-reported check failure is fail-closed: 400 with the boundary
+    message (the folder could not be confirmed as claimed)."""
+    from omnigent.server.routes import _workspace_validation
+
+    cap = register_host(managed_worktree_leases=True, lease_status="failed")
+    session_id = await _bare_session(client, "wt-carveout-probe-fail-agent")
+
+    async def _boundary_reject(
+        *,
+        host_registry: object,
+        host_id: str,
+        workspace: str,
+        spec_cwd: str | None,
+        host_name_for_errors: str | None = None,
+    ) -> object:
+        """Stand in for validate_workspace: always boundary-reject."""
+        raise _workspace_validation.WorkspaceValidationError(
+            f"workspace '{workspace}' is outside the agent's required path '{spec_cwd}'",
+            reason=_workspace_validation.WorkspaceValidationError.OUTSIDE_BOUNDARY,
+        )
+
+    monkeypatch.setattr(_workspace_validation, "validate_workspace", _boundary_reject)
+
+    resp = await client.post(
+        f"/v1/hosts/{_HOST_ID}/runners",
+        json={"session_id": session_id, "workspace": f"{_SOURCE_REPO}-worktrees/x"},
+    )
+    assert resp.status_code == 400, resp.text
+    assert "outside the agent's required path" in resp.json()["detail"]
+    assert len(cap.leases) == 1
+    assert cap.launch == []
+
+
+async def test_launch_runner_boundary_probe_unavailable_maps_to_409(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probe whose connection was replaced mid-request is a 409 — infra,
+    not a boundary verdict."""
+    from omnigent.server.routes import _workspace_validation
+
+    cap = register_host(managed_worktree_leases=True)
+    session_id = await _bare_session(client, "wt-carveout-probe-down-agent")
+
+    async def _boundary_reject_and_drop(
+        *,
+        host_registry: object,
+        host_id: str,
+        workspace: str,
+        spec_cwd: str | None,
+        host_name_for_errors: str | None = None,
+    ) -> object:
+        """Boundary-reject AND replace the host connection, so the probe's
+        captured connection is stale (send_text raises ConnectionError)."""
+        # The host row already exists (register_host upserted it); a fresh
+        # register poisons the old connection's queue and supersedes it.
+        client.app.state.host_registry.register(  # type: ignore[union-attr]
+            host_id=_HOST_ID,
+            ws=_FakeWebSocket(),  # type: ignore[arg-type]
+            hello=HostHelloFrame(
+                version="0.1.0-test",
+                frame_protocol_version=1,
+                name="wt-host",
+                managed_worktree_leases=True,
+            ),
+            owner=RESERVED_USER_LOCAL,
+        )
+        raise _workspace_validation.WorkspaceValidationError(
+            f"workspace '{workspace}' is outside the agent's required path '{spec_cwd}'",
+            reason=_workspace_validation.WorkspaceValidationError.OUTSIDE_BOUNDARY,
+        )
+
+    monkeypatch.setattr(
+        _workspace_validation,
+        "validate_workspace",
+        _boundary_reject_and_drop,  # type: ignore[arg-type]
+    )
+
+    resp = await client.post(
+        f"/v1/hosts/{_HOST_ID}/runners",
+        json={"session_id": session_id, "workspace": f"{_SOURCE_REPO}-worktrees/x"},
+    )
+    assert resp.status_code == 409, resp.text
+    assert "connection lost" in resp.json()["detail"]
+    assert cap.launch == []
+
+
+async def test_launch_runner_managed_explicit_branch_uses_pool(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """``git.managed`` with an explicit branch creates a LEASED worktree.
+
+    The sys_session_create_worktree tool path: same atomic create + bind
+    + launch as the plain git flow, but the create frame carries
+    ``auto_reuse`` + the session id, so the host may reuse a clean
+    managed folder from its pool and the folder is leased to this
+    session. The branch is the caller-supplied one (no AI naming).
+    """
+    cap = register_host(managed_worktree_leases=True)
+    session_id = await _bare_session(client, "wt-managed-branch-agent")
+
+    resp = await _launch(
+        client,
+        session_id,
+        git={"branch_name": "feature/mgd", "base_branch": "main", "managed": True},
+    )
+    assert resp.status_code == 200, resp.text
+
+    assert len(cap.create) == 1
+    assert cap.create[0].repo_path == _SOURCE_REPO
+    assert cap.create[0].branch_name == "feature/mgd"
+    assert cap.create[0].base_branch == "main"
+    assert cap.create[0].auto_reuse is True
+    assert cap.create[0].session_id == session_id
+    assert cap.remove == [], "worktree was rolled back on a successful launch"
+
+    conv = SqlAlchemyConversationStore(db_uri).get_conversation(session_id)
+    assert conv is not None
+    assert conv.workspace == f"{_SOURCE_REPO}-worktrees/feature-mgd"
+    assert conv.git_branch == "feature/mgd"
+
+
+async def test_launch_runner_relocation_releases_old_claim(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """Rebinding to a different folder releases the session's old claim.
+
+    Without this, the session's lease on its previous managed worktree
+    keeps the folder fenced out of the reuse pool until the lease's TTL
+    lapses. The UI's switch-host flow rides this same endpoint, so it
+    gets the release for free.
+    """
+    cap = register_host(managed_worktree_leases=True)
+    session_id = await _bare_session(client, "wt-relocate-release-agent")
+    old_ws = f"{_SOURCE_REPO}-worktrees/old-task"
+    conv_store = SqlAlchemyConversationStore(db_uri)
+    conv_store.set_host_id(session_id, _HOST_ID, old_ws, "old-task-branch")
+
+    resp = await _launch(client, session_id)  # different workspace: _SOURCE_REPO
+    assert resp.status_code == 200, resp.text
+
+    release_frames = [f for f in cap.leases if f.op == "release"]
+    assert len(release_frames) == 1, (
+        f"expected exactly one release frame, got {[f.op for f in cap.leases]}"
+    )
+    # The launch itself still happened.
+    assert len(cap.launch) == 1
+    conv = SqlAlchemyConversationStore(db_uri).get_conversation(session_id)
+    assert conv is not None
+    assert conv.workspace == _SOURCE_REPO
+
+
+async def test_launch_runner_same_workspace_keeps_claim(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """Re-launching at the SAME folder does not release the claim.
+
+    A runner recovery / re-bind to the folder the session still occupies
+    must not drop its claim — the folder would briefly rejoin the reuse
+    pool while the session still lives in it.
+    """
+    cap = register_host(managed_worktree_leases=True)
+    session_id = await _bare_session(client, "wt-same-folder-agent")
+    SqlAlchemyConversationStore(db_uri).set_host_id(
+        session_id, _HOST_ID, _SOURCE_REPO, None
+    )
+
+    resp = await _launch(client, session_id)  # same workspace: _SOURCE_REPO
+    assert resp.status_code == 200, resp.text
+    assert cap.leases == [], "same-folder re-launch must not touch the lease"
+    assert len(cap.launch) == 1
+
+
+async def test_launch_runner_cross_host_release_is_best_effort(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """A cross-host move attempts the release on the OLD host only.
+
+    The old host here is not connected (offline), so the release is
+    skipped silently — the move still succeeds and the stale lease
+    self-expires.
+    """
+    cap = register_host(managed_worktree_leases=True)
+    session_id = await _bare_session(client, "wt-cross-host-agent")
+    other_host_id = "0aa98877665544332211ffeeddccbbaa"
+    SqlAlchemyConversationStore(db_uri).set_host_id(
+        session_id, other_host_id, "/Users/alice/other-host-folder", None
+    )
+
+    resp = await _launch(client, session_id)  # target: _HOST_ID, different folder
+    assert resp.status_code == 200, resp.text
+    # Nothing was sent to the NEW host's registry for the old claim, and
+    # the launch succeeded despite the old host being unreachable.
+    assert cap.leases == []
+    assert len(cap.launch) == 1
+    conv = SqlAlchemyConversationStore(db_uri).get_conversation(session_id)
+    assert conv is not None
+    assert conv.host_id == _HOST_ID
+
+
+async def test_launch_runner_managed_creation_keeps_new_claim(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """Managed creation from an existing workspace does NOT release the claim.
+
+    The session was living in a managed worktree; creating a new one
+    (git.managed) re-points its single lease record to the new folder,
+    which already vacates the old one. A release here would instead drop
+    the NEW folder's claim — exactly wrong.
+    """
+    cap = register_host(managed_worktree_leases=True)
+    session_id = await _bare_session(client, "wt-managed-no-release-agent")
+    old_ws = f"{_SOURCE_REPO}-worktrees/first-task"
+    SqlAlchemyConversationStore(db_uri).set_host_id(session_id, _HOST_ID, old_ws, "first-task")
+
+    resp = await _launch(
+        client,
+        session_id,
+        git={"branch_name": "second-task", "base_branch": "main", "managed": True},
+    )
+    assert resp.status_code == 200, resp.text
+    # The create frame ran (auto_reuse + session lease) but no release
+    # frame: the acquire's grant superseded the old claim already.
+    assert len(cap.create) == 1
+    assert cap.create[0].auto_reuse is True
+    assert cap.create[0].session_id == session_id
+    assert cap.leases == [], (
+        f"managed creation must not release — got {[f.op for f in cap.leases]}"
+    )
+    assert len(cap.launch) == 1
+    conv = SqlAlchemyConversationStore(db_uri).get_conversation(session_id)
+    assert conv is not None
+    assert conv.workspace == f"{_SOURCE_REPO}-worktrees/second-task"
+    assert conv.git_branch == "second-task"

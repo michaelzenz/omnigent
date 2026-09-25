@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -51,6 +52,7 @@ from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.auth import AuthProvider
 from omnigent.server.feature_flags import Feature, FeatureFlags, resolve_feature_flags
 from omnigent.server.host_registry import HostConnection, HostRegistry
+from omnigent.server.permissions import LEVEL_OWNER, check_session_access
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.server.routes._host_launch import (
     host_absent_error,
@@ -58,6 +60,7 @@ from omnigent.server.routes._host_launch import (
     use_server_inference_proxy,
 )
 from omnigent.server.routes._workspace_validation import (
+    WorkspaceValidationError,
     _is_windows_absolute_path,
     restore_host_filesystem_url_path,
 )
@@ -480,6 +483,103 @@ class LaunchRunnerRequest(BaseModel):
     git: SessionGitOptions | None = None
 
 
+async def _canonical_managed_worktree_path(
+    *,
+    host_registry: HostRegistry,
+    host_conn: HostConnection,
+    workspace: str,
+    session_id: str,
+    ask_host_stat: Callable[..., Awaitable[dict[str, Any]]],
+) -> str | None:
+    """Canonicalize a workspace and confirm the session's claim on it with
+    the host's managed-worktree registry; ``None`` when not confirmed.
+
+    Used by the runner-launch boundary carve-out: a managed folder the
+    session already holds a claim on (it created the folder, or bound it
+    through a managed path) is part of the sandboxed worktree workflow,
+    not an escape hatch — a folder the session has no claim on is
+    rejected even if it is managed, so one agent's worktrees cannot be
+    used to move another agent past its boundary.
+
+    Read-only on the host (``op="check"``): no claim is created or
+    extended. The bind flow grants the claim where its mode calls for it.
+
+    :raises WorktreeHostUnavailableError: When the probe round-trip
+        fails (timeout / dropped tunnel) — infra, mapped to 409 by the
+        caller rather than masked as a boundary violation.
+    """
+    from omnigent.server.routes._host_worktree import (
+        WorktreeHostUnavailableError,
+        WorktreeProxyError,
+        worktree_lease_on_host,
+    )
+
+    # Canonicalize first — the registry keys on absolute paths, while the
+    # caller may pass a tilde path (the host is the only ~ expander). Stat
+    # failure here is a rare between-checks race (the boundary check just
+    # statted the path successfully), treated as not-confirmed.
+    try:
+        stat = await ask_host_stat(
+            host_registry=host_registry,
+            host_conn=host_conn,
+            path=workspace,
+        )
+    except WorkspaceValidationError:
+        return None
+    if not stat.get("exists") or stat.get("type") != "directory":
+        return None
+    canonical = stat.get("canonical_path")
+    if not isinstance(canonical, str) or not canonical:
+        return None
+    try:
+        result = await worktree_lease_on_host(
+            host_registry=host_registry,
+            host_conn=host_conn,
+            op="check",
+            session_id=session_id,
+            worktree_path=canonical,
+        )
+    except WorktreeHostUnavailableError:
+        raise
+    except WorktreeProxyError:
+        return None
+    if result.get("managed") is True and result.get("valid") is True:
+        return canonical
+    return None
+
+
+class CreateWorktreeRequest(BaseModel):
+    """Request body for ``POST /v1/hosts/{host_id}/worktrees``.
+
+    Creates a worktree WITHOUT launching or binding a runner — the
+    caller decides what to do with the returned folder (typically
+    relocate a session into it via ``POST /v1/hosts/{id}/runners``).
+
+    With ``session_id`` set, creation goes through the managed
+    (auto new worktree) path: the host may reuse a clean folder from
+    its managed pool instead of creating a new one, and the returned
+    folder is leased to that session so other sessions' reuse sweeps
+    skip it. Without ``session_id`` a plain worktree is created and
+    left unmanaged.
+
+    :param repo_path: Absolute path inside the source repository on
+        the host, e.g. ``"/Users/alice/myrepo"``.
+    :param branch_name: New branch to create and check out, e.g.
+        ``"feature/login"``. Validated against git ref-format rules.
+    :param base_branch: Optional base ref to branch from, e.g.
+        ``"main"``. ``None`` branches from the repository's current
+        ``HEAD``.
+    :param session_id: Optional session to lease the managed worktree
+        to, e.g. ``"conv_abc123"``. Must exist and be owned by the
+        caller.
+    """
+
+    repo_path: str
+    branch_name: str
+    base_branch: str | None = None
+    session_id: str | None = None
+
+
 async def _resolve_agent_spec_cwd(
     conv: Conversation,
     agent_store: AgentStore,
@@ -785,8 +885,11 @@ def create_hosts_router(
         # test wiring); create_app always supplies one.
         workspace = body.workspace
         if agent_store is not None and agent_cache is not None:
+            from omnigent.server.routes._host_worktree import (
+                WorktreeHostUnavailableError,
+            )
             from omnigent.server.routes._workspace_validation import (
-                WorkspaceValidationError,
+                _ask_host_stat,
                 validate_workspace,
             )
 
@@ -801,7 +904,23 @@ def create_hosts_router(
                 )
                 workspace = workspace_result.canonical_path
             except WorkspaceValidationError as exc:
-                raise HTTPException(status_code=400, detail=exc.message) from exc
+                if exc.reason != WorkspaceValidationError.OUTSIDE_BOUNDARY:
+                    raise HTTPException(status_code=400, detail=exc.message) from exc
+                if not conn.hello.managed_worktree_leases or target.conv.runner_id is not None:
+                    raise HTTPException(status_code=400, detail=exc.message) from exc
+                try:
+                    canonical = await _canonical_managed_worktree_path(
+                        host_registry=host_registry,
+                        host_conn=conn,
+                        workspace=body.workspace,
+                        session_id=body.session_id,
+                        ask_host_stat=_ask_host_stat,
+                    )
+                except WorktreeHostUnavailableError as probe_exc:
+                    raise HTTPException(status_code=409, detail=probe_exc.message) from probe_exc
+                if canonical is None:
+                    raise HTTPException(status_code=400, detail=exc.message) from exc
+                workspace = canonical
         else:
             _logger.warning(
                 "launch_runner: workspace boundary validation skipped for "
@@ -859,6 +978,14 @@ def create_hosts_router(
                 except WorktreeError as exc:
                     raise HTTPException(status_code=400, detail=exc.message) from exc
 
+                if body.git.managed and not conn.hello.managed_worktree_leases:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "host must be upgraded before managed worktree creation can be used"
+                        ),
+                    )
+
             if body.git.existing_worktree:
                 # Binding to a pre-existing worktree: no worktree is created,
                 # but record its branch so the sidebar shows it and the opt-in
@@ -872,10 +999,9 @@ def create_hosts_router(
                 )
 
                 try:
+                    managed = body.git.auto_create or body.git.managed
                     auto_options: dict[str, Any] = (
-                        {"auto_reuse": True, "session_id": body.session_id}
-                        if body.git.auto_create
-                        else {}
+                        {"auto_reuse": True, "session_id": body.session_id} if managed else {}
                     )
                     worktree = await create_worktree_on_host(
                         host_registry=host_registry,
@@ -1017,6 +1143,40 @@ def create_hosts_router(
                     body.session_id,
                     workspace,
                     exc,
+                )
+
+        # Relocation: release the session's claim on the workspace it just
+        # moved AWAY from. Without this, the old managed folder stays
+        # fenced out of the reuse pool until the lease's TTL lapses.
+        #
+        # Skipped when this launch itself (re)granted the claim on the new
+        # workspace — managed/auto_create creation and existing_worktree
+        # binds overwrite the session's single lease record with the new
+        # folder, which already vacates the old one; releasing here would
+        # instead drop the NEW folder's claim. Same for a re-launch at the
+        # SAME folder (runner recovery via this endpoint). Cross-host moves
+        # always release: the old host's lease record is independent of
+        # whatever the new host granted. The PATCH-unbind that precedes
+        # relocation does NOT release — /clear and /switch use it without
+        # moving the session. Best-effort: the old host may be offline or
+        # on another replica; the lease self-expires.
+        _old_host_id = target.conv.host_id
+        if _old_host_id is not None:
+            _same_host = _old_host_id == host_id
+            _granted_here = body.git is not None and (
+                body.git.auto_create or body.git.managed or body.git.existing_worktree
+            )
+            if not _same_host or (
+                target.conv.workspace != workspace and not (_same_host and _granted_here)
+            ):
+                from omnigent.server.routes._host_worktree import (
+                    release_session_worktree_claim_best_effort as _release_claim,
+                )
+
+                await _release_claim(
+                    host_registry=host_registry,
+                    host_id=_old_host_id,
+                    session_id=body.session_id,
                 )
 
         request_id = secrets.token_hex(8)
@@ -1671,6 +1831,195 @@ def create_hosts_router(
             "object": "list",
             "data": worktrees,
             "auto_worktrees_supported": conn.hello.managed_worktree_leases,
+        }
+
+    @router.post("/hosts/{host_id}/worktrees")
+    async def create_host_worktree(
+        request: Request,
+        host_id: str,
+        body: CreateWorktreeRequest,
+    ) -> dict[str, Any]:
+        """
+        Create a git worktree on a host without launching a runner.
+
+        With ``session_id`` set, creation takes the managed auto-new-
+        worktree path: the host may reuse a clean folder from its
+        managed pool instead of creating a new one, and the returned
+        folder is leased to that session so reuse sweeps skip it. The
+        caller typically then relocates a session into the returned
+        folder via ``POST /v1/hosts/{id}/runners`` (whose boundary check
+        admits folders the session holds a managed claim on). Because
+        such folders bypass the destination boundary check on launch,
+        the SOURCE repo must clear the leasing session's own
+        ``os_env.cwd`` boundary — the same invariant the launch and
+        create flows enforce on their worktree sources. Without
+        ``session_id`` a plain worktree is created and left unmanaged;
+        no boundary applies.
+
+        :param request: FastAPI request (for auth).
+        :param host_id: Host identifier, e.g. ``"host_a1b2c3d4..."``.
+        :param body: Source repo path, new branch, optional base ref,
+            and optional lease-holder session id.
+        :returns: ``{"worktree_path": ..., "branch": ...}``.
+        :raises HTTPException: 404 if host or session not found, 403
+            if not owned by caller, 409 if host is offline/unresponsive,
+            400 on path/branch validation, a host-reported git failure,
+            or a source repo outside the leasing session's boundary.
+        """
+        from omnigent.host.git_worktree import WorktreeError, validate_branch_name
+        from omnigent.server.routes._host_worktree import (
+            WorktreeHostUnavailableError,
+            WorktreeProxyError,
+            create_worktree_on_host,
+        )
+        from omnigent.server.routes._workspace_validation import (
+            WorkspaceValidationError,
+            _ask_host_stat,
+        )
+
+        user_id = require_user(request, auth_provider)
+
+        host = await asyncio.to_thread(host_store.get_host, host_id)
+        if host is None:
+            raise HTTPException(status_code=404, detail="host not found")
+        if user_id is not None and host.user_id != user_id:
+            raise HTTPException(status_code=403, detail="not your host")
+
+        if not body.repo_path.strip():
+            raise HTTPException(status_code=400, detail="repo_path must not be empty")
+        for _field_name, _value in (
+            ("repo_path", body.repo_path),
+            ("branch_name", body.branch_name),
+            ("base_branch", body.base_branch),
+            ("session_id", body.session_id),
+        ):
+            if _value is not None and "\x00" in _value:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{_field_name} must not contain NUL bytes",
+                )
+        if body.session_id is not None and not body.session_id.strip():
+            raise HTTPException(status_code=400, detail="session_id must not be empty")
+
+        conn = host_registry.get(host.host_id)
+        if conn is None:
+            raise _host_absent_error(host)
+
+        # Same server-side branch-name gate as the launch/create paths —
+        # the host runs git, so without this a malformed ref only fails
+        # after the round-trip.
+        try:
+            validate_branch_name(body.branch_name)
+        except WorktreeError as exc:
+            raise HTTPException(status_code=400, detail=exc.message) from exc
+
+        # Managed-lease gate and session checks precede any host stat so
+        # an unmanaged host (or unknown session) fails fast without the
+        # canonicalization round trip.
+        conv: Conversation | None = None
+        if body.session_id is not None:
+            if not conn.hello.managed_worktree_leases:
+                raise HTTPException(
+                    status_code=400,
+                    detail="host must be upgraded before managed worktree creation can be used",
+                )
+            conv = await asyncio.to_thread(
+                conversation_store.get_conversation, body.session_id
+            )
+            if conv is None:
+                raise HTTPException(status_code=404, detail="session not found")
+            if permission_store is not None and not check_session_access(
+                user_id,
+                body.session_id,
+                LEVEL_OWNER,
+                permission_store,
+                conversation_store,
+            ):
+                # 404 (not 403) so other users' sessions aren't enumerable.
+                raise HTTPException(status_code=404, detail="session not found")
+
+        # Canonicalize the source path on the host (tilde expansion +
+        # realpath) — the host's git code takes absolute paths only, and
+        # an agent-supplied "~/repo" would otherwise fail there.
+        # validate_workspace (managed path, agent wired) does the same
+        # stat itself, so the standalone stat only runs when the
+        # boundary check cannot.
+        use_boundary_check = (
+            conv is not None and agent_store is not None and agent_cache is not None
+        )
+        canonical_repo: str | None = None
+        if not use_boundary_check:
+            try:
+                repo_stat = await _ask_host_stat(
+                    host_registry=host_registry,
+                    host_conn=conn,
+                    path=body.repo_path,
+                )
+            except WorkspaceValidationError as exc:
+                raise HTTPException(status_code=400, detail=exc.message) from exc
+            if not repo_stat.get("exists") or repo_stat.get("type") != "directory":
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"repo_path is not a directory on host '{host.name}': {body.repo_path}"
+                    ),
+                )
+            canonical_repo = repo_stat.get("canonical_path")
+            if not isinstance(canonical_repo, str) or not canonical_repo:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"host returned no canonical path for repo_path: {body.repo_path}",
+                )
+
+        if conv is not None:
+            # Managed creation feeds the relocation carve-out in the
+            # launch path (managed folders the session holds a claim on
+            # bypass the destination boundary check there), so the SOURCE
+            # repo must clear the leasing session's own os_env.cwd
+            # boundary — the same invariant the launch and create flows
+            # enforce on their worktree sources.
+            if agent_store is not None and agent_cache is not None:
+                from omnigent.server.routes._workspace_validation import (
+                    validate_workspace,
+                )
+
+                spec_cwd = await _resolve_agent_spec_cwd(conv, agent_store, agent_cache)
+                try:
+                    validated = await validate_workspace(
+                        host_registry=host_registry,
+                        host_id=host.host_id,
+                        workspace=body.repo_path,
+                        spec_cwd=spec_cwd,
+                        host_name_for_errors=host.name,
+                    )
+                    canonical_repo = validated.canonical_path
+                except WorkspaceValidationError as exc:
+                    raise HTTPException(status_code=400, detail=exc.message) from exc
+        if canonical_repo is None:
+            # Unreachable: both branches above assign it or raise.
+            raise HTTPException(
+                status_code=400,
+                detail=f"host returned no canonical path for repo_path: {body.repo_path}",
+            )
+
+        try:
+            created = await create_worktree_on_host(
+                host_registry=host_registry,
+                host_conn=conn,
+                repo_path=canonical_repo,
+                branch_name=body.branch_name,
+                base_branch=body.base_branch,
+                auto_reuse=body.session_id is not None,
+                session_id=body.session_id,
+            )
+        except WorktreeHostUnavailableError as exc:
+            raise HTTPException(status_code=409, detail=exc.message) from exc
+        except WorktreeProxyError as exc:
+            raise HTTPException(status_code=400, detail=exc.message) from exc
+
+        return {
+            "worktree_path": created.worktree_path,
+            "branch": created.branch,
         }
 
     @router.get("/hosts/{host_id}/worktree-sizes")

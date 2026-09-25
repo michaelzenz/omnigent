@@ -936,6 +936,47 @@ def renew_auto_worktree_lease(
         return {"valid": True, "managed": True, "repo_root": lease.get("repo_root")}
 
 
+def check_auto_worktree_lease(*, worktree_path: str, session_id: str) -> dict[str, object]:
+    """Read-only probe: is the folder managed, and does the session hold a
+    valid claim on it?
+
+    Unlike :func:`grant_auto_worktree_lease` / :func:`renew_auto_worktree_lease`
+    this never creates or extends a claim — the launch path's boundary
+    carve-out uses it to confirm the requesting session already owns a
+    claim on the folder (e.g. from creating it) before admitting the
+    folder past the agent's ``os_env.cwd`` boundary.
+
+    :returns: ``{managed, valid}`` — ``managed`` says the folder is a
+        registered managed worktree; ``valid`` says the session holds an
+        unexpired lease on it at the folder's current seq.
+    """
+    now = int(time.time())
+    with _locked_auto_cache() as reg:
+        folders = cast("dict[str, dict[str, object]]", reg["folders"])
+        leases = cast("dict[str, dict[str, object]]", reg["leases"])
+        folder = folders.get(worktree_path)
+        managed = isinstance(folder, dict)
+        lease = leases.get(session_id)
+        if not managed or not isinstance(lease, dict):
+            return {"managed": managed, "valid": False}
+        if lease.get("folder") != worktree_path:
+            return {"managed": True, "valid": False}
+        seq = folder.get("seq") if isinstance(folder, dict) else None
+        lease_seq = lease.get("seq")
+        expires_at = lease.get("expires_at")
+        # Bool guards match _lease_is_active: isinstance(int) accepts
+        # bool, and a corrupted seq/expires_at must not validate.
+        valid = (
+            isinstance(lease_seq, int)
+            and not isinstance(lease_seq, bool)
+            and lease_seq == (seq if isinstance(seq, int) and not isinstance(seq, bool) else -1)
+            and isinstance(expires_at, int)
+            and not isinstance(expires_at, bool)
+            and expires_at > now
+        )
+        return {"managed": True, "valid": valid}
+
+
 def release_auto_worktree_lease(*, session_id: str) -> dict[str, object]:
     """Drop the session's lease. Returns the folder's post-release state.
 
