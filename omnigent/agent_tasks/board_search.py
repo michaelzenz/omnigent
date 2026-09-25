@@ -176,14 +176,10 @@ def search_board_tasks(
         matched_in: set[str] = set()
         if _any_token(_task_fields(task), tokens):
             matched_in.add("task")
-        item_ids = [
-            item.id for item in task_items if _any_token(_item_fields(item), tokens)
-        ]
+        item_ids = [item.id for item in task_items if _any_token(_item_fields(item), tokens)]
         if item_ids:
             matched_in.add("item")
-        asset_ids = [
-            asset.id for asset in task_assets if _any_token(_asset_fields(asset), tokens)
-        ]
+        asset_ids = [asset.id for asset in task_assets if _any_token(_asset_fields(asset), tokens)]
         if asset_ids:
             matched_in.add("asset")
         worker_ids = sorted(

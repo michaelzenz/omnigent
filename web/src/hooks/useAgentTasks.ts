@@ -146,12 +146,9 @@ export function useAgentTaskBoardSearch(query: string): UseQueryResult<AgentTask
     const tokens = tokenizeQuery(debounced);
     const matches: AgentTaskBoardMatch[] = tokens.length
       ? FIXTURE_TASK_LIST.filter((task) => {
-          const texts = [
-            task.title,
-            task.goal ?? "",
-            task.description ?? "",
-            task.id,
-          ].map((text) => text.toLowerCase());
+          const texts = [task.title, task.goal ?? "", task.description ?? "", task.id].map((text) =>
+            text.toLowerCase(),
+          );
           return tokens.every((token) => texts.some((text) => text.includes(token)));
         }).map((task) => ({
           task_id: task.id,

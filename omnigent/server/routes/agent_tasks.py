@@ -143,8 +143,9 @@ _logger = logging.getLogger(__name__)
 _VALID_TASK_STATES = frozenset(TASK_STATE)
 
 # Board search result cap: the board itself lists pending + live tasks, so a
-# few hundred matches is already an outlier; beyond the cap the oldest matches
-# are dropped and the board shows the count via its own pagination line.
+# few hundred matches is already an outlier; beyond the cap the lowest-
+# scoring matches are dropped and the board shows the count via its own
+# pagination line.
 BOARD_SEARCH_DEFAULT_LIMIT = 100
 BOARD_SEARCH_MAX_LIMIT = 500
 

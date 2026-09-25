@@ -61,4 +61,13 @@ describe("HighlightedMarkdown", () => {
     expect(strongMark?.textContent).toBe("token");
     expect(container.querySelectorAll("mark")).toHaveLength(2);
   });
+
+  it("does not double-mark text in nested blocks", () => {
+    const { container } = render(
+      <BoardSearchProvider query="token">
+        <HighlightedMarkdown>{"> token **token**"}</HighlightedMarkdown>
+      </BoardSearchProvider>,
+    );
+    expect(container.querySelectorAll("mark")).toHaveLength(2);
+  });
 });
