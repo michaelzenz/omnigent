@@ -8,6 +8,7 @@ the stores.
 
 from __future__ import annotations
 
+import json
 import uuid
 from unittest.mock import AsyncMock, patch
 
@@ -787,4 +788,131 @@ async def test_delete_session_soft_deletes_bound_workers(
     # Already-deleted and unrelated lanes are untouched.
     assert worker_store.get_worker(already_deleted.id).state == "deleted"
     assert worker_store.get_worker(unrelated.id).state == "uninitialized"
+    del app
+
+
+# ── DELETE /v1/sessions/{id} emits the pmv2 session.deleted event ─────
+
+
+async def test_delete_session_emits_deleted_event_to_governing_manager(
+    client: httpx.AsyncClient,
+    session_id: str,
+    app: FastAPI,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deleting a bound session routes a session.deleted event to its manager.
+
+    The event is born ``routed`` (born-``awaiting_grouping`` only for unbound
+    sessions) and must precede the lane soft-delete below it — the broadcast
+    traversal only sees live workers.
+    """
+    from omnigent.agent_tasks import adoption as adoption_mod
+    from omnigent.agent_tasks.event_types import SESSION_DELETED_EVENT_TYPE
+    from omnigent.server.routes._sessions import helpers as sessions_helpers
+    from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+    from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+    from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
+    from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+    from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
+
+    worker_store = SqlAlchemyWorkerStore(db_uri)
+    task_store = SqlAlchemyTaskStore(db_uri)
+    manager_store = SqlAlchemyManagerStore(db_uri)
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+
+    manager_id = uuid.uuid4().hex
+    manager_store.upsert(
+        manager_id,
+        owner_user_id="alice",
+        role_key="manager:default",
+        description="test manager",
+        conversation_id=uuid.uuid4().hex,
+    )
+    task = task_store.create(
+        uuid.uuid4().hex,
+        "Build the thing",
+        "goal",
+        manager_id=manager_id,
+        owner_user_id="alice",
+        state="active",
+    )
+    worker = worker_store.create_worker(uuid.uuid4().hex, task.id, target_id=session_id)
+
+    # Pin the ordering property: the deletion event must be emitted while the
+    # session's worker lanes are still live (the broadcast traversal only
+    # sees live workers) — a refactor that moves the emit after the lane
+    # soft-delete would silently drop the event.
+    lane_state_at_emission: list[str] = []
+    real_emit = adoption_mod.emit_session_deleted_event
+
+    def _spy_emit(**kwargs):
+        snapshot = worker_store.get_worker(worker.id)
+        lane_state_at_emission.append(snapshot.state if snapshot is not None else "missing")
+        return real_emit(**kwargs)
+
+    monkeypatch.setattr(adoption_mod, "emit_session_deleted_event", _spy_emit)
+
+    ctx = adoption_mod.SessionAdoptionContext(
+        task_store=task_store,
+        task_event_store=event_store,
+        worker_store=worker_store,
+        conversation_store=SqlAlchemyConversationStore(db_uri),
+        task_item_store=SqlAlchemyTaskItemStore(db_uri),
+        manager_store=manager_store,
+    )
+    adoption_mod.configure_session_adoption(ctx)
+    monkeypatch.setattr(sessions_helpers, "_session_watcher_enabled", lambda: True)
+    try:
+        resp = await client.delete(f"/v1/sessions/{session_id}")
+        assert resp.status_code == 200
+    finally:
+        adoption_mod.configure_session_adoption(None)
+
+    events = event_store.list_events(event_type=SESSION_DELETED_EVENT_TYPE, state="routed")
+    assert len(events) == 1
+    event = events[0]
+    assert event.manager_id == manager_id
+    assert event.source_key == session_id
+    assert event.owner_user_id == "alice"
+    assert json.loads(event.payload)["session_id"] == session_id
+    # Emitted while the lane was live, and the lane soft-delete still ran.
+    assert lane_state_at_emission == ["uninitialized"]
+    assert worker_store.get_worker(worker.id).state == "deleted"
+    del app
+
+
+async def test_delete_session_no_deleted_event_when_watcher_disabled(
+    client: httpx.AsyncClient,
+    session_id: str,
+    app: FastAPI,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the session watcher plugin disabled, deletion emits no event."""
+    from omnigent.agent_tasks import adoption as adoption_mod
+    from omnigent.agent_tasks.event_types import SESSION_DELETED_EVENT_TYPE
+    from omnigent.server.routes._sessions import helpers as sessions_helpers
+    from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+    from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
+    from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+    from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
+
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    ctx = adoption_mod.SessionAdoptionContext(
+        task_store=SqlAlchemyTaskStore(db_uri),
+        task_event_store=event_store,
+        worker_store=SqlAlchemyWorkerStore(db_uri),
+        conversation_store=SqlAlchemyConversationStore(db_uri),
+        task_item_store=SqlAlchemyTaskItemStore(db_uri),
+    )
+    adoption_mod.configure_session_adoption(ctx)
+    monkeypatch.setattr(sessions_helpers, "_session_watcher_enabled", lambda: False)
+    try:
+        resp = await client.delete(f"/v1/sessions/{session_id}")
+        assert resp.status_code == 200
+    finally:
+        adoption_mod.configure_session_adoption(None)
+
+    assert event_store.list_events(event_type=SESSION_DELETED_EVENT_TYPE) == []
     del app
