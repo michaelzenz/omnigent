@@ -263,7 +263,7 @@ export function TaskCard({
                 type="button"
                 variant="outline"
                 size="icon-sm"
-                className="shrink-0"
+                className="shrink-0 text-[#15803d] dark:text-[#4ade80]"
                 disabled={patchTask.isPending}
                 aria-label="Mark task resolved"
                 title="Mark task resolved (agent-resolved) — parks it at the queue end"
