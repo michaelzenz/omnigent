@@ -28,4 +28,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column("omnigent_conversation_metadata", "execution_generation")
+    with op.batch_alter_table("omnigent_conversation_metadata") as batch_op:
+        batch_op.drop_column("execution_generation")

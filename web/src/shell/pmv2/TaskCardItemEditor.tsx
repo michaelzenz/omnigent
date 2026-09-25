@@ -3,7 +3,7 @@ import { CheckIcon, CopyIcon, PencilIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useResolveTaskItem, useUpdateTaskItem } from "@/hooks/useAgentTasks";
+import { useFireTaskItem, useRemoveTaskItem, useUpdateTaskItem } from "@/hooks/useAgentTasks";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import {
   acquireTaskItemEditLease,
@@ -42,7 +42,8 @@ export function TaskCardItemEditor({
   workerKind,
   mode,
 }: TaskCardItemEditorProps) {
-  const resolveItem = useResolveTaskItem(taskId);
+  const fireItem = useFireTaskItem(taskId);
+  const removeItem = useRemoveTaskItem(taskId);
   const updateItem = useUpdateTaskItem(taskId);
   const instructionsRef = useRef<HTMLTextAreaElement>(null);
   const [editor, setEditor] = useState(() => initialState(item));
@@ -68,26 +69,22 @@ export function TaskCardItemEditor({
   useAutoGrowTextarea(instructionsRef, editor.instructions, 12);
 
   const worker = workerLanes.find((lane) => lane.worker_id === item.worker_id);
-  const pending = resolveItem.isPending || updateItem.isPending;
+  const pending = fireItem.isPending || removeItem.isPending || updateItem.isPending;
   const dirty =
     editor.title !== item.title ||
     editor.description !== (item.description ?? "") ||
     editor.instructions !== (item.instructions ?? "");
 
-  const submitAck = async (resolution: "accept_item" | "edit_and_dispatch" | "reject_item") => {
-    const effectiveResolution =
-      resolution === "accept_item" && dirty ? "edit_and_dispatch" : resolution;
-    await resolveItem.mutateAsync({
+  const submitFire = async () => {
+    await fireItem.mutateAsync({
       taskItemId: item.id,
-      resolution: effectiveResolution,
-      edited_payload:
-        effectiveResolution === "edit_and_dispatch"
-          ? {
-              title: editor.title,
-              description: editor.description,
-              instructions: editor.instructions,
-            }
-          : undefined,
+      edited_payload: dirty
+        ? {
+            title: editor.title,
+            description: editor.description,
+            instructions: editor.instructions,
+          }
+        : undefined,
     });
   };
 
@@ -183,7 +180,7 @@ export function TaskCardItemEditor({
             variant="outline"
             size="sm"
             disabled={pending}
-            onClick={() => void submitAck("reject_item")}
+            onClick={() => void removeItem.mutateAsync({ taskItemId: item.id })}
             aria-label="Dismiss inbox item"
             title="Future turn-finished events from this session will be filtered out. You can still interact with the session directly."
           >
@@ -196,7 +193,7 @@ export function TaskCardItemEditor({
               disabled={pending}
               onClick={async () => {
                 if (editor.instructions) await navigator.clipboard.writeText(editor.instructions);
-                void submitAck("accept_item");
+                void submitFire();
               }}
             >
               <CopyIcon aria-hidden /> Copy
@@ -206,7 +203,7 @@ export function TaskCardItemEditor({
               type="button"
               size="sm"
               disabled={pending || item.worker_id == null}
-              onClick={() => void submitAck("accept_item")}
+              onClick={() => void submitFire()}
             >
               <CheckIcon aria-hidden /> Accept
             </Button>

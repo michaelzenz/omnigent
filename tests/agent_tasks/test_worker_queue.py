@@ -17,7 +17,7 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from omnigent.agent_tasks.items import resolve_task_item
+from omnigent.agent_tasks.items import fire_task_item
 from omnigent.agent_tasks.queue.dispatcher import DispatchFailed, DispatchTarget
 from omnigent.agent_tasks.queue.handlers import WorkerDispatchHandler
 from omnigent.agent_tasks.role_keys import MANAGER_DEFAULT_ROLE_KEY, WORKER_DEFAULT_ROLE_KEY
@@ -395,9 +395,8 @@ async def test_accept_enqueues_item_dispatch_to_worker_queue(db_uri: str) -> Non
             workspace=body.workspace,
         )
 
-    updated, execution = await resolve_task_item(
+    updated, execution = await fire_task_item(
         item=item,
-        resolution="accept_item",
         task=task,
         task_store=task_store,
         task_item_store=item_store,
@@ -502,9 +501,8 @@ async def test_accept_without_queue_store_falls_back_to_sync_dispatch(db_uri: st
             parent_conversation_id=task.manager_id,
         )
 
-    updated, execution = await resolve_task_item(
+    updated, execution = await fire_task_item(
         item=item,
-        resolution="accept_item",
         task=task,
         task_store=task_store,
         task_item_store=item_store,

@@ -11,7 +11,11 @@ import { INBOX_LANE_ID } from "./workerLaneStorage";
 vi.mock("@/hooks/useAgentTasks", () => ({
   useTaskDashboard: vi.fn(),
   useSecretaryProfile: vi.fn(() => ({ data: { model: "composer-2.5" } })),
-  useResolveTaskItem: vi.fn(() => ({
+  useFireTaskItem: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
+  useCloseTaskItem: vi.fn(() => ({
     mutateAsync: vi.fn(),
     isPending: false,
   })),

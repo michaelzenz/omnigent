@@ -28,7 +28,6 @@ async def _create_pending_task(client: httpx.AsyncClient, manager_id: str, seed:
         json={
             "title": f"task-{seed}",
             "goal": "goal",
-            "state": "pending",
             "manager_id": manager_id,
         },
     )
@@ -82,14 +81,11 @@ async def test_create_item_rejects_unknown_kind(
     assert resp.status_code == 422
 
 
-async def test_resolve_mark_done(client: httpx.AsyncClient, db_uri: str, manager_id: str) -> None:
-    task_id = await _create_pending_task(client, manager_id, "ha-route-mark-done")
+async def test_close_human_action(client: httpx.AsyncClient, db_uri: str, manager_id: str) -> None:
+    task_id = await _create_pending_task(client, manager_id, "ha-route-close")
     item = await _create_human_action(client, task_id, "Rotate the key")
 
-    resp = await client.post(
-        f"/v1/task-items/{item['id']}/resolve",
-        json={"resolution": "mark_done"},
-    )
+    resp = await client.post(f"/v1/task-items/{item['id']}/close")
     assert resp.status_code == 200, resp.text
     assert resp.json()["state"] == "done"
     assert resp.json()["kind"] == "human_action"
@@ -98,27 +94,25 @@ async def test_resolve_mark_done(client: httpx.AsyncClient, db_uri: str, manager
     events = event_store.list_events(state="routed", task_id=task_id)
     assert [event.event_type for event in events] == [HUMAN_ACTION_DONE_EVENT_TYPE]
 
-    # Done is terminal: a second mark_done conflicts.
-    resp = await client.post(
-        f"/v1/task-items/{item['id']}/resolve",
-        json={"resolution": "mark_done"},
-    )
+    # Done is terminal: a second close conflicts.
+    resp = await client.post(f"/v1/task-items/{item['id']}/close")
     assert resp.status_code == 409
 
 
-async def test_mark_done_rejects_work_item(client: httpx.AsyncClient, manager_id: str) -> None:
-    task_id = await _create_pending_task(client, manager_id, "ha-route-work-item")
+async def test_close_work_item_without_dispatch(
+    client: httpx.AsyncClient, manager_id: str
+) -> None:
+    """Work whose outcome already landed outside the item flow closes as done."""
+    task_id = await _create_pending_task(client, manager_id, "ha-route-work-close")
     resp = await client.post(
         f"/v1/agent-tasks/{task_id}/items",
         json={"title": "Regular work", "state": "pending"},
     )
     assert resp.status_code == 200, resp.text
     item_id = resp.json()["id"]
-    resp = await client.post(
-        f"/v1/task-items/{item_id}/resolve",
-        json={"resolution": "mark_done"},
-    )
-    assert resp.status_code == 409
+    resp = await client.post(f"/v1/task-items/{item_id}/close")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["state"] == "done"
 
 
 async def test_dismiss_human_action_emits_no_event(
@@ -127,10 +121,7 @@ async def test_dismiss_human_action_emits_no_event(
     task_id = await _create_pending_task(client, manager_id, "ha-route-dismiss")
     item = await _create_human_action(client, task_id, "Rotate the key")
 
-    resp = await client.post(
-        f"/v1/task-items/{item['id']}/resolve",
-        json={"resolution": "reject_item"},
-    )
+    resp = await client.post(f"/v1/task-items/{item['id']}/cancel")
     assert resp.status_code == 200, resp.text
     assert resp.json()["state"] == "cancelled"
 
@@ -138,15 +129,12 @@ async def test_dismiss_human_action_emits_no_event(
     assert event_store.list_events(state="routed", task_id=task_id) == []
 
 
-async def test_accept_human_action_rejected_with_clear_message(
+async def test_fire_human_action_rejected_with_clear_message(
     client: httpx.AsyncClient, manager_id: str
 ) -> None:
-    task_id = await _create_pending_task(client, manager_id, "ha-route-accept")
+    task_id = await _create_pending_task(client, manager_id, "ha-route-fire")
     item = await _create_human_action(client, task_id, "Rotate the key")
 
-    resp = await client.post(
-        f"/v1/task-items/{item['id']}/resolve",
-        json={"resolution": "accept_item"},
-    )
+    resp = await client.post(f"/v1/task-items/{item['id']}/fire")
     assert resp.status_code == 409
-    assert "marked done or dismissed" in resp.text
+    assert "Only work items can be fired" in resp.text

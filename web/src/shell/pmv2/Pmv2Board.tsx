@@ -48,8 +48,8 @@ export function Pmv2Board() {
   const orderKey = allTasks.map((task) => task.id).join("|");
 
   // Floating search: the server matches board-visible task text, items,
-  // assets, worker lane text, and worker chat content; the board just filters
-  // its cards by the returned task ids and rings the matched entities.
+  // assets, and worker lane text; the board just filters its cards by the
+  // returned task ids and rings the matched entities.
   const [searchQuery, setSearchQuery] = useState("");
   const { data: searchResults } = useAgentTaskBoardSearch(searchQuery);
   const searching = searchQuery.trim().length > 0;
@@ -208,7 +208,7 @@ export function Pmv2Board() {
                 }
               }}
               onClick={(event) => event.stopPropagation()}
-              placeholder="Search tasks — title, goal, items, assets, workers, chat…"
+              placeholder="Search tasks — title, goal, items, assets, workers…"
               className="h-8 pl-8 pr-8"
               aria-label="Search tasks"
               data-testid="board-search-input"

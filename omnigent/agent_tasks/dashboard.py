@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
+from omnigent.agent_tasks.workers import worker_last_active_map
 from omnigent.entities import Task, TaskAsset, TaskEventExecution, TaskItem, Worker
+from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
@@ -25,6 +27,7 @@ def build_task_dashboard(
     task_item_store: TaskItemStore,
     worker_store: WorkerStore,
     task_asset_store: TaskAssetStore | None = None,
+    conversation_store: ConversationStore | None = None,
 ) -> dict[str, Any]:
     """Build a card-shaped snapshot for one managed task."""
     items = task_item_store.list_items_for_task(task.id)
@@ -46,12 +49,14 @@ def build_task_dashboard(
         if item is not None and item.worker_id is not None:
             worker_ids.add(item.worker_id)
 
+    last_active_by_worker = worker_last_active_map(list(worker_by_id.values()), conversation_store)
     workers = [
         _worker_lane(
             worker_by_id[worker_id],
             items,
             executions,
             item_by_id,
+            last_active_at=last_active_by_worker.get(worker_id),
         )
         for worker_id in sorted(worker_ids)
         if worker_id in worker_by_id
@@ -104,9 +109,10 @@ def build_task_dashboard(
     }
 
 
-def _worker_lane_rank(lane: dict[str, Any]) -> tuple[int, str]:
+def _worker_lane_rank(lane: dict[str, Any]) -> tuple[int, int, str]:
+    """State priority first (running lanes on top), then most-recently-active."""
     order = {"active": 0, "new": 1, "idle": 2}
-    return (order.get(lane["state"], 3), lane["worker_id"])
+    return (order.get(lane["state"], 3), -(lane.get("last_active_at") or 0), lane["worker_id"])
 
 
 def _worker_lane(
@@ -114,6 +120,8 @@ def _worker_lane(
     items: list[TaskItem],
     executions: list[TaskEventExecution],
     item_by_id: dict[str, TaskItem],
+    *,
+    last_active_at: int | None = None,
 ) -> dict[str, Any]:
     worker_items = [
         item
@@ -204,6 +212,7 @@ def _worker_lane(
         "state": state,
         "worker_state": worker.state,
         "target_id": worker.target_id,
+        "last_active_at": last_active_at,
         "needs_response": worker.needs_response,
         "provider_name": worker.provider_name,
         "title": worker.title,

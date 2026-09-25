@@ -109,32 +109,13 @@ export function fixtureUpdateItem(
   notify();
 }
 
-export function fixtureResolveInboxItem(
-  taskId: string,
-  taskItemId: string,
-  resolution: "accept_item" | "reject_item" | "mark_done",
-): void {
+export function fixtureFireItem(taskId: string, taskItemId: string): void {
   const dashboard = dashboards.get(taskId);
   if (!dashboard) return;
   const found = findItem(dashboard, taskItemId);
   if (!found) return;
   const item = found.item;
-  if (resolution === "reject_item") {
-    removeItemRow(dashboard, taskItemId);
-    notify();
-    return;
-  }
-  if (resolution === "mark_done") {
-    item.state = "done";
-    item.updated_at = Math.floor(Date.now() / 1000);
-    removeItemRow(dashboard, taskItemId);
-    const recent = dashboard.recent_done_items ?? { all: [], by_worker: {} };
-    recent.all = [{ ...item }, ...recent.all].slice(0, 3);
-    dashboard.recent_done_items = recent;
-    notify();
-    return;
-  }
-  // accept_item — move to a worker lane as queued
+  // Move to a worker lane as queued
   item.state = "queued";
   item.updated_at = Math.floor(Date.now() / 1000);
   removeItemRow(dashboard, taskItemId);
@@ -147,5 +128,20 @@ export function fixtureResolveInboxItem(
       item: { ...item, worker_id: lane.worker_id },
     });
   }
+  notify();
+}
+
+export function fixtureCloseItem(taskId: string, taskItemId: string): void {
+  const dashboard = dashboards.get(taskId);
+  if (!dashboard) return;
+  const found = findItem(dashboard, taskItemId);
+  if (!found) return;
+  const item = found.item;
+  item.state = "done";
+  item.updated_at = Math.floor(Date.now() / 1000);
+  removeItemRow(dashboard, taskItemId);
+  const recent = dashboard.recent_done_items ?? { all: [], by_worker: {} };
+  recent.all = [{ ...item }, ...recent.all].slice(0, 3);
+  dashboard.recent_done_items = recent;
   notify();
 }

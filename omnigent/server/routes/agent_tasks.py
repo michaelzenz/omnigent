@@ -56,13 +56,13 @@ from omnigent.agent_tasks.fyi_clusters import (
 from omnigent.agent_tasks.ingress import ingress_event
 from omnigent.agent_tasks.internal_worker import initialize_internal_worker
 from omnigent.agent_tasks.items import (
-    complete_human_action,
+    cancel_task_item,
+    close_task_item,
     create_task_item,
+    fire_task_item,
     item_dispatch_payload,
     patch_task_item,
     reconcile_events,
-    reject_task_item,
-    resolve_task_item,
     submit_item_for_user_ack,
 )
 from omnigent.agent_tasks.manager_discovery import (
@@ -99,7 +99,7 @@ from omnigent.agent_tasks.task_search import (
     SEARCH_RECENT_LIMIT,
     rank_tasks_by_text,
 )
-from omnigent.agent_tasks.workers import worker_for_item
+from omnigent.agent_tasks.workers import worker_for_item, worker_last_active_map
 from omnigent.db.enum_codecs import TASK_STATE
 from omnigent.db.utils import now_epoch
 from omnigent.entities import (
@@ -482,10 +482,9 @@ class DispatchTaskItemRequest(BaseModel):
     model: str | None = None
 
 
-class ResolveTaskItemRequest(BaseModel):
-    """Request body for ``POST /v1/task-items/{item_id}/resolve``."""
+class FireTaskItemRequest(BaseModel):
+    """Request body for ``POST /v1/task-items/{item_id}/fire``."""
 
-    resolution: Literal["accept_item", "edit_and_dispatch", "reject_item", "mark_done"]
     edited_payload: dict[str, Any] | None = None
 
 
@@ -660,7 +659,7 @@ def _tag_to_response(tag: TaskTag) -> dict[str, str]:
     return {"tag_type": tag.tag_type, "tag": tag.tag}
 
 
-def _worker_to_response(worker: Worker) -> dict[str, Any]:
+def _worker_to_response(worker: Worker, *, last_active_at: int | None = None) -> dict[str, Any]:
     try:
         snapshot = json.loads(worker.provider_configuration or "{}")
     except (TypeError, ValueError):
@@ -668,7 +667,7 @@ def _worker_to_response(worker: Worker) -> dict[str, Any]:
     launch = snapshot.get("launch") if isinstance(snapshot, dict) else None
     if not isinstance(launch, dict):
         launch = {}
-    return {
+    response = {
         "object": "agent.task.worker",
         "id": worker.id,
         "worker_id": worker.id,
@@ -684,6 +683,9 @@ def _worker_to_response(worker: Worker) -> dict[str, Any]:
         "failure_reason": worker.failure_reason,
         "last_observed_at": worker.last_observed_at,
     }
+    if last_active_at is not None:
+        response["last_active_at"] = last_active_at
+    return response
 
 
 def _task_to_response(task: Task, *, tags: list[TaskTag] | None = None) -> dict[str, Any]:
@@ -1919,10 +1921,10 @@ def create_agent_tasks_router(
         """Board search for the pmv2 task list.
 
         Matches the query (case-insensitive substring) against board-visible
-        task text (title/goal/description/id), task items, assets, worker lane
-        text, and the chat content of the tasks' live worker sessions.
-        Executions and the manager conversation are deliberately not probed —
-        workers are the target.
+        task text (title/goal/description/id), task items, assets, and
+        worker lane text. Chat content, executions, and the manager
+        conversation are deliberately not probed — the search targets the
+        task's rendered content and its live workers' lane text.
 
         The first ``limit`` matches are returned (oldest-id first). When the
         full match count reaches the cap the board hints that more matches
@@ -1949,21 +1951,8 @@ def create_agent_tasks_router(
             asyncio.to_thread(task_asset_store.list_assets_for_tasks, task_ids),
         )
         # Mirror the dashboard: terminated/deleted workers are untracked and
-        # never rendered — their lane text and chats are out of scope.
+        # never rendered — their lane text is out of scope.
         workers = [w for w in workers if w.state not in ("terminated", "deleted")]
-
-        matched_conversation_ids: set[str] = set()
-        if conversation_store is not None:
-            conversation_ids = [w.target_id for w in workers if w.target_id]
-            # Chunked to stay under SQLite's 999 bind-variable limit on
-            # large boards; a no-op batch count on Postgres.
-            for start in range(0, len(conversation_ids), 500):
-                batch = conversation_ids[start : start + 500]
-                matched_conversation_ids |= await asyncio.to_thread(
-                    conversation_store.matching_conversation_ids,
-                    batch,
-                    query,
-                )
 
         results = await asyncio.to_thread(
             search_board_tasks,
@@ -1972,7 +1961,6 @@ def create_agent_tasks_router(
             items=items,
             workers=workers,
             assets=assets,
-            matched_conversation_ids=matched_conversation_ids,
         )
         return {
             "object": "agent.task.board_search",
@@ -2298,6 +2286,7 @@ def create_agent_tasks_router(
                 task_item_store,
                 worker_store,
                 task_asset_store,
+                conversation_store,
             )
 
         @router.get("/agent-tasks/{task_id}/workers")
@@ -2305,14 +2294,20 @@ def create_agent_tasks_router(
             request: Request,
             task_id: str,
         ) -> dict[str, Any]:
-            """List the worker lanes on a task."""
+            """List the worker lanes on a task, most-recently-active first."""
             user_id = get_user_id(request, auth_provider)
             await _get_task_or_404(task_id, user_id)
             workers = await asyncio.to_thread(worker_store.list_workers_for_task, task_id)
             workers = [w for w in workers if w.state != "deleted"]
+            last_active = await asyncio.to_thread(
+                worker_last_active_map, workers, conversation_store
+            )
+            workers.sort(key=lambda w: (-(last_active.get(w.id) or 0), w.id))
             return {
                 "object": "list",
-                "data": [_worker_to_response(w) for w in workers],
+                "data": [
+                    _worker_to_response(w, last_active_at=last_active.get(w.id)) for w in workers
+                ],
             }
 
         def _create_worker_from_provider(
@@ -2363,7 +2358,7 @@ def create_agent_tasks_router(
         ) -> dict[str, Any]:
             """Create one durable, uninitialized Worker from a provider snapshot."""
             user_id = require_user(request, auth_provider)
-            task = await _get_task_or_404(task_id, user_id)
+            await _get_task_or_404(task_id, user_id)
             worker = await asyncio.to_thread(
                 _create_worker_from_provider,
                 task_id,
@@ -2806,47 +2801,30 @@ def create_agent_tasks_router(
             await _get_task_or_404(item.task_id, user_id)
             return item
 
-        @router.post("/task-items/{item_id}/resolve")
-        async def resolve_task_item_route(
+        async def _stop_in_flight_worker(request: Request, item: TaskItem) -> None:
+            """Best-effort interrupt of the item's in-flight worker turn."""
+            worker = worker_for_item(item, worker_store=worker_store)
+            if worker is None or worker.target_id is None:
+                return
+            try:
+                await _control_worker(worker, "interrupt", request)
+            except Exception:
+                # The runner may be gone — exactly when a force close/cancel is
+                # needed. The item transition must still proceed.
+                _logger.exception("failed to interrupt worker for item %s", item.id)
+
+        async def _fire_task_item_handler(
             request: Request,
-            item_id: str,
-            body: ResolveTaskItemRequest,
+            item: TaskItem,
+            edited_payload: dict[str, Any] | None,
         ) -> dict[str, Any]:
-            """Accept, edit, or reject a user-inbox task item."""
             user_id = require_user(request, auth_provider)
-            item = await _get_item_or_404(item_id, user_id)
-            # Rejection cancels the item outright — no manager profile, dispatch
-            # params, or worker runner are needed, so short-circuit before them.
-            if body.resolution == "reject_item":
-                updated = await asyncio.to_thread(
-                    reject_task_item,
-                    item=item,
-                    task_item_store=task_item_store,
-                    worker_store=worker_store,
-                )
-                return _item_to_response(updated)
-            # mark_done settles a human action without dispatch — short-circuit
-            # before worker lookup/initialization like reject_item.
-            if body.resolution == "mark_done":
-                task = await _get_task_or_404(item.task_id, user_id)
-                updated = await asyncio.to_thread(
-                    complete_human_action,
-                    item=item,
-                    task=task,
-                    task_item_store=task_item_store,
-                    task_event_store=task_event_store,
-                )
-                return _item_to_response(updated)
-            if body.resolution == "edit_and_dispatch" and body.edited_payload is None:
-                raise OmnigentError("edited_payload is required", code=ErrorCode.INVALID_INPUT)
-            # Accept/edit dispatch to a worker — refuse human actions here too so
-            # the error names the kind instead of the missing worker lane.
-            if item.kind == "human_action":
+            task = await _get_task_or_404(item.task_id, user_id)
+            if item.kind != "work":
                 raise OmnigentError(
-                    "Human action items can only be marked done or dismissed",
+                    "Only work items can be fired; human action items are closed, not fired",
                     code=ErrorCode.CONFLICT,
                 )
-            task = await _get_task_or_404(item.task_id, user_id)
             worker = worker_for_item(item, worker_store=worker_store)
             if worker is None:
                 raise OmnigentError(
@@ -2882,16 +2860,15 @@ def create_agent_tasks_router(
             worker_profile = await _manager_role_profile_for_task(task, user_id)
             manager_profile = await _manager_role_profile_for_task(task, user_id)
 
-            updated, execution = await resolve_task_item(
+            updated, execution = await fire_task_item(
                 item=item,
-                resolution=body.resolution,
                 task=task,
                 task_store=task_store,
                 task_item_store=task_item_store,
                 task_event_store=task_event_store,
                 worker_store=worker_store,
                 conversation_store=conversation_store,
-                edited_payload=body.edited_payload,
+                edited_payload=edited_payload,
                 role_profile=worker_profile or manager_profile,
                 agent_queue_store=agent_queue_store,
                 owner_user_id=_effective_user_id(user_id),
@@ -2904,6 +2881,53 @@ def create_agent_tasks_router(
                 response["execution_id"] = execution.id
                 response["worker_conversation_id"] = execution.conversation_id
             return response
+
+        async def _close_task_item_handler(request: Request, item: TaskItem) -> dict[str, Any]:
+            user_id = require_user(request, auth_provider)
+            task = await _get_task_or_404(item.task_id, user_id)
+            if item.kind == "work" and item.state == "running":
+                await _stop_in_flight_worker(request, item)
+            updated = await asyncio.to_thread(
+                close_task_item,
+                item=item,
+                task=task,
+                task_item_store=task_item_store,
+                task_event_store=task_event_store,
+                agent_queue_store=agent_queue_store,
+            )
+            return _item_to_response(updated)
+
+        async def _cancel_task_item_handler(request: Request, item: TaskItem) -> dict[str, Any]:
+            if item.kind == "work" and item.state == "running":
+                await _stop_in_flight_worker(request, item)
+            updated = await asyncio.to_thread(
+                cancel_task_item,
+                item=item,
+                task_item_store=task_item_store,
+                worker_store=worker_store,
+                agent_queue_store=agent_queue_store,
+            )
+            return _item_to_response(updated)
+
+        @router.post("/task-items/{item_id}/fire")
+        async def fire_task_item_route(
+            request: Request,
+            item_id: str,
+            body: FireTaskItemRequest | None = None,
+        ) -> dict[str, Any]:
+            """Fire an approved inbox work item to its assigned worker."""
+            user_id = require_user(request, auth_provider)
+            item = await _get_item_or_404(item_id, user_id)
+            return await _fire_task_item_handler(
+                request, item, body.edited_payload if body is not None else None
+            )
+
+        @router.post("/task-items/{item_id}/close")
+        async def close_task_item_route(request: Request, item_id: str) -> dict[str, Any]:
+            """Close an item as done without dispatching (stops an in-flight turn)."""
+            user_id = require_user(request, auth_provider)
+            item = await _get_item_or_404(item_id, user_id)
+            return await _close_task_item_handler(request, item)
 
         @router.post("/task-items/{item_id}/edit-lease")
         async def acquire_task_item_edit_lease(
@@ -3027,34 +3051,11 @@ def create_agent_tasks_router(
             return _item_to_response(updated)
 
         @router.post("/task-items/{item_id}/cancel")
-        async def cancel_task_item(request: Request, item_id: str) -> dict[str, Any]:
-            """Remove queued or parked work from dispatch and hide it from the board."""
+        async def cancel_task_item_route(request: Request, item_id: str) -> dict[str, Any]:
+            """Cancel an item without dispatching (stops an in-flight turn first)."""
             user_id = require_user(request, auth_provider)
             item = await _get_item_or_404(item_id, user_id)
-            if item.state not in {"queued", "interrupted", "dispatch_failed"}:
-                raise OmnigentError(
-                    f"Cannot cancel item in state {item.state!r}", code=ErrorCode.CONFLICT
-                )
-            if agent_queue_store is None:
-                raise OmnigentError("Agent queue is unavailable", code=ErrorCode.INTERNAL_ERROR)
-            queue_item = await asyncio.to_thread(
-                agent_queue_store.find_open_item_for_source, item.id, role="worker"
-            )
-            if queue_item is None and item.state == "queued":
-                raise OmnigentError("Queued delivery not found", code=ErrorCode.CONFLICT)
-            if queue_item is not None:
-                cancelled = await asyncio.to_thread(
-                    agent_queue_store.cancel_item, queue_item.id, now=now_epoch()
-                )
-                if cancelled is None:
-                    raise OmnigentError(
-                        "Queued delivery could not be cancelled", code=ErrorCode.CONFLICT
-                    )
-            updated = await asyncio.to_thread(
-                task_item_store.update_item, item.id, state="cancelled"
-            )
-            assert updated is not None
-            return _item_to_response(updated)
+            return await _cancel_task_item_handler(request, item)
 
         @router.post("/task-items/{item_id}/retry-dispatch")
         async def retry_task_item_dispatch(
@@ -3428,45 +3429,18 @@ def create_agent_tasks_router(
         ) -> dict[str, Any]:
             """Directly adopt a session to a task (Worker binding).
 
-            Idempotent: a session already bound to this task returns the
-            existing worker instead of creating a duplicate.
+            Idempotent: one worker row per (task, session) — re-adoption
+            updates the existing lane (title refresh, reviving an untracked
+            lane) instead of creating a duplicate.
             """
             user_id = require_user(request, auth_provider)
             await _require_session_or_404(session_id, user_id)
             task = await _get_task_or_404(body.task_id, user_id)
-
-            def _existing_binding() -> Worker | None:
-                worker = (
-                    worker_store.get_by_target_id(session_id) if worker_store is not None else None
-                )
-                if worker is None or worker.task_id != task.id:
-                    return None
-                return worker
-
-            existing = await asyncio.to_thread(_existing_binding)
-            if existing is not None:
-                if body.title is not None and body.title != existing.title:
-                    updated = await asyncio.to_thread(
-                        worker_store.update_worker,
-                        existing.id,
-                        title=body.title,
-                    )
-                    if updated is None:
-                        raise OmnigentError("Worker not found", code=ErrorCode.NOT_FOUND)
-                    existing = updated
-                return {
-                    "object": "agent.task.session_adoption",
-                    "session_id": session_id,
-                    "task_id": body.task_id,
-                    "worker_id": existing.id,
-                    "already_bound": True,
-                }
-
             conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
             if conv is None:
                 raise OmnigentError("Session not found", code=ErrorCode.NOT_FOUND)
 
-            def _adopt() -> str:
+            def _adopt() -> tuple[Worker, bool]:
                 return adopt_session_to_task(
                     session_id=session_id,
                     task=task,
@@ -3475,12 +3449,13 @@ def create_agent_tasks_router(
                     owner_user_id=_effective_user_id(user_id),
                 )
 
-            worker_id = await asyncio.to_thread(_adopt)
+            worker, created = await asyncio.to_thread(_adopt)
             return {
                 "object": "agent.task.session_adoption",
                 "session_id": session_id,
                 "task_id": body.task_id,
-                "worker_id": worker_id,
+                "worker_id": worker.id,
+                "already_bound": not created,
             }
 
         # ── External session adoption (watcher-discovered) ──────────
@@ -3522,7 +3497,7 @@ def create_agent_tasks_router(
                 task_event_store,
                 session_hint,
             )
-            proposal_event, adopted_event = await adopt_external_session(
+            proposal_event, adopted_event, worker = await adopt_external_session(
                 session_hint=session_hint,
                 task_id=body.task_id,
                 task_store=task_store,
@@ -3534,19 +3509,21 @@ def create_agent_tasks_router(
                 app_state=request.app.state,
                 user_id=user_id,
             )
-            worker = await asyncio.to_thread(worker_store.get_by_target_id, session_hint)
             return {
                 "object": "agent.task.external_session_adoption",
                 "session_hint": session_hint,
                 "task_id": body.task_id,
-                "worker_id": worker.id if worker is not None else None,
+                "worker_id": worker.id,
+                "already_bound": adopted_event is None,
                 "proposal": (
                     _event_to_response(proposal_event)
                     if proposal_event is not None
                     and proposal_event.event_type == "session.adoption"
                     else None
                 ),
-                "event": _event_to_response(adopted_event),
+                "event": (
+                    _event_to_response(adopted_event) if adopted_event is not None else None
+                ),
             }
 
         @router.post("/agent-tasks/external-sessions/{session_hint}/reject-adoption")

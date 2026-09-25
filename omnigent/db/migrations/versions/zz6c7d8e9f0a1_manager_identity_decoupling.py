@@ -73,7 +73,8 @@ def upgrade() -> None:
 
     # ── tasks: manager_conversation_id → manager_id ─────────────────────────
     op.drop_index("ix_tasks_manager_conversation", table_name="tasks")
-    op.drop_column("tasks", "manager_conversation_id")
+    with op.batch_alter_table("tasks") as batch_op:
+        batch_op.drop_column("manager_conversation_id")
     op.add_column("tasks", sa.Column("manager_id", Uuid16(), nullable=True))
     op.create_index("ix_tasks_manager", "tasks", ["workspace_id", "manager_id"])
 
@@ -81,7 +82,8 @@ def upgrade() -> None:
     # Terminal rows keep their history with manager_id nulled; the old
     # session ids are meaningless under the new identity model.
     op.drop_index("ix_task_events_manager_state", table_name="task_events")
-    op.drop_column("task_events", "manager_conversation_id")
+    with op.batch_alter_table("task_events") as batch_op:
+        batch_op.drop_column("manager_conversation_id")
     op.add_column("task_events", sa.Column("manager_id", Uuid16(), nullable=True))
     op.create_index(
         "ix_task_events_manager_state",
@@ -91,5 +93,49 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Irreversible by design: erased pipeline data cannot be reconstructed.
-    raise NotImplementedError("manager identity decoupling is not reversible")
+    # Restores the schema only. Rows the upgrade erased (manager rows,
+    # manager-role queues and items, non-terminal task events) stay gone,
+    # and the old manager linkage comes back NULL — the conversation ids
+    # they were keyed on were dropped with the columns.
+    # ── tasks: manager_id → manager_conversation_id ─────────────────────────
+    op.drop_index("ix_tasks_manager", table_name="tasks")
+    with op.batch_alter_table("tasks") as batch_op:
+        batch_op.drop_column("manager_id")
+    op.add_column("tasks", sa.Column("manager_conversation_id", Uuid16(), nullable=True))
+    op.create_index(
+        "ix_tasks_manager_conversation",
+        "tasks",
+        ["workspace_id", "manager_conversation_id"],
+        unique=False,
+    )
+
+    # ── task_events: manager_id → manager_conversation_id ───────────────────
+    op.drop_index("ix_task_events_manager_state", table_name="task_events")
+    with op.batch_alter_table("task_events") as batch_op:
+        batch_op.drop_column("manager_id")
+    op.add_column("task_events", sa.Column("manager_conversation_id", Uuid16(), nullable=True))
+    op.create_index(
+        "ix_task_events_manager_state",
+        "task_events",
+        ["workspace_id", "manager_conversation_id", "state", "created_at", "id"],
+    )
+
+    # ── managers: back to session-id-keyed shape ────────────────────────────
+    op.drop_index("ix_managers_owner", table_name="managers")
+    op.drop_table("managers")
+    op.create_table(
+        "managers",
+        sa.Column("workspace_id", sa.BigInteger(), nullable=False, server_default="0"),
+        sa.Column("conversation_id", Uuid16(), nullable=False),
+        sa.Column("owner_user_id", sa.String(128), nullable=False),
+        sa.Column("role_key", sa.String(64), nullable=False),
+        sa.Column("description", sa.Text(), nullable=False, server_default=""),
+        sa.Column("created_at", sa.Integer(), nullable=False),
+        sa.Column("updated_at", sa.Integer(), nullable=False),
+        sa.PrimaryKeyConstraint("workspace_id", "conversation_id"),
+    )
+    op.create_index(
+        "ix_managers_owner",
+        "managers",
+        ["workspace_id", "owner_user_id", "created_at", "conversation_id"],
+    )

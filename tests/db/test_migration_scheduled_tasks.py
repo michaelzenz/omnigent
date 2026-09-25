@@ -303,8 +303,8 @@ def test_scheduled_task_runs_status_stored_as_smallint(db_engine: Engine) -> Non
     assert "INT" in str(cols["status"]["type"]).upper()
 
 
-def test_downgrade_across_manager_identity_is_refused(tmp_path: Path) -> None:
-    """Downgrading from head crosses the irreversible manager-identity migration."""
+def test_downgrade_across_manager_identity_reverts_schema(tmp_path: Path) -> None:
+    """Downgrading from head past the manager-identity migration reverts the schema."""
     db_path = tmp_path / "downgrade.db"
     uri = f"sqlite:///{db_path}"
     engine = get_or_create_engine(uri)
@@ -313,14 +313,13 @@ def test_downgrade_across_manager_identity_is_refused(tmp_path: Path) -> None:
     assert {"scheduled_tasks", "scheduled_task_runs"} <= tables
 
     config = _build_alembic_config(uri)
-    with pytest.raises(NotImplementedError):
-        with engine.begin() as conn:
-            config.attributes["connection"] = conn
-            command.downgrade(config, _PREVIOUS_HEAD)
+    with engine.begin() as conn:
+        config.attributes["connection"] = conn
+        command.downgrade(config, _PREVIOUS_HEAD)
 
-    # The refused downgrade leaves both tables in place.
+    # _PREVIOUS_HEAD sits below z6a2b3c4d5e6, which added both tables.
     tables = set(sa.inspect(engine).get_table_names())
-    assert {"scheduled_tasks", "scheduled_task_runs"} <= tables
+    assert not {"scheduled_tasks", "scheduled_task_runs"} & tables
 
     engine.dispose()
     clear_engine_cache()
