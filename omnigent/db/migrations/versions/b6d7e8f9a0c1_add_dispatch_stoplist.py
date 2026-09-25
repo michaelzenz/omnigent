@@ -5,7 +5,7 @@ Revises: ee2f3a4b5c6d
 Create Date: 2026-08-29
 
 Global dispatcher stoplist: one row per role the user has told the
-dispatcher not to dispatch. The PuppyGarden board config panel toggles
+dispatcher not to dispatch. The pmv2 board config panel toggles
 roles (currently only the broker) through
 ``PUT /v1/agent-queues/dispatch-stoplist``; the dispatcher filters
 stopped roles out of every scan pass. Distinct from a per-queue

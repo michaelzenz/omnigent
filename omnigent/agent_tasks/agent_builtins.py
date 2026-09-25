@@ -1,4 +1,4 @@
-"""Defaults for PuppyGarden roles, all executed by OmniHarness."""
+"""Defaults for pmv2 roles, all executed by OmniHarness."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ TASK_ROLE_DEFAULTS: dict[str, TaskRoleDefaults] = {
     ),
     TASK_SECRETARY_ROLE: TaskRoleDefaults(
         model="databricks-glm-5-3-flash",
-        description="Helps the user steer PuppyGarden.",
+        description="Helps the user steer GlobalHub.",
     ),
     MANAGER_DEFAULT_ROLE_KEY: TaskRoleDefaults(
         model="databricks-glm-5-3-flash",

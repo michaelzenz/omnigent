@@ -20,7 +20,7 @@ USER_INTERACTION_PURPOSE = "user_interaction"
 TASK_EVENT_ROUTING_PURPOSE = "task_event_routing"
 
 # Role-specific purposes so the by_purpose breakdown can attribute cost to
-# each PuppyGarden role (broker, manager, secretary) instead of lumping
+# each pmv2 role (broker, manager, secretary) instead of lumping
 # them into the generic "task_event_routing" / "user_interaction" buckets.
 BROKER_PURPOSE = "task_broker"
 MANAGER_PURPOSE = "task_manager"

@@ -1,4 +1,4 @@
-"""Tests for PuppyGarden role-session label helpers."""
+"""Tests for pmv2 role-session label helpers."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from omnigent.agent_tasks.session_labels import presentation_labels_for_harness
 
 def test_sdk_harness_has_no_presentation_labels() -> None:
     """The in-process SDK harness is not a native wrapper, so role sessions on
-    it get no ``omnigent.wrapper`` label — the PuppyGarden dock surfaces its own
+    it get no ``omnigent.wrapper`` label — the pmv2 dock surfaces its own
     model switcher for them instead of the composer's native picker."""
     assert presentation_labels_for_harness("openai-agents") == {}
 

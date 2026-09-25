@@ -1,4 +1,4 @@
-"""PuppyGarden role bindings and the sessions bound to singleton roles."""
+"""pmv2 role bindings and the sessions bound to singleton roles."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 @dataclass
 class TaskRoleProfile:
-    """Bind a PuppyGarden role key to a hidden PromptProfile manual.
+    """Bind a pmv2 role key to a hidden PromptProfile manual.
 
     Role sessions always use OmniHarness. Runtime fields remain the resolved
     launch placement for the role session; they are not user-selectable role
@@ -29,7 +29,7 @@ class TaskRoleProfile:
 
 @dataclass
 class UserRoleSession:
-    """One user's live conversation with a singleton PuppyGarden role."""
+    """One user's live conversation with a singleton pmv2 role."""
 
     user_id: str
     role: str

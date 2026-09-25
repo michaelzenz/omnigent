@@ -4,11 +4,11 @@ The host scans two roots inclusively and merges the results:
 
 1. ``<data_dir>/poll_plugins`` (``~/.omnigent/poll_plugins`` or
    ``$OMNIGENT_DATA_DIR/poll_plugins``) — the user's local/runtime plugins.
-2. ``<puppygarden_root>/poll_plugins`` — the shared, version-controlled
-   plugins from a repo checkout, when ``host.puppygarden.root`` is set in the
+2. ``<pmv2_root>/poll_plugins`` — the shared, version-controlled
+   plugins from a repo checkout, when ``host.pmv2.root`` is set in the
    host config.
 
-On a name collision the local (data-dir) plugin wins; the puppygarden copy is
+On a name collision the local (data-dir) plugin wins; the pmv2 copy is
 ignored for that name. This lets a user override a repo plugin with a local
 edit without forking the repo.
 """
@@ -28,11 +28,11 @@ PLUGIN_CONFIG_NAME = "config.yaml"
 README_NAME = "README.md"
 
 
-def resolve_puppygarden_root(config_path: Path = CONFIG_PATH) -> Path | None:
-    """Read ``host.puppygarden.root`` from the host config, if set.
+def resolve_pmv2_root(config_path: Path = CONFIG_PATH) -> Path | None:
+    """Read ``host.pmv2.root`` from the host config, if set.
 
-    Points the poller at a version-controlled ``puppygarden/`` directory (a
-    cloned repo's ``puppygarden/``) so its ``poll_plugins/`` are scanned
+    Points the poller at a version-controlled ``pmv2/`` directory (a
+    cloned repo's ``pmv2/``) so its ``poll_plugins/`` are scanned
     alongside the runtime data dir.
     """
     if not config_path.exists():
@@ -47,10 +47,10 @@ def resolve_puppygarden_root(config_path: Path = CONFIG_PATH) -> Path | None:
     host_section = cfg.get("host")
     if not isinstance(host_section, dict):
         return None
-    puppygarden = host_section.get("puppygarden")
-    if not isinstance(puppygarden, dict):
+    pmv2 = host_section.get("pmv2")
+    if not isinstance(pmv2, dict):
         return None
-    raw = puppygarden.get("root")
+    raw = pmv2.get("root")
     if not isinstance(raw, str) or not raw.strip():
         return None
     return Path(raw).expanduser()
@@ -72,11 +72,11 @@ def scan_dir(base: Path) -> list[Path]:
 
 
 def scan_roots(config_path: Path, section: str) -> list[Path]:
-    """Ordered roots to scan for a plugin section (data dir first, puppygarden second)."""
+    """Ordered roots to scan for a plugin section (data dir first, pmv2 second)."""
     roots = [data_dir() / section]
-    puppygarden = resolve_puppygarden_root(config_path)
-    if puppygarden is not None:
-        roots.append(puppygarden / section)
+    pmv2 = resolve_pmv2_root(config_path)
+    if pmv2 is not None:
+        roots.append(pmv2 / section)
     return roots
 
 
@@ -84,7 +84,7 @@ def merge_plugin_dirs(roots: list[Path]) -> tuple[list[Path], set[str]]:
     """Scan each root in order and merge, deduping by plugin folder name.
 
     The first root to surface a given name wins (so the data-dir root, which
-    is listed first, overrides a same-named puppygarden plugin). Returns the
+    is listed first, overrides a same-named pmv2 plugin). Returns the
     deduped directories and the set of names that appeared in more than one
     root (so callers can warn about the collision).
     """
@@ -102,7 +102,7 @@ def merge_plugin_dirs(roots: list[Path]) -> tuple[list[Path], set[str]]:
 
 
 def plugin_scan_roots(config_path: Path = CONFIG_PATH) -> list[Path]:
-    """Roots scanned for poll plugins (data dir, then puppygarden if set)."""
+    """Roots scanned for poll plugins (data dir, then pmv2 if set)."""
     return scan_roots(config_path, POLL_PLUGINS_DIRNAME)
 
 
@@ -114,7 +114,7 @@ def iter_plugin_dirs(
     """Return poll plugin directories that contain a ``run.py`` entry point.
 
     With ``root`` set, scans that single directory (used by tests). With
-    ``root`` unset, scans both the data dir and the configured puppygarden
+    ``root`` unset, scans both the data dir and the configured pmv2
     root inclusively, deduping by name (data dir wins).
     """
     return iter_plugin_dirs_with_collisions(root, config_path=config_path)[0]

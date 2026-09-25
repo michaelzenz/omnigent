@@ -1,4 +1,4 @@
-"""Initialization for internal PuppyGarden Workers."""
+"""Initialization for internal pmv2 Workers."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ async def initialize_internal_worker(
             session_creator(
                 body=SessionCreateRequest(
                     agent_id=agent_id,
-                    title=worker.provider_name or "PuppyGarden worker",
+                    title=worker.provider_name or "GlobalHub worker",
                     host_id=launch.get("host_id"),
                     workspace=launch.get("workspace"),
                     model_override=configuration.get("model"),

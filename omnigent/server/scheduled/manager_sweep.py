@@ -25,7 +25,7 @@ from omnigent.stores.scheduled_task_store import ScheduledTaskStore
 
 # Stable name prefix so an existing sweep is findable without a schema
 # change (scheduled_tasks has no label column): deterministic per manager.
-SWEEP_NAME_PREFIX = "puppygarden-manager-sweep:"
+SWEEP_NAME_PREFIX = "pmv2-manager-sweep:"
 
 MANAGER_SWEEP_PROMPT = (
     "This is not event routing \u2014 please sweep all the tasks assigned to you: "

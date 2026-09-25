@@ -42,7 +42,7 @@ export type SettingsSectionId =
   | "integrations"
   | "shortcuts"
   | "import"
-  | "puppygarden"
+  | "pmv2"
   | "account"
   | "members"
   | "models"
@@ -60,7 +60,7 @@ const SECTION_IDS: readonly SettingsSectionId[] = [
   "integrations",
   "shortcuts",
   "import",
-  "puppygarden",
+  "pmv2",
   "account",
   "members",
   "models",
@@ -106,7 +106,7 @@ export function settingsNavGroups(
     { id: "connection", label: "Connection", icon: Link2Icon },
     { id: "git", label: "Git", icon: GitBranchIcon },
     { id: "shortcuts", label: "Keyboard shortcuts", icon: KeyboardIcon, hideOnMobile: true },
-    { id: "puppygarden", label: "Puppy Garden", icon: SparklesIcon },
+    { id: "pmv2", label: "GlobalHub", icon: SparklesIcon },
     { id: "import", label: "Import sessions", icon: DownloadIcon },
   ];
   // Sandbox Integrations appears once any connection provider is wired

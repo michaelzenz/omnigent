@@ -43,8 +43,8 @@ import {
 } from "@/lib/agentTasksApi";
 import { interrupt as interruptSession } from "@/lib/sessionsApi";
 import { useChatStore } from "@/store/chatStore";
-import { FIXTURE_TASK_LIST } from "@/shell/puppyGarden/fixtures/mockTaskDashboard";
-import { isPuppyGardenFixtureMode } from "@/shell/puppyGarden/fixtures/puppyGardenFixtureMode";
+import { FIXTURE_TASK_LIST } from "@/shell/pmv2/fixtures/mockTaskDashboard";
+import { isPmv2FixtureMode } from "@/shell/pmv2/fixtures/pmv2FixtureMode";
 import {
   fixtureRemoveAsset,
   fixtureRemoveItem,
@@ -52,10 +52,10 @@ import {
   fixtureRetryItem,
   fixtureStopRunning,
   fixtureUpdateItem,
-} from "@/shell/puppyGarden/fixtures/puppyGardenFixtureStore";
-import { useFixtureDashboard } from "@/shell/puppyGarden/fixtures/useFixtureDashboard";
+} from "@/shell/pmv2/fixtures/pmv2FixtureStore";
+import { useFixtureDashboard } from "@/shell/pmv2/fixtures/useFixtureDashboard";
 
-const fixtureEnabled = isPuppyGardenFixtureMode();
+const fixtureEnabled = isPmv2FixtureMode();
 
 function invalidateTaskQueries(queryClient: ReturnType<typeof useQueryClient>, taskId: string) {
   return Promise.all([

@@ -33,11 +33,11 @@ _logger = logging.getLogger(__name__)
 
 _ROLE_MANUALS = {
     TASK_BROKER_ROLE: (
-        "You are the task broker of PuppyGarden. Read host.puppygarden.root from "
+        "You are the task broker of GlobalHub. Read host.pmv2.root from "
         "~/.omnigent/config.yaml and follow its docs/TASK_BROKER.md manual."
     ),
     TASK_SECRETARY_ROLE_KEY: (
-        "You are the task secretary of PuppyGarden. Read host.puppygarden.root from "
+        "You are the task secretary of GlobalHub. Read host.pmv2.root from "
         "~/.omnigent/config.yaml and follow its docs/TASK_SECRETARY.md manual."
     ),
 }
@@ -46,10 +46,10 @@ _ROLE_MANUALS = {
 def _role_manual(role: str) -> str:
     if is_manager_role_key(role):
         return (
-            "You are a PuppyGarden task manager. Read host.puppygarden.root from "
+            "You are a GlobalHub task manager. Read host.pmv2.root from "
             "~/.omnigent/config.yaml and follow its docs/TASK_MANAGER.md manual."
         )
-    return _ROLE_MANUALS.get(role, f"Follow the PuppyGarden manual for role {role}.")
+    return _ROLE_MANUALS.get(role, f"Follow the GlobalHub manual for role {role}.")
 
 
 def _ensure_role_prompt_profile(
@@ -61,9 +61,9 @@ def _ensure_role_prompt_profile(
         return existing_profile_id
     profile = store.create(
         uuid.uuid4().hex,
-        f"PuppyGarden · {role_profile_title(role)}",
+        f"GlobalHub · {role_profile_title(role)}",
         _role_manual(role),
-        description=f"PuppyGarden manual for {role_profile_title(role)}",
+        description=f"GlobalHub manual for {role_profile_title(role)}",
         visible=False,
     )
     return profile.id

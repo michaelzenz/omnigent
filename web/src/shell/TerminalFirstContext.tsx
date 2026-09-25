@@ -114,7 +114,7 @@ export function useTerminalFirst(): TerminalFirstContextValue | null {
 
 /**
  * Minimal terminal-first context for embedded chat surfaces (e.g.
- * PuppyGarden's sidebar) that are chat-only and not wired to AppShell's
+ * pmv2's sidebar) that are chat-only and not wired to AppShell's
  * terminal panel. `isNativeWrapper` is derived from session labels so
  * native-CLI harness behavior (elicitation cards, send queueing, model
  * picker) matches the main chat page.
@@ -138,7 +138,7 @@ export function terminalFirstContextForEmbeddedSession(
 
 /**
  * Terminal-first context for embedded chat surfaces outside AppShell (e.g.
- * PuppyGarden's sidebar). Mirrors AppShell's panel state so MainAgentSurface
+ * pmv2's sidebar). Mirrors AppShell's panel state so MainAgentSurface
  * can render MainTerminalView and mirror cursor-native TUI output into chat.
  */
 export function useEmbeddedTerminalFirstContext(

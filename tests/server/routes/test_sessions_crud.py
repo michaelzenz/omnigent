@@ -749,7 +749,7 @@ async def test_list_sessions_pinned_filter(
     assert other_user_pin.id not in ids
 
 
-# ── DELETE /v1/sessions/{id} soft-deletes PuppyGarden workers ────────
+# ── DELETE /v1/sessions/{id} soft-deletes pmv2 workers ────────
 
 
 async def test_delete_session_soft_deletes_bound_workers(

@@ -358,7 +358,7 @@ interface SidebarProps {
  * mount path. Instead compare the active route's last non-empty path segment,
  * which is `inbox` in both standalone and embedded modes. Conversation ids are
  * `conv_…`-prefixed, so a chat route's leaf can never collide with `inbox`.
- * Same pattern for the PuppyGarden board at `/puppy-garden`.
+ * Same pattern for the pmv2 board at `/pmv2`.
  */
 function useActiveNavItem(): {
   isNewChatPage: boolean;
@@ -367,7 +367,7 @@ function useActiveNavItem(): {
   isUsagePage: boolean;
   activeExtensionPageId: string | null;
   isStatisticsPage: boolean;
-  isPuppyGardenPage: boolean;
+  isPmv2Page: boolean;
   isGlossariesPage: boolean;
   newSessionProjectName: string | null;
 } {
@@ -382,7 +382,7 @@ function useActiveNavItem(): {
   const activeExtensionPageId =
     resolveExtensionPageFromPath(extensions, location.pathname)?.page.id ?? null;
   const isStatisticsPage = !isExtensionRoute && leaf === "statistics";
-  const isPuppyGardenPage = !isExtensionRoute && leaf === "puppy-garden";
+  const isPmv2Page = !isExtensionRoute && leaf === "pmv2";
   const isGlossariesPage = !isExtensionRoute && leaf === "glossaries";
   const isNewSessionRoute =
     activeConversationId == null &&
@@ -390,7 +390,7 @@ function useActiveNavItem(): {
     !isTasksPage &&
     !isUsagePage &&
     !isStatisticsPage &&
-    !isPuppyGardenPage &&
+    !isPmv2Page &&
     !isGlossariesPage &&
     !isExtensionRoute;
   const requestedProject = isNewSessionRoute
@@ -408,7 +408,7 @@ function useActiveNavItem(): {
     isUsagePage,
     activeExtensionPageId,
     isStatisticsPage,
-    isPuppyGardenPage,
+    isPmv2Page,
     isGlossariesPage,
     newSessionProjectName,
   };
@@ -759,7 +759,7 @@ function SidebarImpl({
     isUsagePage,
     activeExtensionPageId,
     isStatisticsPage,
-    isPuppyGardenPage,
+    isPmv2Page,
     isGlossariesPage,
     newSessionProjectName,
   } = useActiveNavItem();
@@ -1109,20 +1109,20 @@ function SidebarImpl({
                   SIDEBAR_ROW,
                   "w-full justify-start border-0 font-normal",
                   SIDEBAR_HOVER_HIGHLIGHT,
-                  isPuppyGardenPage && SIDEBAR_ACTIVE_HIGHLIGHT,
+                  isPmv2Page && SIDEBAR_ACTIVE_HIGHLIGHT,
                 )}
-                data-testid="sidebar-tab-puppy-garden"
+                data-testid="sidebar-tab-pmv2"
               >
-                <Link to="/puppy-garden" onClick={onNavClick}>
+                <Link to="/pmv2" onClick={onNavClick}>
                   <PawPrintIcon
                     className={cn(
                       "ui-icon",
-                      isPuppyGardenPage
+                      isPmv2Page
                         ? "text-[var(--sidebar-active-foreground)]"
                         : "text-muted-foreground",
                     )}
                   />
-                  PuppyGarden
+                  GlobalHub
                 </Link>
               </Button>
               <Button

@@ -1279,11 +1279,11 @@ describe("Sidebar tabs", () => {
     expect(screen.queryByText("conv_mine")).toBeNull();
   });
 
-  it("renders the PuppyGarden nav button", () => {
+  it("renders the GlobalHub nav button", () => {
     mockConversations([conv("conv_mine", "Claude Code")]);
     renderSidebar();
-    const puppyGarden = screen.getByTestId("sidebar-tab-puppy-garden");
-    expect(puppyGarden).toHaveAttribute("href", "/puppy-garden");
+    const pmv2 = screen.getByTestId("sidebar-tab-pmv2");
+    expect(pmv2).toHaveAttribute("href", "/pmv2");
   });
 
   it("shows every pinned session in Pinned regardless of the My/Shared filter", () => {

@@ -40,7 +40,7 @@ GROUPS: list[ToolGroup] = [
     ToolGroup(id="memory", title="Long-term memory", order=90),
     ToolGroup(id="mcp", title="MCP access", order=100),
     ToolGroup(id="models", title="Model discovery", order=110),
-    ToolGroup(id="puppygarden", title="PuppyGarden", order=120),
+    ToolGroup(id="pmv2", title="pmv2", order=120),
 ]
 
 TOOLS: list[ToolCatalogEntry] = [
@@ -375,12 +375,12 @@ TOOLS: list[ToolCatalogEntry] = [
     ToolCatalogEntry(
         "sys_advise_models", "Advise on models", "Provide model routing advice.", "models"
     ),
-    # PuppyGarden
+    # pmv2
     ToolCatalogEntry(
-        "puppygarden_api",
-        "PuppyGarden task API",
-        "Call a PuppyGarden task API endpoint.",
-        "puppygarden",
+        "pmv2_api",
+        "pmv2 task API",
+        "Call a pmv2 task API endpoint.",
+        "pmv2",
     ),
 ]
 

@@ -1,4 +1,4 @@
-"""Tests for the PuppyGarden board search read model and its chat scan."""
+"""Tests for the pmv2 board search read model and its chat scan."""
 
 from __future__ import annotations
 

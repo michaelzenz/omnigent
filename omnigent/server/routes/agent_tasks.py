@@ -32,7 +32,7 @@ from omnigent.agent_tasks.agent_builtins import (
 from omnigent.agent_tasks.board_search import search_board_tasks
 from omnigent.agent_tasks.bootstrap import (
     bootstrap_task_manager,
-    ensure_puppygarden_project,
+    ensure_pmv2_project,
     resolve_bootstrap_params,
     spawn_manager_session,
 )
@@ -136,7 +136,7 @@ from omnigent.stores.task_store import TaskStore
 from omnigent.stores.user_role_session_store import UserRoleSessionStore
 from omnigent.stores.worker_provider_store import WorkerProviderStore
 from omnigent.stores.worker_store import WORKER_KIND_MANAGED, WorkerStore
-from omnigent.tools.builtins.puppygarden_api import PUPPYGARDEN_CALLER_CONVERSATION_HEADER
+from omnigent.tools.builtins.pmv2_api import PMV2_CALLER_CONVERSATION_HEADER
 
 _logger = logging.getLogger(__name__)
 
@@ -303,7 +303,7 @@ class PutTaskTagsRequest(BaseModel):
 
 
 class _RoleProfileFieldsMixin(BaseModel):
-    """Editable metadata for a PuppyGarden role manual."""
+    """Editable metadata for a pmv2 role manual."""
 
     name: str | None = None
     harness: str | None = None
@@ -949,7 +949,7 @@ def create_agent_tasks_router(
     :param task_role_profile_store: Glossary role definitions used for bootstrap.
     :param user_role_session_store: Per-user session bindings for singleton roles.
     :param host_store: Used to auto-provision role profiles with a default host.
-    :param prompt_profile_store: Stores the hidden manuals bound to PuppyGarden roles.
+    :param prompt_profile_store: Stores the hidden manuals bound to pmv2 roles.
     :param auth_provider: Auth provider for owner attribution and access
         checks. ``None`` disables auth enforcement.
     :param permission_store: Used to let admins list/view any task.
@@ -1440,7 +1440,7 @@ def create_agent_tasks_router(
                     user_id=user_id,
                     session_creator=session_creator,
                     project_id=await asyncio.to_thread(
-                        ensure_puppygarden_project, project_store, user_id
+                        ensure_pmv2_project, project_store, user_id
                     ),
                 )
                 await _bind_role_session(effective_user_id, role, conversation_id)
@@ -1472,7 +1472,7 @@ def create_agent_tasks_router(
                     user_id=user_id,
                     session_creator=session_creator,
                     project_id=await asyncio.to_thread(
-                        ensure_puppygarden_project, project_store, user_id
+                        ensure_pmv2_project, project_store, user_id
                     ),
                 )
                 await _bind_role_session(effective_user_id, role, conversation_id)
@@ -1777,7 +1777,7 @@ def create_agent_tasks_router(
         """Update the authenticated caller manager's self-description."""
         user_id = require_user(request, auth_provider)
         owner = _effective_user_id(user_id)
-        conversation_id = request.headers.get(PUPPYGARDEN_CALLER_CONVERSATION_HEADER)
+        conversation_id = request.headers.get(PMV2_CALLER_CONVERSATION_HEADER)
         tunnel_token = request.headers.get(RUNNER_TUNNEL_TOKEN_HEADER)
         if not conversation_id or not tunnel_token:
             raise OmnigentError(
@@ -1916,7 +1916,7 @@ def create_agent_tasks_router(
         q: str = "",
         limit: int = Query(default=BOARD_SEARCH_DEFAULT_LIMIT, ge=1, le=BOARD_SEARCH_MAX_LIMIT),
     ) -> dict[str, Any]:
-        """Board search for the PuppyGarden task list.
+        """Board search for the pmv2 task list.
 
         Matches the query (case-insensitive substring) against board-visible
         task text (title/goal/description/id), task items, assets, worker lane
@@ -2566,7 +2566,7 @@ def create_agent_tasks_router(
         async def untrack_worker(request: Request, worker_id: str) -> dict[str, Any]:
             """Remove a worker from its task. Done items stay for audit; all
             other items are cancelled. The session keeps running as a regular
-            session — only the PuppyGarden binding is removed.
+            session — only the pmv2 binding is removed.
             """
             user_id = require_user(request, auth_provider)
             worker = await asyncio.to_thread(worker_store.get_worker, worker_id)
@@ -3330,7 +3330,6 @@ def create_agent_tasks_router(
                 }
 
             return await asyncio.to_thread(_match)
-
 
         @router.get("/agent-tasks/board/pending")
         async def list_board_pending(request: Request) -> dict[str, Any]:

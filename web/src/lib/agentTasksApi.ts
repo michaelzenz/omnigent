@@ -156,10 +156,10 @@ export const TASK_BROKER_ROLE = "broker";
 export const MANAGER_DEFAULT_ROLE_KEY = "manager:default";
 export const MANAGER_ROLE_PREFIX = "manager:";
 
-// Conversation label marking a PuppyGarden role session. Mirrors the backend
+// Conversation label marking a pmv2 role session. Mirrors the backend
 // ``omnigent.agent_tasks.session_labels`` constants. ``task_broker`` and
 // ``task_manager`` are background agents whose chat is not a reading surface
-// (their output lands on the PuppyGarden board), so the sidebar never shows
+// (their output lands on the pmv2 board), so the sidebar never shows
 // their unread dot and excludes them from the unread badge count.
 export const ROLE_LABEL_KEY = "omnigent.role";
 export const BROKER_ROLE_VALUE = "task_broker";

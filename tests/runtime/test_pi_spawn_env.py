@@ -94,9 +94,9 @@ def test_builtin_onih_pi_does_not_pin_a_default_model() -> None:
     assert spec.executor.model is None
 
 
-def test_builtin_onih_puppygarden_maps_pi_executor_config(tmp_path: Path) -> None:
+def test_builtin_onih_pmv2_maps_pi_executor_config(tmp_path: Path) -> None:
     """
-    The onih-puppygarden bundle (broker/manager restricted profile) runs
+    The onih-pmv2 bundle (broker/manager restricted profile) runs
     the pi harness with a rolling context window. Its stringified
     executor booleans map to the ``HARNESS_PI_*`` env vars the harness
     wrap reads.
@@ -105,10 +105,10 @@ def test_builtin_onih_puppygarden_maps_pi_executor_config(tmp_path: Path) -> Non
     values, so ``native_tools: false`` arrives as ``"False"`` — the
     stringified-boolean branch in ``_build_pi_spawn_env`` must handle it.
     """
-    spec = load(Path("omnigent/resources/examples/onih-puppygarden"))
+    spec = load(Path("omnigent/resources/examples/onih-pmv2"))
 
     assert spec.executor.harness_kind == "pi"
-    assert "puppygarden_api" in (spec.allowed_builtin_tools or [])
+    assert "pmv2_api" in (spec.allowed_builtin_tools or [])
     assert "*__*" not in (spec.allowed_builtin_tools or [])
     assert spec.skills_filter == "none"
     assert spec.history_window_turns == 5
@@ -328,7 +328,7 @@ def test_history_window_absent_by_default_and_off_by_default() -> None:
     """No ``history_window_turns`` in the spec → no window env var.
 
     Ordinary Pi agents keep full history; only bundles that opt in
-    (onih-puppygarden) carry the env.
+    (onih-pmv2) carry the env.
     """
     spec = load(Path("omnigent/resources/examples/onih-pi"))
     assert spec.history_window_turns is None

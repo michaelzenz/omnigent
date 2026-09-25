@@ -1,7 +1,7 @@
 """Tests for the stateless-router history window in the Pi executor.
 
 ``history_window_turns`` bounds the serialized "Conversation so far"
-prompt to the last N user turns — PuppyGarden broker/manager keep state
+prompt to the last N user turns — pmv2 broker/manager keep state
 in the task store, not in chat history.
 """
 
@@ -57,8 +57,14 @@ class TestWindowHistoryTail:
         for i in range(3):
             h.append({"role": "user", "content": [{"type": "text", "text": f"u{i}"}]})
             h.append({"role": "assistant", "content": [{"type": "text", "text": f"a{i}"}]})
-            h.append({"role": "toolResult", "toolCallId": f"c{i}", "toolName": "t",
-                      "content": [{"type": "text", "text": f"r{i}"}]})
+            h.append(
+                {
+                    "role": "toolResult",
+                    "toolCallId": f"c{i}",
+                    "toolName": "t",
+                    "content": [{"type": "text", "text": f"r{i}"}],
+                }
+            )
         kept = _window_history_tail(h, 1)
         # Only the last exchange survives: u2 + a2 + its tool result.
         assert [m["role"] for m in kept] == ["user", "assistant", "toolResult"]
@@ -136,6 +142,8 @@ class TestExtensionSourceWindow:
             return  # JS runtime unavailable in CI — skip syntax check
         result = subprocess.run(
             [node, "--check", "/dev/stdin"],
-            input=src, capture_output=True, text=True,
+            input=src,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 0, result.stderr

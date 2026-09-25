@@ -1935,14 +1935,14 @@ main[data-shell-header="hidden"] .extension-view-status {
   top: 0;
 }
 
-/* PuppyGarden cards own only the board surface; the global application sidebar
+/* pmv2 cards own only the board surface; the global application sidebar
  * remains outside this layout. Card columns stack based on card width so the
  * assets/workers rail cannot be clipped by the chat sidebar. */
-.puppy-garden-shell {
+.pmv2-shell {
   grid-template-columns: minmax(0, 1fr) clamp(18rem, 36vw, 26.25rem);
 }
 
-.puppy-task-card {
+.pmv2-task-card {
   container-name: task-card;
   container-type: inline-size;
 }
@@ -1951,47 +1951,47 @@ main[data-shell-header="hidden"] .extension-view-status {
  * the assets/workers rail keeps a fixed right column (drops below on narrow cards).
  * Card height = the min-height floor or the main column, whichever is taller:
  * the rail is capped to the card height and scrolls its overflow inside. */
-.puppy-task-card-body {
+.pmv2-task-card-body {
   grid-template-columns: minmax(0, 1fr) minmax(15rem, 18rem);
   min-height: 16rem;
 }
 
 /* The rail cell carries no in-flow content, so it contributes nothing to row
  * sizing; the rail itself absolute-fills the cell and scrolls internally. */
-.puppy-task-card-rail-cell {
+.pmv2-task-card-rail-cell {
   position: relative;
   min-width: 0;
 }
 
-.puppy-task-card-rail {
+.pmv2-task-card-rail {
   position: absolute;
   inset: 0;
 }
 
 /* Overview meta strip: 2 columns on narrow cards, 4 across on wide ones. */
-.puppy-task-card-meta {
+.pmv2-task-card-meta {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 @container task-card (min-width: 40rem) {
-  .puppy-task-card-meta {
+  .pmv2-task-card-meta {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
 @container task-card (max-width: 58rem) {
-  .puppy-task-card-body {
+  .pmv2-task-card-body {
     grid-template-columns: minmax(0, 1fr);
   }
 
   /* Stacked layout: the rail flows after the main column at natural height. */
-  .puppy-task-card-rail {
+  .pmv2-task-card-rail {
     position: static;
   }
 }
 
 @media (max-width: 48rem) {
-  .puppy-garden-shell {
+  .pmv2-shell {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(60%, 1fr) minmax(18rem, 40%);
     overflow: auto;

@@ -1,7 +1,7 @@
 """Board search: match a query against a task's board-visible text and the
 chat content of its worker sessions.
 
-Powers ``GET /v1/agent-tasks/board-search`` — the PuppyGarden board's
+Powers ``GET /v1/agent-tasks/board-search`` — the pmv2 board's
 floating search bar. Server-side only: the board fetches matching task ids
 plus per-entity match ids (items, assets, workers) and renders rings from
 them. Executions are out of scope, as is the manager conversation — the

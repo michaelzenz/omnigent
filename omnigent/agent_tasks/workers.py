@@ -9,7 +9,7 @@ from omnigent.stores.worker_store import WorkerStore
 
 
 def _generate_worker_id() -> str:
-    """Return a durable PuppyGarden Worker ID."""
+    """Return a durable pmv2 Worker ID."""
     return uuid.uuid4().hex
 
 

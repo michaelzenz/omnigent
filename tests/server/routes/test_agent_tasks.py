@@ -25,7 +25,7 @@ from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStor
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
-from omnigent.tools.builtins.puppygarden_api import PUPPYGARDEN_CALLER_CONVERSATION_HEADER
+from omnigent.tools.builtins.pmv2_api import PMV2_CALLER_CONVERSATION_HEADER
 from tests.server.routes.agent_task_api import (
     agent_role_profile_url,
     agent_role_session_reset_url,
@@ -225,7 +225,7 @@ async def test_create_defaults_manager_role(
     profile_resp = await client.get(agent_role_profile_url("manager:default"))
     assert profile_resp.status_code == 200
     # manager:default auto-provisions on first load, bound to the restricted
-    # PuppyGarden OmniHarness execution target.
+    # pmv2 OmniHarness execution target.
     assert profile_resp.json()["agent_profile_id"] is not None
     assert profile_resp.json()["agent_name"] is not None
 
@@ -728,7 +728,7 @@ async def test_update_manager_self_updates_only_owned_caller(
     resp = await client.patch(
         "/v1/agent-tasks/managers/self",
         headers={
-            PUPPYGARDEN_CALLER_CONVERSATION_HEADER: caller_id,
+            PMV2_CALLER_CONVERSATION_HEADER: caller_id,
             RUNNER_TUNNEL_TOKEN_HEADER: tunnel_token,
         },
         json={"description": "Caller new scope."},
@@ -760,7 +760,7 @@ async def test_update_manager_self_rejects_missing_spoofed_and_cross_owner_ident
     spoofed = await client.patch(
         "/v1/agent-tasks/managers/self",
         headers={
-            PUPPYGARDEN_CALLER_CONVERSATION_HEADER: _uid("unknown-manager"),
+            PMV2_CALLER_CONVERSATION_HEADER: _uid("unknown-manager"),
             RUNNER_TUNNEL_TOKEN_HEADER: "unknown-token",
         },
         json={"description": "Spoofed caller."},
@@ -777,7 +777,7 @@ async def test_update_manager_self_rejects_missing_spoofed_and_cross_owner_ident
     wrong_token = await client.patch(
         "/v1/agent-tasks/managers/self",
         headers={
-            PUPPYGARDEN_CALLER_CONVERSATION_HEADER: bound_id,
+            PMV2_CALLER_CONVERSATION_HEADER: bound_id,
             RUNNER_TUNNEL_TOKEN_HEADER: "wrong-token",
         },
         json={"description": "Wrong runner."},
@@ -795,7 +795,7 @@ async def test_update_manager_self_rejects_missing_spoofed_and_cross_owner_ident
     cross_owner = await client.patch(
         "/v1/agent-tasks/managers/self",
         headers={
-            PUPPYGARDEN_CALLER_CONVERSATION_HEADER: cross_owner_id,
+            PMV2_CALLER_CONVERSATION_HEADER: cross_owner_id,
             RUNNER_TUNNEL_TOKEN_HEADER: "cross-owner-token",
         },
         json={"description": "Cross-owner caller."},
@@ -819,7 +819,7 @@ async def test_update_manager_self_rejects_missing_spoofed_and_cross_owner_ident
     child = await client.patch(
         "/v1/agent-tasks/managers/self",
         headers={
-            PUPPYGARDEN_CALLER_CONVERSATION_HEADER: child_id,
+            PMV2_CALLER_CONVERSATION_HEADER: child_id,
             RUNNER_TUNNEL_TOKEN_HEADER: "child-token",
         },
         json={"description": "Child caller."},
@@ -1168,16 +1168,16 @@ async def test_reset_secretary_session_starts_without_synthetic_items(
     assert profile["model"] == "composer-2.5"
 
 
-async def test_reset_secretary_files_session_under_puppygarden_project(
+async def test_reset_secretary_files_session_under_pmv2_project(
     client: httpx.AsyncClient,
     db_uri: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Ensure/reset secretary sessions land in the owner's PuppyGarden project.
+    """Ensure/reset secretary sessions land in the owner's pmv2 project.
 
     Regression: the internal create path was called without the project
     store, so an explicitly-requested ``project_id`` (which
-    ``ensure_puppygarden_project`` always produces in production) was
+    ``ensure_pmv2_project`` always produces in production) was
     rejected as "Project not found".
     """
     _patch_workspace_validation(monkeypatch)
@@ -1189,17 +1189,17 @@ async def test_reset_secretary_files_session_under_puppygarden_project(
 
     project_store = SqlAlchemyProjectStore(db_uri)
     projects = project_store.list(user_id=None)
-    puppygarden = [p for p in projects if p.name == "PuppyGarden"]
-    assert len(puppygarden) == 1
+    pmv2 = [p for p in projects if p.name == "pmv2"]
+    assert len(pmv2) == 1
     conv = SqlAlchemyConversationStore(db_uri).get_conversation(conversation_id)
-    assert conv is not None and conv.project_id == puppygarden[0].id
+    assert conv is not None and conv.project_id == pmv2[0].id
 
     reset_resp = await client.post(agent_role_session_reset_url(TASK_SECRETARY_ROLE))
     assert reset_resp.status_code == 200
     reset_id = reset_resp.json()["conversation_id"]
     assert reset_id != conversation_id
     reset_conv = SqlAlchemyConversationStore(db_uri).get_conversation(reset_id)
-    assert reset_conv is not None and reset_conv.project_id == puppygarden[0].id
+    assert reset_conv is not None and reset_conv.project_id == pmv2[0].id
 
 
 async def test_ensure_secretary_session_auto_provisions_profile(

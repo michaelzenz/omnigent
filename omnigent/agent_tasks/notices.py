@@ -12,7 +12,10 @@ import contextlib
 import json
 import logging
 
-from omnigent.agent_tasks.constants import MANAGER_CANDIDATE_INSPECT_LIMIT, MANAGER_ROSTER_MAX_TOKENS
+from omnigent.agent_tasks.constants import (
+    MANAGER_CANDIDATE_INSPECT_LIMIT,
+    MANAGER_ROSTER_MAX_TOKENS,
+)
 from omnigent.agent_tasks.event_types import (
     EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
     SESSION_TURN_FINISHED_EVENT_TYPE,

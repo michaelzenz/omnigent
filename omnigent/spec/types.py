@@ -1614,7 +1614,7 @@ class AgentSpec:  # type: ignore[explicit-any]  # params: dict[str, Any] field (
     # tool-preferences panel) remain blocked even if listed here.
     allowed_builtin_tools: list[str] | None = None
     # Rolling context window for stateless router-style agents (e.g.
-    # PuppyGarden broker/manager on the pi harness). When set, the Pi
+    # pmv2 broker/manager on the pi harness). When set, the Pi
     # extension's "context" hook truncates every LLM call to the last N
     # turns — a turn is counted at user-message boundaries but the kept
     # tail includes the assistant reply and its tool calls/results, so

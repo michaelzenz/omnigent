@@ -1,4 +1,4 @@
-"""Background maintenance for the PuppyGarden task system.
+"""Background maintenance for the pmv2 task system.
 
 Periodically deletes old reconciled/dismissed events and completed queue
 items so large worker-output payloads do not accumulate indefinitely, and

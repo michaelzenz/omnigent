@@ -2479,9 +2479,7 @@ class SqlTaskAsset(OmnigentBase):
     created_at: Mapped[int] = mapped_column(Integer)
 
     __table_args__ = (
-        CheckConstraint(
-            "kind IN ('url', 'workspace')", name="ck_task_assets_kind"
-        ),
+        CheckConstraint("kind IN ('url', 'workspace')", name="ck_task_assets_kind"),
         CheckConstraint(
             "category IN ('code', 'tests', 'documents', 'logs', 'other', 'workspace')",
             name="ck_task_assets_category",
@@ -2566,7 +2564,7 @@ class SqlFyiClusterEvent(OmnigentBase):
 
 
 class SqlWorkerProvider(OmnigentBase):
-    """Reusable, prompt-free definition for initializing a PuppyGarden worker."""
+    """Reusable, prompt-free definition for initializing a pmv2 worker."""
 
     __tablename__ = "worker_providers"
 
@@ -2593,7 +2591,7 @@ class SqlWorkerProvider(OmnigentBase):
 
 
 class SqlTaskRoleProfile(OmnigentBase):
-    """PuppyGarden role binding to a hidden PromptProfile manual.
+    """pmv2 role binding to a hidden PromptProfile manual.
 
     Launch fields are resolved placement for the fixed OmniHarness target;
     role identity and instructions come from ``role`` and ``prompt_profile_id``.
@@ -2826,7 +2824,7 @@ class SqlDispatchStop(OmnigentBase):
 
     One row per role the user has told the dispatcher not to dispatch.
     Role-wide and persistent — distinct from a per-queue ``paused`` state,
-    which the resume endpoint clears. The PuppyGarden board config panel
+    which the resume endpoint clears. The pmv2 board config panel
     is the intended writer; the dispatcher reads the whole list once per
     scan pass.
     """

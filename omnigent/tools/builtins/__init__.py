@@ -46,7 +46,7 @@ from omnigent.tools.builtins.load_skill import (
 )
 from omnigent.tools.builtins.nimble_extract import NimbleExtractTool
 from omnigent.tools.builtins.nimble_research import NimbleResearchTool
-from omnigent.tools.builtins.puppygarden_api import PuppyGardenApiTool
+from omnigent.tools.builtins.pmv2_api import Pmv2ApiTool
 from omnigent.tools.builtins.read_skill_file import (
     ReadSkillFileTool,
 )
@@ -88,7 +88,7 @@ __all__ = [
     "LoadSkillTool",
     "NimbleExtractTool",
     "NimbleResearchTool",
-    "PuppyGardenApiTool",
+    "Pmv2ApiTool",
     "ReadSkillFileTool",
     "ServeHtmlTool",
     "SysAdviseModelsTool",
@@ -318,14 +318,14 @@ _BUILTIN_REGISTRY: dict[str, _BuiltinFactory | None] = {
     "browser_click": None,
     "browser_type": None,
     "browser_screenshot": None,
-    # ``puppygarden_api`` is framework-owned: always auto-registered by
-    # ``ToolManager._register_puppygarden_api_tool`` so any agent can call
-    # the PuppyGarden task REST API without curling. Reserved here with
+    # ``pmv2_api`` is framework-owned: always auto-registered by
+    # ``ToolManager._register_pmv2_api_tool`` so any agent can call
+    # the pmv2 task REST API without curling. Reserved here with
     # ``None`` — like ``list_comments`` — so user specs cannot shadow the
     # name and ``get_builtin_tool`` returns ``None`` for it. Execution is
-    # runner-dispatched (``_PUPPYGARDEN_API_TOOLS`` in
+    # runner-dispatched (``_PMV2_API_TOOLS`` in
     # omnigent/runner/tool_dispatch.py).
-    "puppygarden_api": None,
+    "pmv2_api": None,
 }
 
 # Hindsight long-term memory (optional ``hindsight`` extra). Registered only

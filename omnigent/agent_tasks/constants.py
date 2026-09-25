@@ -7,9 +7,9 @@ import os
 # Tag-similarity router (the ingress scorer + tag_matches search + broker
 # suggested candidates). DEPRECATED: the manager now picks tasks from the
 # rank-ordered roster injected into each notice and reads details via the
-# batch endpoint. Flip to True (or set OMNIGENT_PUPPYGARDEN_TAG_ROUTER=1)
+# batch endpoint. Flip to True (or set OMNIGENT_PMV2_TAG_ROUTER=1)
 # to restore scorer auto-routing while it is being retired.
-TAG_ROUTER_ENABLED = os.environ.get("OMNIGENT_PUPPYGARDEN_TAG_ROUTER", "").lower() in {
+TAG_ROUTER_ENABLED = os.environ.get("OMNIGENT_PMV2_TAG_ROUTER", "").lower() in {
     "1",
     "true",
 }

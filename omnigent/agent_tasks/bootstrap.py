@@ -84,14 +84,14 @@ def resolve_bootstrap_params(
     )
 
 
-_PUPPYGARDEN_PROJECT_NAME = "PuppyGarden"
+_PMV2_PROJECT_NAME = "GlobalHub"
 
 
-def ensure_puppygarden_project(
+def ensure_pmv2_project(
     project_store: Any,
     user_id: str | None,
 ) -> str | None:
-    """Find or create the owner's "PuppyGarden" project, return its id.
+    """Find or create the owner's "pmv2" project, return its id.
 
     Called by role session bootstraps so broker, secretary, and manager
     sessions are filed into one project instead of cluttering the flat
@@ -100,19 +100,19 @@ def ensure_puppygarden_project(
     if project_store is None:
         return None
     for proj in project_store.list(user_id=user_id):
-        if proj.name == _PUPPYGARDEN_PROJECT_NAME:
+        if proj.name == _PMV2_PROJECT_NAME:
             return proj.id
     try:
         proj = project_store.create(
             uuid.uuid4().hex,
-            _PUPPYGARDEN_PROJECT_NAME,
+            _PMV2_PROJECT_NAME,
             user_id,
         )
         return proj.id
     except OmnigentError as exc:
         if exc.code == ErrorCode.ALREADY_EXISTS:
             for proj in project_store.list(user_id=user_id):
-                if proj.name == _PUPPYGARDEN_PROJECT_NAME:
+                if proj.name == _PMV2_PROJECT_NAME:
                     return proj.id
         raise
 
@@ -274,7 +274,7 @@ async def _session_request_for_manager(
         workspace=manager.workspace,
         harness_override=manager.harness,
         model_override=manager.model,
-        # The role label marks the session as a PuppyGarden background role:
+        # The role label marks the session as a pmv2 background role:
         # the web sidebar suppresses its unread dot and keeps it out of the
         # dock badge, exactly like the broker's.
         labels={
@@ -287,7 +287,7 @@ async def _session_request_for_manager(
             else None
         ),
         project_id=await asyncio.to_thread(
-            ensure_puppygarden_project,
+            ensure_pmv2_project,
             getattr(app_state, "project_store", None),
             None if manager.owner_user_id == "__anonymous__" else manager.owner_user_id,
         ),
@@ -384,7 +384,7 @@ async def spawn_manager_session(
         workspace=params.workspace,
         harness_override=params.harness,
         model_override=params.model,
-        # Same role label as the heal path: marks the session as a PuppyGarden
+        # Same role label as the heal path: marks the session as a pmv2
         # background role so the web sidebar suppresses its unread dot and
         # keeps it out of the dock badge.
         labels={ROLE_LABEL: MANAGER_ROLE_VALUE},
@@ -394,7 +394,7 @@ async def spawn_manager_session(
             else None
         ),
         project_id=await asyncio.to_thread(
-            ensure_puppygarden_project,
+            ensure_pmv2_project,
             getattr(app_state, "project_store", None),
             user_id,
         ),
