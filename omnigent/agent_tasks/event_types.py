@@ -40,6 +40,11 @@ EXTERNAL_SESSION_UPDATED_EVENT_TYPE = "external.session.updated"
 # for the same session.
 SESSION_TURN_FINISHED_EVENT_TYPE = "session.turn.finished"
 
+# An adopted internal session was deleted. Routed to the governing managers
+# (born ``awaiting_grouping`` when the session is unbound) so pending work
+# for the deleted session can be reconciled against its disappearance.
+SESSION_DELETED_EVENT_TYPE = "session.deleted"
+
 # A user-initiated request (board config) asking the broker to spin up
 # manager(s) and assign the listed unmanaged tasks to them. The payload
 # carries the task list; born ``awaiting_grouping`` so the broker packager

@@ -18,6 +18,7 @@ from omnigent.agent_tasks.constants import (
 )
 from omnigent.agent_tasks.event_types import (
     EXTERNAL_SESSION_UPDATED_EVENT_TYPE,
+    SESSION_DELETED_EVENT_TYPE,
     SESSION_TURN_FINISHED_EVENT_TYPE,
     WORKER_EXECUTION_FINISHED_EVENT_TYPE,
 )
@@ -56,7 +57,10 @@ def _format_task_roster(
         lines.append(line)
         used += cost
         kept += 1
-    header = f"[Task roster — ranked, inspect up to {MANAGER_CANDIDATE_INSPECT_LIMIT} via POST /v1/agent-tasks/batch]"
+    header = (
+        f"[Task roster — ranked, inspect up to {MANAGER_CANDIDATE_INSPECT_LIMIT} "
+        "via POST /v1/agent-tasks/batch]"
+    )
     remaining = len(roster) - kept
     if remaining > 0:
         lines.append(
@@ -115,6 +119,8 @@ def _format_manager_notice(events: list) -> str:
                 lines.append(_format_external_update_notice(event))
             elif event.event_type == SESSION_TURN_FINISHED_EVENT_TYPE:
                 lines.append(_format_turn_finished_notice(event))
+            elif event.event_type == SESSION_DELETED_EVENT_TYPE:
+                lines.append(_format_session_deleted_notice(event))
             else:
                 lines.append(f"- {_label(event)}{event.event_type}: {event.title!r} (routed)")
         else:
@@ -130,6 +136,11 @@ def _label(event) -> str:
 
 def _format_session_batch_notice(events: list) -> str:
     """Summarize multiple events for the same session as a single entry."""
+    # A deletion supersedes everything else in the batch — the session no
+    # longer exists, so "finished N turns" would mislead the manager.
+    deleted = [e for e in events if e.event_type == SESSION_DELETED_EVENT_TYPE]
+    if deleted:
+        return _format_session_deleted_notice(deleted[-1])
     event_type = events[0].event_type
     count = len(events)
     payload: dict = {}
@@ -203,6 +214,28 @@ def _format_external_update_notice(event) -> str:
     return "\n".join(parts)
 
 
+def _format_session_deleted_notice(event) -> str:
+    """Render a session.deleted event as a manager prompt."""
+    payload: dict = {}
+    if event.payload:
+        try:
+            payload = json.loads(event.payload)
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+    session_title = payload.get("session_title", "?")
+    session_id = payload.get("session_id", "?")
+    lines = [f"- {event.event_type}: Session '{session_title}' was deleted\n"]
+    if payload.get("project_name"):
+        lines.append(f"  Project: {payload['project_name']}\n")
+    lines.extend(
+        [
+            f"  Session ID: {session_id}\n",
+            "  The session no longer exists — user manually deleted it.",
+        ]
+    )
+    return "".join(lines)
+
+
 def _format_turn_finished_notice(event) -> str:
     """Render a session.turn.finished event as a manager prompt."""
     payload: dict = {}
@@ -219,8 +252,8 @@ def _format_turn_finished_notice(event) -> str:
     lines.extend(
         [
             f"  Session ID: {session_id}\n",
-            f"  Read the recent session transcript to see what was done. "
-            f"Reconcile into task items if relevant.",
+            "  Read the recent session transcript to see what was done. "
+            "Reconcile into task items if relevant.",
         ]
     )
     return "".join(lines)

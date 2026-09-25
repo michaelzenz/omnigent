@@ -202,6 +202,7 @@ from omnigent.server.routes._sessions.helpers import (
     _stop_session_via_runner,
     _stream_live_events,
     _wait_for_runner_client,
+    maybe_emit_session_deleted_event,
 )
 from omnigent.server.routes._sessions.orchestration import (
     _best_effort_stop,
@@ -3033,6 +3034,17 @@ def register_events_routes(
         deleted = await conversation_store.delete_conversation(session_id)
         if not deleted:
             raise _session_not_found()
+        # pmv2: notify the governing managers (or the broker, when the session
+        # is unbound) that the session is gone. Runs before the lanes below
+        # are soft-deleted — the broadcast traversal only sees live workers.
+        # Best-effort ordering: a turn-finish emit racing this window either
+        # batches with this event (superseded) or no-ops on the deleted lane.
+        try:
+            await asyncio.to_thread(maybe_emit_session_deleted_event, session_id, conv)
+        except Exception:
+            _logger.warning(
+                "session-deleted event emission failed for %s", session_id, exc_info=True
+            )
         # pmv2 workers bound to this session (worker.target_id) die
         # with it: soft-delete every lane so the dispatcher never dispatches
         # another item into a session that no longer exists.

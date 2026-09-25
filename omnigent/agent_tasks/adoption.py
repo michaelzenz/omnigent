@@ -9,7 +9,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from omnigent.agent_tasks.event_host import host_tag
-from omnigent.agent_tasks.event_types import SESSION_TURN_FINISHED_EVENT_TYPE
+from omnigent.agent_tasks.event_types import (
+    SESSION_DELETED_EVENT_TYPE,
+    SESSION_TURN_FINISHED_EVENT_TYPE,
+)
 from omnigent.agent_tasks.manager_discovery import _LIVE_TASK_STATES
 from omnigent.agent_tasks.routing import route_event_to_task
 from omnigent.agent_tasks.workers import _generate_worker_id
@@ -557,6 +560,254 @@ def emit_turn_finished_event(
             _logger.exception(
                 "failed to emit %s event for session %s to manager %s",
                 SESSION_TURN_FINISHED_EVENT_TYPE,
+                session_id,
+                manager_id,
+            )
+
+
+# ── Session-deleted event for adopted internal sessions ────────────
+
+
+def emit_session_deleted_event_for_pending_turn(
+    *,
+    session_id: str,
+    conv: Conversation | None,
+    owner_user_id: str,
+) -> None:
+    """Emit a ``session.deleted`` event only when a turn-finished is in flight.
+
+    Unbound sessions are otherwise untracked — no worker lane, no task, no
+    manager — so a deletion signal with no pending turn-finished is pure
+    noise. When a ``session.turn.finished`` event IS pending, the deletion
+    must ride the same lanes it is traveling: born-``routed`` to each
+    manager already holding a routed one (the manager packager batches
+    per-session events, so the deletion supersedes the phantom turn), and
+    born-``awaiting_grouping`` when one is still awaiting broker grouping.
+    """
+    if _context is None:
+        return
+    # Where are this session's in-flight turn-finished signals? Filter by
+    # state in the store: settled events accumulate forever, so a type-only
+    # scan would grow unbounded.
+    managers_holding_turn: set[str] = set()
+    turn_awaiting_broker = False
+    for state in ("awaiting_grouping", "routed"):
+        for ev in _context.task_event_store.list_events(
+            event_type=SESSION_TURN_FINISHED_EVENT_TYPE,
+            state=state,
+        ):
+            if ev.source_key != session_id:
+                continue
+            if ev.manager_id is not None:
+                managers_holding_turn.add(ev.manager_id)
+            elif state == "awaiting_grouping":
+                turn_awaiting_broker = True
+    if not managers_holding_turn and not turn_awaiting_broker:
+        return
+
+    session_title = conv.title if conv is not None else session_id
+    project_name = _project_name(
+        _context.project_store,
+        conv.project_id if conv is not None else None,
+        owner_user_id or None,
+    )
+    payload = json.dumps(
+        {
+            "session_id": session_id,
+            "session_title": session_title,
+            "project_name": project_name,
+        },
+        ensure_ascii=False,
+    )
+    title = f"Session deleted: {session_title}"
+
+    # Idempotency: skip a destination that already holds an unconsumed
+    # deleted signal for this session (double-delete race). Filter by state
+    # in the store for the same unbounded-growth reason as above.
+    pending_deleted_managers: set[str] = set()
+    deleted_awaiting_broker = False
+    for state in ("awaiting_grouping", "routed"):
+        for ev in _context.task_event_store.list_events(
+            event_type=SESSION_DELETED_EVENT_TYPE,
+            state=state,
+        ):
+            if ev.source_key != session_id:
+                continue
+            if ev.manager_id is not None:
+                pending_deleted_managers.add(ev.manager_id)
+            else:
+                deleted_awaiting_broker = True
+
+    if turn_awaiting_broker and not deleted_awaiting_broker:
+        try:
+            _context.task_event_store.create_event(
+                uuid.uuid4().hex,
+                SESSION_DELETED_EVENT_TYPE,
+                title,
+                source="adoption",
+                source_key=session_id,
+                state="awaiting_grouping",
+                payload=payload,
+                tags=[tag]
+                if (tag := host_tag(conv.host_id if conv is not None else None))
+                else [],
+                owner_user_id=owner_user_id,
+            )
+        except Exception:
+            _logger.exception(
+                "failed to emit %s event for session %s (unbound)",
+                SESSION_DELETED_EVENT_TYPE,
+                session_id,
+            )
+
+    # Managers already holding a routed turn-finished for the deleted
+    # session get a born-``routed`` deletion attributed to their own owner,
+    # so it lands in the same manager queue (and batch) as the signal it
+    # supersedes.
+    for manager_id in managers_holding_turn - pending_deleted_managers:
+        manager = (
+            _context.manager_store.get(manager_id) if _context.manager_store is not None else None
+        )
+        if manager is None:
+            _logger.warning(
+                "session-deleted event: in-flight turn-finished references "
+                "manager %s which does not exist; skipping",
+                manager_id,
+            )
+            continue
+        try:
+            event = _context.task_event_store.create_event(
+                uuid.uuid4().hex,
+                SESSION_DELETED_EVENT_TYPE,
+                title,
+                manager_id=manager_id,
+                source="adoption",
+                source_key=session_id,
+                state="routed",
+                payload=payload,
+                owner_user_id=manager.owner_user_id or "__anonymous__",
+            )
+            _context.task_event_store.update_event(event.id, routed_at=now_epoch())
+        except Exception:
+            _logger.exception(
+                "failed to emit %s event for session %s to manager %s",
+                SESSION_DELETED_EVENT_TYPE,
+                session_id,
+                manager_id,
+            )
+
+
+def emit_session_deleted_event(
+    *,
+    session_id: str,
+    conv: Conversation | None = None,
+) -> None:
+    """Broadcast a ``session.deleted`` event to a session's managers.
+
+    Same traversal as the turn-finished broadcast: workers bound to the
+    session → their tasks (live only) → the deduped set of those tasks'
+    managers. One born-``routed`` event per manager; the broker is never
+    involved. Call before the session's workers are soft-deleted — deleted
+    lanes are skipped by the traversal. ``conv`` is the pre-delete row when
+    the caller still holds it (the store row is already gone after
+    ``delete_conversation``).
+    """
+    if _context is None:
+        return
+    workers = _context.worker_store.list_workers_by_target_id(session_id)
+    if not workers:
+        return
+
+    # Workers → their tasks (live only; deleted lanes and archived tasks
+    # must not wake managers).
+    tasks_by_id: dict[str, Task] = {}
+    for worker in workers:
+        if worker.state == "deleted":
+            continue
+        task = _context.task_store.get(worker.task_id)
+        if task is not None and task.state in _LIVE_TASK_STATES:
+            tasks_by_id[task.id] = task
+    if not tasks_by_id:
+        return
+
+    # Tasks → deduped manager set, resolved through the manager registry so
+    # each event is attributed to the manager's own owner (queue grouping).
+    manager_owner: dict[str, str | None] = {}
+    for task in tasks_by_id.values():
+        if task.manager_id is None or task.manager_id in manager_owner:
+            continue
+        manager = (
+            _context.manager_store.get(task.manager_id)
+            if _context.manager_store is not None
+            else None
+        )
+        if manager is None:
+            _logger.warning(
+                "session-deleted broadcast: task %s references manager %s "
+                "which does not exist; skipping",
+                task.id,
+                task.manager_id,
+            )
+            continue
+        manager_owner[manager.id] = manager.owner_user_id
+    if not manager_owner:
+        return
+
+    if conv is None:
+        conv = _context.conversation_store.get_conversation(session_id)
+    session_title = conv.title if conv is not None else session_id
+    # The session's project is owned by the task owner (sessions are created
+    # under the task owner's identity).
+    task_owner = next(iter(tasks_by_id.values())).owner_user_id
+    project_name = _project_name(
+        _context.project_store,
+        conv.project_id if conv is not None else None,
+        task_owner,
+    )
+    payload = json.dumps(
+        {
+            "session_id": session_id,
+            "session_title": session_title,
+            "project_name": project_name,
+        },
+        ensure_ascii=False,
+    )
+    title = f"Session deleted: {session_title}"
+
+    # Idempotency: skip a manager that already has an unconsumed deleted
+    # signal for this session (double-delete race). A pending turn-finished
+    # signal does NOT suppress this one — deletion supersedes it. Filter by
+    # state in the store: settled events accumulate forever, so a type-only
+    # scan would grow unbounded.
+    pending_managers: set[str] = set()
+    for state in ("awaiting_grouping", "routed"):
+        for ev in _context.task_event_store.list_events(
+            event_type=SESSION_DELETED_EVENT_TYPE,
+            state=state,
+        ):
+            if ev.source_key == session_id and ev.manager_id is not None:
+                pending_managers.add(ev.manager_id)
+
+    for manager_id, owner in manager_owner.items():
+        if manager_id in pending_managers:
+            continue
+        try:
+            event = _context.task_event_store.create_event(
+                uuid.uuid4().hex,
+                SESSION_DELETED_EVENT_TYPE,
+                title,
+                manager_id=manager_id,
+                source="adoption",
+                source_key=session_id,
+                state="routed",
+                payload=payload,
+                owner_user_id=owner or "__anonymous__",
+            )
+            _context.task_event_store.update_event(event.id, routed_at=now_epoch())
+        except Exception:
+            _logger.exception(
+                "failed to emit %s event for session %s to manager %s",
+                SESSION_DELETED_EVENT_TYPE,
                 session_id,
                 manager_id,
             )

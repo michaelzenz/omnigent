@@ -645,6 +645,19 @@ async def _renew_session_worktree_lease(session_id: str) -> None:
         _logger.debug("worktree lease renewal failed for %s", session_id, exc_info=True)
 
 
+def _session_watcher_enabled() -> bool:
+    """Whether the external session watcher plugin is enabled on any host.
+
+    Gates both turn-finish routing and session-deleted events: without the
+    watcher there is no pmv2 adoption, so there is nothing to notify.
+    """
+    from omnigent.server.routes.script_plugin_health import get_plugin_health_store
+
+    health_store = get_plugin_health_store()
+    plugins = health_store.list(kind="poll")
+    return any(p.plugin.name == "session_watcher" and p.plugin.enabled for p in plugins)
+
+
 async def _maybe_adopt_session(session_id: str) -> None:
     """Check if a finished-turn session needs adoption or turn-finish routing.
 
@@ -656,14 +669,7 @@ async def _maybe_adopt_session(session_id: str) -> None:
     on all hosts — controls both adoption and turn-finish events.
     """
     try:
-        from omnigent.server.routes.script_plugin_health import get_plugin_health_store
-
-        health_store = get_plugin_health_store()
-        plugins = health_store.list(kind="poll")
-        watcher_enabled = any(
-            p.plugin.name == "session_watcher" and p.plugin.enabled for p in plugins
-        )
-        if not watcher_enabled:
+        if not _session_watcher_enabled():
             return
 
         from omnigent.agent_tasks.adoption import (
@@ -720,6 +726,73 @@ async def _maybe_adopt_session(session_id: str) -> None:
         )
     except Exception:  # noqa: BLE001
         _logger.warning("session adoption check failed for %s", session_id, exc_info=True)
+
+
+def maybe_emit_session_deleted_event(session_id: str, conv: Conversation) -> None:
+    """Emit a ``session.deleted`` event when a tracked session is deleted.
+
+    Same gating as turn-finish events. A session with a live worker binding
+    broadcasts born-``routed`` events to its governing managers; an unbound
+    session emits only when one of its turn-finished events is already in
+    flight (born-``routed`` to the manager holding it, or
+    born-``awaiting_grouping`` while the broker still groups it). No-op when
+    the external_session_watcher plugin is disabled or the session is a
+    system role (sub-agent, broker/secretary, manager).
+
+    Must run before the session's worker lanes are soft-deleted — the
+    broadcast traversal only sees live workers. Sync store work: callers
+    on the event loop should wrap in ``asyncio.to_thread``.
+    """
+    try:
+        if not _session_watcher_enabled():
+            return
+
+        from omnigent.agent_tasks.adoption import (
+            emit_session_deleted_event,
+            emit_session_deleted_event_for_pending_turn,
+            get_session_adoption_context,
+            resolve_owner_user_id,
+        )
+
+        ctx = get_session_adoption_context()
+        if ctx is None:
+            return
+        if conv is None or conv.kind == "sub_agent":
+            return
+        # System role sessions (broker, secretary) are dispatcher-driven, not
+        # user-tracked — their deletion carries no adoption signal.
+        from omnigent.agent_tasks.session_labels import ROLE_LABEL
+
+        if conv.labels.get(ROLE_LABEL) is not None:
+            return
+        if (
+            ctx.task_store is not None
+            and ctx.manager_store is not None
+            and ctx.manager_store.get_by_conversation_id(session_id) is not None
+        ):
+            return
+        worker = ctx.worker_store.get_by_target_id(session_id)
+        if worker is not None:
+            if worker.state == "deleted":
+                # Adoption was dismissed or the task was deleted — stop tracking.
+                return
+            # Bound session — broadcast the deletion to the deduped set of
+            # managers governing the session's workers.
+            emit_session_deleted_event(session_id=session_id, conv=conv)
+            return
+        # Unbound session — nothing tracks it unless a turn-finished event is
+        # already in flight; only then must the deletion signal ride along.
+        emit_session_deleted_event_for_pending_turn(
+            session_id=session_id,
+            conv=conv,
+            owner_user_id=resolve_owner_user_id(
+                user_id=None,
+                host_id=conv.host_id,
+                host_store=ctx.host_store,
+            ),
+        )
+    except Exception:  # noqa: BLE001
+        _logger.warning("session-deleted event check failed for %s", session_id, exc_info=True)
 
 
 def announce_hosts_changed(
