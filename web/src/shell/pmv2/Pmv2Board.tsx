@@ -237,7 +237,7 @@ export function Pmv2Board() {
           <BoardFyiStream />
           <div className="flex items-start justify-between gap-2">
             <div>
-              <h1 className="text-xl font-semibold">GlobalHub</h1>
+              <h1 className="text-xl font-semibold">Global Hub</h1>
               <p className="text-sm text-muted-foreground">Live board</p>
             </div>
             <BoardConfigPanel disabled={fixtureMode} />

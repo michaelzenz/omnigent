@@ -106,7 +106,7 @@ export function settingsNavGroups(
     { id: "connection", label: "Connection", icon: Link2Icon },
     { id: "git", label: "Git", icon: GitBranchIcon },
     { id: "shortcuts", label: "Keyboard shortcuts", icon: KeyboardIcon, hideOnMobile: true },
-    { id: "pmv2", label: "GlobalHub", icon: SparklesIcon },
+    { id: "pmv2", label: "Global Hub", icon: SparklesIcon },
     { id: "import", label: "Import sessions", icon: DownloadIcon },
   ];
   // Sandbox Integrations appears once any connection provider is wired
