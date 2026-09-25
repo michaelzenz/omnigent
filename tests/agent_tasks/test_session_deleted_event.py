@@ -447,7 +447,7 @@ def test_notice_single_deleted_event() -> None:
     assert "'My session' was deleted" in notice
     assert "Project: Atlas" in notice
     assert "conv-del" in notice
-    assert "Reconcile" in notice
+    assert "user manually deleted" in notice
 
 
 def test_notice_batch_deleted_supersedes_turn_finished() -> None:
