@@ -88,10 +88,16 @@ def _make_spec(*, model: str | None = None, profile: str | None = None) -> Agent
     )
 
 
-def test_builtin_onih_pi_does_not_pin_a_default_model() -> None:
+def test_builtin_onih_pi_pins_a_default_model() -> None:
+    """Headless automation spawns onih-pi with no session model override;
+    server-proxied Pi raises without a spec default. The pin lives at the
+    executor block's top level — ``config.model`` is never read on the pi
+    spawn path."""
     spec = load(Path("omnigent/resources/examples/onih-pi"))
 
-    assert spec.executor.model is None
+    assert spec.executor.model == "databricks-glm-5-3-flash"
+    env = _build_pi_spawn_env(spec, workdir=None)
+    assert env["HARNESS_PI_MODEL"] == "databricks-glm-5-3-flash"
 
 
 def test_builtin_onih_pmv2_maps_pi_executor_config(tmp_path: Path) -> None:

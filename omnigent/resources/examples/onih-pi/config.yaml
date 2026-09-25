@@ -4,6 +4,7 @@ description: Onih using the Pi agent runtime.
 
 executor:
   type: omnigent
+  model: databricks-glm-5-3-flash
   config:
     harness: pi
     persistent_session: true

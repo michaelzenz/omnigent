@@ -4188,10 +4188,6 @@ def create_runner_app(
                     # Recovery has no live server dispatch carrying renderer state.
                     "browser_renderer_available": False,
                 }
-                # Thread the persisted model override so the recovery turn
-                # spawns the harness with the correct model — the onih-pi spec
-                # declares no executor.model, so without this the spawn env
-                # carries no HARNESS_PI_MODEL and server-proxied Pi raises.
                 _recovery_model_override = (
                     init_context.envelope.snapshot.model_override
                     if init_context.envelope is not None
