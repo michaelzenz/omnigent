@@ -2292,6 +2292,7 @@ def create_agent_tasks_router(
                 worker_store,
                 task_asset_store,
                 conversation_store,
+                manager_store,
             )
 
         @router.get("/agent-tasks/{task_id}/workers")

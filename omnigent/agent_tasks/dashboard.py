@@ -8,6 +8,7 @@ from typing import Any, Literal
 from omnigent.agent_tasks.workers import worker_last_active_map
 from omnigent.entities import Task, TaskAsset, TaskEventExecution, TaskItem, Worker
 from omnigent.stores.conversation_store import ConversationStore
+from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_item_store import TaskItemStore
@@ -28,6 +29,7 @@ def build_task_dashboard(
     worker_store: WorkerStore,
     task_asset_store: TaskAssetStore | None = None,
     conversation_store: ConversationStore | None = None,
+    manager_store: ManagerStore | None = None,
 ) -> dict[str, Any]:
     """Build a card-shaped snapshot for one managed task."""
     items = task_item_store.list_items_for_task(task.id)
@@ -81,6 +83,14 @@ def build_task_dashboard(
         if len(bucket) < 3:
             bucket.append(_item_summary(item))
 
+    # The durable manager row owns the (self-healing) session pointer;
+    # resolve it so cards can open the manager's live chat.
+    manager_conversation_id: str | None = None
+    if manager_store is not None and task.manager_id is not None:
+        manager = manager_store.get(task.manager_id)
+        if manager is not None:
+            manager_conversation_id = manager.conversation_id
+
     return {
         "object": "agent.task.dashboard",
         "task": {
@@ -93,6 +103,7 @@ def build_task_dashboard(
             "priority": task.priority,
             "queue_rank": task.queue_rank,
             "manager_id": task.manager_id,
+            "manager_conversation_id": manager_conversation_id,
         },
         "derived": {
             "has_running_workers": has_running_workers,
