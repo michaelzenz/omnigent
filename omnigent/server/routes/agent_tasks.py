@@ -1920,15 +1920,19 @@ def create_agent_tasks_router(
     ) -> dict[str, Any]:
         """Board search for the pmv2 task list.
 
-        Matches the query (case-insensitive substring) against board-visible
-        task text (title/goal/description/id), task items, assets, and
-        worker lane text. Chat content, executions, and the manager
-        conversation are deliberately not probed — the search targets the
-        task's rendered content and its live workers' lane text.
+        Token-AND match: the query is lowercased and split on whitespace,
+        and every token must match somewhere in board-visible task text
+        (title/goal/description/id), task items, assets, and worker lane
+        text — any field, any order. Results are ranked best match first
+        (exact phrase hits and full title coverage score highest, then field
+        importance); ties keep the task store order. Chat content,
+        executions, and the manager conversation are deliberately not probed
+        — the search targets the task's rendered content and its live
+        workers' lane text.
 
-        The first ``limit`` matches are returned (oldest-id first). When the
-        full match count reaches the cap the board hints that more matches
-        exist below; full pagination comes later.
+        The first ``limit`` matches are returned (best score first). When
+        the full match count reaches the cap the board hints that more
+        matches exist below; full pagination comes later.
 
         Returns per-entity match ids so the board can filter its cards and
         ring the matched items/assets/workers without any client-side text
