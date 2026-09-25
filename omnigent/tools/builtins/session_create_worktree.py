@@ -42,9 +42,12 @@ class SysSessionCreateWorktreeTool(Tool):
             "is then atomically moved into the worktree (fresh runner, chat "
             "history preserved, session shows the new branch). Make this the "
             "last action of the turn — the current turn's connection hands "
-            "over to the new runner. The parent folder must be within the "
-            "agent's os_env.cwd boundary; uncommitted changes are not "
-            "copied; the target branch must not already exist."
+            "over to the new runner. The parent folder should be within the "
+            "agent's os_env.cwd boundary; if it is not, the human is shown "
+            "an approval card and the worktree is created only if they "
+            "accept (decline or no answer fails the call). Uncommitted "
+            "changes are not copied; the target branch must not already "
+            "exist."
         )
 
     def get_schema(self) -> dict[str, Any]:

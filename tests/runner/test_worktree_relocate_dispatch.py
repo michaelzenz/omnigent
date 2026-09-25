@@ -103,6 +103,7 @@ async def test_create_worktree_unbinds_then_launches_managed() -> None:
             "branch_name": "feature/login",
             "base_branch": "main",
             "managed": True,
+            "escalate_boundary": True,
         },
     }
     # The snapshot read reports where the session landed.
@@ -140,6 +141,7 @@ async def test_create_worktree_omits_base_branch_when_absent() -> None:
     assert json.loads(requests[1].content)["git"] == {
         "branch_name": "spike",
         "managed": True,
+        "escalate_boundary": True,
     }
 
 

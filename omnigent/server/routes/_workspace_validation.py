@@ -120,17 +120,28 @@ class WorkspaceValidationError(Exception):
 
     OUTSIDE_BOUNDARY = "outside_boundary"
 
-    def __init__(self, message: str, *, reason: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str | None = None,
+        canonical_workspace: str | None = None,
+    ) -> None:
         """
         Initialize with the user-facing error message.
 
         :param message: Error string surfaced to the API caller.
         :param reason: Machine-readable failure kind, e.g.
             ``"outside_boundary"``. See the class docstring.
+        :param canonical_workspace: For ``outside_boundary`` rejects, the
+            realpath the host already computed for the workspace — lets
+            callers (e.g. the managed-worktree carve-out) act on the
+            canonical folder without a second stat round-trip.
         """
         super().__init__(message)
         self.message = message
         self.reason = reason
+        self.canonical_workspace = canonical_workspace
 
 
 async def _ask_host_stat(
@@ -354,6 +365,7 @@ async def validate_workspace(
             raise WorkspaceValidationError(
                 f"workspace '{workspace}' is outside the agent's required path '{spec_cwd}'",
                 reason=WorkspaceValidationError.OUTSIDE_BOUNDARY,
+                canonical_workspace=canonical_workspace,
             )
 
     # Step 6: ``cwd: ./subdir`` requires the named subdir under the

@@ -36,6 +36,7 @@ from omnigent.host.frames import (
     HostWorktreeLeaseFrame,
     decode_host_frame,
 )
+from omnigent.runtime import session_stream
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.app import create_app
 from omnigent.server.auth import RESERVED_USER_LOCAL
@@ -256,14 +257,21 @@ async def register_host(
             task.cancel()
 
 
-async def _bare_session(client: httpx.AsyncClient, name: str) -> str:
+async def _bare_session(
+    client: httpx.AsyncClient,
+    name: str,
+    *,
+    os_env: dict[str, object] | None = None,
+) -> str:
     """Create an unbound session (agent only, no host/workspace).
 
     :param client: The test HTTP client.
     :param name: Agent name to create.
+    :param os_env: Optional ``os_env:`` block for the agent spec, e.g.
+        ``{"cwd": "/Users/alice/sandbox"}`` to pin a workspace boundary.
     :returns: The new session id.
     """
-    agent = await create_test_agent(client, name=name)
+    agent = await create_test_agent(client, name=name, os_env=os_env)
     resp = await client.post("/v1/sessions", json={"agent_id": agent["id"]})
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]
@@ -611,6 +619,7 @@ async def test_launch_runner_boundary_admits_managed_worktree(
         raise _workspace_validation.WorkspaceValidationError(
             f"workspace '{workspace}' is outside the agent's required path '{spec_cwd}'",
             reason=_workspace_validation.WorkspaceValidationError.OUTSIDE_BOUNDARY,
+            canonical_workspace=workspace,
         )
 
     monkeypatch.setattr(_workspace_validation, "validate_workspace", _boundary_reject)
@@ -661,6 +670,7 @@ async def test_launch_runner_boundary_still_rejects_plain_folder(
         raise _workspace_validation.WorkspaceValidationError(
             f"workspace '{workspace}' is outside the agent's required path '{spec_cwd}'",
             reason=_workspace_validation.WorkspaceValidationError.OUTSIDE_BOUNDARY,
+            canonical_workspace=workspace,
         )
 
     monkeypatch.setattr(_workspace_validation, "validate_workspace", _boundary_reject)
@@ -698,6 +708,7 @@ async def test_launch_runner_boundary_no_probe_without_leases(
         raise _workspace_validation.WorkspaceValidationError(
             f"workspace '{workspace}' is outside the agent's required path '{spec_cwd}'",
             reason=_workspace_validation.WorkspaceValidationError.OUTSIDE_BOUNDARY,
+            canonical_workspace=workspace,
         )
 
     monkeypatch.setattr(_workspace_validation, "validate_workspace", _boundary_reject)
@@ -739,6 +750,7 @@ async def test_launch_runner_boundary_rejects_foreign_managed_worktree(
         raise _workspace_validation.WorkspaceValidationError(
             f"workspace '{workspace}' is outside the agent's required path '{spec_cwd}'",
             reason=_workspace_validation.WorkspaceValidationError.OUTSIDE_BOUNDARY,
+            canonical_workspace=workspace,
         )
 
     monkeypatch.setattr(_workspace_validation, "validate_workspace", _boundary_reject)
@@ -777,6 +789,7 @@ async def test_launch_runner_boundary_probe_host_failure_keeps_boundary_400(
         raise _workspace_validation.WorkspaceValidationError(
             f"workspace '{workspace}' is outside the agent's required path '{spec_cwd}'",
             reason=_workspace_validation.WorkspaceValidationError.OUTSIDE_BOUNDARY,
+            canonical_workspace=workspace,
         )
 
     monkeypatch.setattr(_workspace_validation, "validate_workspace", _boundary_reject)
@@ -794,6 +807,7 @@ async def test_launch_runner_boundary_probe_host_failure_keeps_boundary_400(
 async def test_launch_runner_boundary_probe_unavailable_maps_to_409(
     register_host: RegisterHost,
     client: httpx.AsyncClient,
+    app: FastAPI,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A probe whose connection was replaced mid-request is a 409 — infra,
@@ -815,7 +829,7 @@ async def test_launch_runner_boundary_probe_unavailable_maps_to_409(
         captured connection is stale (send_text raises ConnectionError)."""
         # The host row already exists (register_host upserted it); a fresh
         # register poisons the old connection's queue and supersedes it.
-        client.app.state.host_registry.register(  # type: ignore[union-attr]
+        app.state.host_registry.register(
             host_id=_HOST_ID,
             ws=_FakeWebSocket(),  # type: ignore[arg-type]
             hello=HostHelloFrame(
@@ -829,6 +843,7 @@ async def test_launch_runner_boundary_probe_unavailable_maps_to_409(
         raise _workspace_validation.WorkspaceValidationError(
             f"workspace '{workspace}' is outside the agent's required path '{spec_cwd}'",
             reason=_workspace_validation.WorkspaceValidationError.OUTSIDE_BOUNDARY,
+            canonical_workspace=workspace,
         )
 
     monkeypatch.setattr(
@@ -1003,3 +1018,186 @@ async def test_launch_runner_managed_creation_keeps_new_claim(
     assert conv is not None
     assert conv.workspace == f"{_SOURCE_REPO}-worktrees/second-task"
     assert conv.git_branch == "second-task"
+
+
+# ── Boundary escalation (human approval) ──────────────────────────
+
+
+async def _drain_one_elicitation(
+    session_id: str,
+    timeout_s: float = 5.0,
+) -> dict[str, object]:
+    """Subscribe to the session stream and capture the first elicitation.
+
+    The launch endpoint publishes the ``response.elicitation_request``
+    event before parking on the verdict future, so subscribing here is
+    the simplest way to learn the id.
+
+    :param session_id: Session to subscribe to.
+    :param timeout_s: Max seconds to wait for the event.
+    :returns: The captured elicitation_request event dict.
+    """
+    async with asyncio.timeout(timeout_s):
+        async for event in session_stream.subscribe(session_id):
+            if event.get("type") == "response.elicitation_request":
+                return event
+    raise AssertionError("subscribe loop ended without an elicitation event")
+
+
+async def test_launch_runner_boundary_escalation_accept(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """Out-of-boundary creation + escalate → approval card → accept → launch.
+
+    The human verdict is the only thing that lifts the W6 boundary: the
+    agent cannot self-approve (the resolve URL is LEVEL_EDIT-gated and
+    the future lives server-side), and nothing is persisted — the
+    verdict is consumed by the very launch that asked.
+    """
+    cap = register_host(managed_worktree_leases=True, lease_claim=False)
+    session_id = await _bare_session(
+        client,
+        "wt-escalate-accept-agent",
+        os_env={"cwd": "/Users/alice/sandbox"},
+    )
+    drain_task = asyncio.create_task(_drain_one_elicitation(session_id))
+    launch_task = asyncio.create_task(
+        _launch(
+            client,
+            session_id,
+            git={"branch_name": "esc/feat", "managed": True, "escalate_boundary": True},
+        )
+    )
+    event = await drain_task
+    assert event.get("elicitation_id")
+    verdict = await client.post(
+        f"/v1/sessions/{session_id}/elicitations/{event['elicitation_id']}/resolve",
+        json={"action": "accept"},
+    )
+    assert verdict.status_code == 202, verdict.text
+
+    resp = await launch_task
+    assert resp.status_code == 200, resp.text
+    # The managed creation ran past the boundary.
+    assert len(cap.create) == 1
+    assert cap.create[0].branch_name == "esc/feat"
+    conv = SqlAlchemyConversationStore(db_uri).get_conversation(session_id)
+    assert conv is not None
+    assert conv.workspace == f"{_SOURCE_REPO}-worktrees/esc-feat"
+
+
+async def test_launch_runner_boundary_escalation_decline(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+) -> None:
+    """An explicit decline fails the launch with 403 — nothing created."""
+    cap = register_host(managed_worktree_leases=True, lease_claim=False)
+    session_id = await _bare_session(
+        client,
+        "wt-escalate-decline-agent",
+        os_env={"cwd": "/Users/alice/sandbox"},
+    )
+    drain_task = asyncio.create_task(_drain_one_elicitation(session_id))
+    launch_task = asyncio.create_task(
+        _launch(
+            client,
+            session_id,
+            git={"branch_name": "esc/deny", "managed": True, "escalate_boundary": True},
+        )
+    )
+    event = await drain_task
+    verdict = await client.post(
+        f"/v1/sessions/{session_id}/elicitations/{event['elicitation_id']}/resolve",
+        json={"action": "decline"},
+    )
+    assert verdict.status_code == 202, verdict.text
+
+    resp = await launch_task
+    assert resp.status_code == 403, resp.text
+    assert "declined" in resp.json()["detail"]
+    assert cap.create == [], "a declined escalation must not create anything"
+    assert cap.launch == []
+
+
+async def test_launch_runner_boundary_escalation_timeout(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No verdict before the timeout → 400, fail-closed."""
+    import omnigent.server.routes.hosts as hosts_module
+
+    cap = register_host(managed_worktree_leases=True, lease_claim=False)
+    session_id = await _bare_session(
+        client,
+        "wt-escalate-timeout-agent",
+        os_env={"cwd": "/Users/alice/sandbox"},
+    )
+    monkeypatch.setattr(hosts_module, "_BOUNDARY_ESCALATION_TIMEOUT_S", 0.05)
+
+    resp = await _launch(
+        client,
+        session_id,
+        git={"branch_name": "esc/slow", "managed": True, "escalate_boundary": True},
+    )
+    assert resp.status_code == 400, resp.text
+    assert "no response to the boundary-approval prompt" in resp.json()["detail"]
+    assert cap.create == []
+
+
+async def test_launch_runner_in_boundary_skips_escalation(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+) -> None:
+    """In-boundary folder + escalate flag → no elicitation, straight launch."""
+    from omnigent.runtime import pending_elicitations
+
+    cap = register_host(managed_worktree_leases=True)
+    session_id = await _bare_session(
+        client,
+        "wt-escalate-inside-agent",
+        os_env={"cwd": "/Users/alice"},
+    )
+    resp = await _launch(
+        client,
+        session_id,
+        git={"branch_name": "inside/x", "managed": True, "escalate_boundary": True},
+    )
+    assert resp.status_code == 200, resp.text
+    assert pending_elicitations.count_for(session_id) == 0
+    assert len(cap.create) == 1
+
+
+async def test_launch_runner_carve_out_precedes_escalation(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """A claimed managed folder passes WITHOUT prompting even with the flag.
+
+    The claim carve-out runs first: the session already holds the claim,
+    so relocating into its own worktree needs no human approval.
+    """
+    from omnigent.runtime import pending_elicitations
+
+    cap = register_host(managed_worktree_leases=True, lease_claim=True)
+    session_id = await _bare_session(
+        client,
+        "wt-escalate-carveout-agent",
+        os_env={"cwd": "/Users/alice/sandbox"},
+    )
+    own_wt = f"{_SOURCE_REPO}-worktrees/mine"
+    SqlAlchemyConversationStore(db_uri).set_host_id(session_id, _HOST_ID, own_wt, "mine")
+
+    resp = await client.post(
+        f"/v1/hosts/{_HOST_ID}/runners",
+        json={"session_id": session_id, "workspace": own_wt},
+    )
+    assert resp.status_code == 200, resp.text
+    assert pending_elicitations.count_for(session_id) == 0
+    # The carve-out probe ran (check op); no approval card was needed.
+    assert len(cap.leases) == 1
+    assert cap.leases[0].op == "check"
+###RC=0

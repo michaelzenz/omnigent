@@ -684,6 +684,7 @@ def build_agent_bundle(
     skills: list[dict[str, str]] | None = None,
     guardrails: dict[str, Any] | None = None,
     terminals: dict[str, Any] | None = None,
+    os_env: dict[str, Any] | None = None,
     include_llm: bool = True,
 ) -> bytes:
     """
@@ -718,6 +719,9 @@ def build_agent_bundle(
     :param terminals: Optional ``terminals:`` block written verbatim
         into the spec, e.g. ``{"shell": {"command": "bash"}}``.
         ``None`` omits it (the agent has no terminal access).
+    :param os_env: Optional ``os_env:`` block written verbatim into the
+        spec, e.g. ``{"cwd": "/Users/me/sandbox"}`` (an absolute cwd
+        pins the workspace boundary). ``None`` omits it (unconstrained).
     :param include_llm: Whether to include the default ``llm:`` block.
         Set ``False`` for model-less harness tests.
     :returns: A gzipped tar archive containing the generated
@@ -743,6 +747,8 @@ def build_agent_bundle(
         config["guardrails"] = guardrails
     if terminals is not None:
         config["terminals"] = terminals
+    if os_env is not None:
+        config["os_env"] = os_env
     if executor is not None:
         config["executor"] = dict(executor)
         config["executor"].setdefault("config", {}).setdefault("harness", "claude-sdk")
@@ -827,6 +833,7 @@ async def create_test_agent(
     guardrails: dict[str, Any] | None = None,
     include_llm: bool = True,
     sub_agents: list[dict[str, Any]] | None = None,
+    os_env: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Create an agent via multipart session create and return the agent JSON.
@@ -872,6 +879,7 @@ async def create_test_agent(
         guardrails=guardrails,
         include_llm=include_llm,
         sub_agents=sub_agents,
+        os_env=os_env,
     )
     metadata: dict[str, Any] = {}
     headers: dict[str, str] = {}

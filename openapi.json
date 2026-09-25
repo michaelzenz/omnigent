@@ -6536,6 +6536,12 @@
             ],
             "title": "Branch Name Prompt"
           },
+          "escalate_boundary": {
+            "default": false,
+            "description": "When `True` and the source folder is outside the agent's `os_env.cwd` sandbox boundary, the server pauses the launch and asks the human via the session's approval-card flow (`response.elicitation_request`). Accept lets this one launch proceed past the boundary; decline (or no response before the timeout) fails the request. The verdict is consumed in-request \u2014 there is no persisted grant to replay. Create mode only.",
+            "title": "Escalate Boundary",
+            "type": "boolean"
+          },
           "existing_branch": {
             "default": false,
             "description": "When `True`, `branch_name` already exists and the host checks it out into a fresh worktree (the deleted-worktree recreate path) instead of creating a new branch. Create mode only; invalid with `existing_worktree` and with `base_branch` (an existing branch has no base to fork).",
