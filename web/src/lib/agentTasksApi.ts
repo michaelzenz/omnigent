@@ -244,6 +244,8 @@ export interface UpdateAgentTaskRequest {
   goal?: string;
   description?: string | null;
   priority?: number;
+  /** Valid task state (e.g. "agent-resolved"); the server also re-ranks the queue. */
+  state?: string;
 }
 
 export interface SecretarySession {

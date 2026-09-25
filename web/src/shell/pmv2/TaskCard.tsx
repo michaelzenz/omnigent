@@ -171,6 +171,7 @@ export function TaskCard({
   const { data: dashboard, isLoading, error } = useTaskDashboard(taskId, { enabled: inView });
   const { target, openManager, isManagerSelected, dismissToRole } = usePmv2Chat();
   const moveToEnd = useMoveTaskToQueueEnd(taskId);
+  const patchTask = usePatchAgentTask(taskId);
   const managerSelected = isManagerSelected(taskId);
   const selectedWorkerId =
     target.kind === "worker" && target.taskId === taskId ? target.workerId : null;
@@ -257,6 +258,34 @@ export function TaskCard({
             >
               {moveToEnd.isPending ? "Moving…" : "Move to queue end"}
             </Button>
+            {state !== "agent-resolved" ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                className="shrink-0"
+                disabled={patchTask.isPending}
+                aria-label="Mark task resolved"
+                title="Mark task resolved (agent-resolved) — parks it at the queue end"
+                data-testid={`task-card-resolve-${taskId}`}
+                onClick={async (event) => {
+                  event.stopPropagation();
+                  event.currentTarget.blur();
+                  const cancelExplicitMove = onMovedToEnd?.(taskId);
+                  try {
+                    await patchTask.mutateAsync({ state: "agent-resolved" });
+                  } catch {
+                    cancelExplicitMove?.();
+                  }
+                }}
+              >
+                {patchTask.isPending ? (
+                  <Loader2Icon className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <CheckIcon aria-hidden />
+                )}
+              </Button>
+            ) : null}
             <TaskActionsMenu taskId={taskId} taskState={state} />
           </div>
         </div>

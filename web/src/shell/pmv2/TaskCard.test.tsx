@@ -96,11 +96,11 @@ vi.mock("@/hooks/useRoleProfiles", () => ({
   })),
 }));
 
-import { useDeleteTaskAsset, useTaskDashboard } from "@/hooks/useAgentTasks";
+import { useDeleteTaskAsset, usePatchAgentTask, useTaskDashboard } from "@/hooks/useAgentTasks";
 
 const mockedDashboard = vi.mocked(useTaskDashboard);
 
-function renderCard() {
+function renderCard(state = "active") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
@@ -110,7 +110,7 @@ function renderCard() {
             taskId="task-1"
             title="Land PR #123"
             description="Fix upload retries"
-            state="active"
+            state={state}
           />
         </Pmv2ChatProvider>
       </MemoryRouter>
@@ -440,5 +440,61 @@ describe("TaskCard", () => {
       "false",
     );
     expect(screen.queryByTestId("worker-row-item:item-unassigned")).not.toBeInTheDocument();
+  });
+
+  it("resolves the task via the tick button", async () => {
+    const patchMutate = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(usePatchAgentTask).mockReturnValue({
+      mutateAsync: patchMutate,
+      isPending: false,
+    } as unknown as ReturnType<typeof usePatchAgentTask>);
+    mockedDashboard.mockReturnValue({
+      data: {
+        task: {
+          id: "task-1",
+          title: "Land PR #123",
+          description: null,
+          state: "active",
+          manager_conversation_id: null,
+        },
+        derived: { has_running_workers: false },
+        inbox_items: [],
+        reconcile_queue_count: 0,
+        assets: [],
+        workers: [],
+      },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useTaskDashboard>);
+
+    renderCard();
+    fireEvent.click(screen.getByTestId("task-card-resolve-task-1"));
+
+    await waitFor(() => expect(patchMutate).toHaveBeenCalledWith({ state: "agent-resolved" }));
+  });
+
+  it("hides the resolve tick once the task is resolved", () => {
+    mockedDashboard.mockReturnValue({
+      data: {
+        task: {
+          id: "task-1",
+          title: "Land PR #123",
+          description: null,
+          state: "agent-resolved",
+          manager_conversation_id: null,
+        },
+        derived: { has_running_workers: false },
+        inbox_items: [],
+        reconcile_queue_count: 0,
+        assets: [],
+        workers: [],
+      },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useTaskDashboard>);
+
+    renderCard("agent-resolved");
+
+    expect(screen.queryByTestId("task-card-resolve-task-1")).not.toBeInTheDocument();
   });
 });
