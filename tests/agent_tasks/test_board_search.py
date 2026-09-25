@@ -147,6 +147,19 @@ def test_empty_query_returns_no_results(db_uri: str) -> None:
     assert board.search("   ") == []
 
 
+def test_results_are_in_board_order(db_uri: str) -> None:
+    """Results follow the board's sort-order column (queue_rank desc, id desc) —
+    the board filters its cards in place, so search must not reorder them."""
+    board = BoardFixture(db_uri, "order")
+    first = board.task_store.create(_uid("order_t1"), "Sync report", "sync goal", state="active")
+    second = board.task_store.create(_uid("order_t2"), "Sync report", "sync goal", state="active")
+    third = board.task_store.create(_uid("order_t3"), "Sync report", "sync goal", state="active")
+    assert [t.queue_rank for t in (first, second, third)] == [1, 2, 3]
+
+    results = board.search("sync")
+    assert [r["task_id"] for r in results] == [third.id, second.id, first.id]
+
+
 def test_terminated_worker_is_out_of_scope(db_uri: str) -> None:
     """Terminated workers are untracked and never rendered — their lane text
     must not put a task in the results, mirroring the dashboard's exclusion."""
