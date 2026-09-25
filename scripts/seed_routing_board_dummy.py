@@ -252,11 +252,7 @@ def _dispatch_item(item_id: str, *, dispatch: dict | None = None) -> None:
 
 
 def _accept_item(item_id: str) -> None:
-    body = _request(
-        "POST",
-        f"/v1/task-items/{item_id}/resolve",
-        body={"resolution": "accept_item"},
-    )
+    body = _request("POST", f"/v1/task-items/{item_id}/fire")
     print(f"  accepted {item_id[:8]}… → {body.get('state')}")
 
 

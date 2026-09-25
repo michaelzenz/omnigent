@@ -241,6 +241,12 @@ async def dispatch_worker_for_item(
         )
         if marked is not None:
             execution = marked
+    current_item = await asyncio.to_thread(task_item_store.get_item, item.id)
+    if current_item is not None and current_item.state in {"done", "cancelled"}:
+        # Closed/cancelled while its delivery was in flight — do not resurrect
+        # it. The turn was already sent; its completion cannot flip the
+        # terminal state back.
+        return execution, worker_conv_id
     await asyncio.to_thread(task_item_store.update_item, item.id, state="running")
     sync_task_activity_state(
         task,

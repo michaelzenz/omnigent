@@ -9,10 +9,12 @@ import pytest
 
 from omnigent.agent_tasks.event_types import HUMAN_ACTION_DONE_EVENT_TYPE
 from omnigent.agent_tasks.items import (
+    cancel_task_item,
+    close_task_item,
     complete_human_action,
     create_task_item,
+    fire_task_item,
     patch_task_item,
-    resolve_task_item,
 )
 from omnigent.errors import OmnigentError
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -184,33 +186,27 @@ def test_complete_human_action_still_done_when_event_emission_fails(stores, monk
     assert updated.state == "done"
 
 
-async def test_resolve_mark_done(stores) -> None:
+async def test_close_task_item_marks_human_action_done(stores) -> None:
     task = _task(stores)
     item = _human_item(stores, task)
 
-    updated, execution = await resolve_task_item(
+    updated = close_task_item(
         item=item,
-        resolution="mark_done",
         task=task,
-        task_store=stores["task"],
         task_item_store=stores["item"],
         task_event_store=stores["event"],
-        worker_store=stores["worker"],
-        conversation_store=stores["conversation"],
     )
 
     assert updated.state == "done"
-    assert execution is None
 
 
-async def test_resolve_accept_rejects_human_action(stores) -> None:
+async def test_fire_task_item_rejects_human_action(stores) -> None:
     task = _task(stores)
     item = _human_item(stores, task)
 
-    with pytest.raises(OmnigentError, match="marked done or dismissed"):
-        await resolve_task_item(
+    with pytest.raises(OmnigentError, match="Only work items can be fired"):
+        await fire_task_item(
             item=item,
-            resolution="accept_item",
             task=task,
             task_store=stores["task"],
             task_item_store=stores["item"],
@@ -220,23 +216,17 @@ async def test_resolve_accept_rejects_human_action(stores) -> None:
         )
 
 
-async def test_resolve_reject_dismisses_human_action(stores) -> None:
+async def test_cancel_task_item_dismisses_human_action(stores) -> None:
     task = _task(stores)
     item = _human_item(stores, task)
 
-    updated, execution = await resolve_task_item(
+    updated = cancel_task_item(
         item=item,
-        resolution="reject_item",
-        task=task,
-        task_store=stores["task"],
         task_item_store=stores["item"],
-        task_event_store=stores["event"],
         worker_store=stores["worker"],
-        conversation_store=stores["conversation"],
     )
 
     assert updated.state == "cancelled"
-    assert execution is None
     # Dismissal wakes no one: no routed event is emitted.
     assert stores["event"].list_events(state="routed", task_id=task.id) == []
 
@@ -263,3 +253,40 @@ def test_patch_task_item_rejects_instructions_and_worker_on_human_action(stores)
             worker_store=stores["worker"],
             worker_id=_uid("worker"),
         )
+
+
+def _work_item(stores, task, *, state: str = "pending", title: str = "Do work"):
+    return create_task_item(
+        task=task,
+        task_item_store=stores["item"],
+        worker_store=stores["worker"],
+        title=title,
+        state=state,
+    )
+
+
+async def test_close_work_item_from_running(stores) -> None:
+    task = _task(stores)
+    item = _work_item(stores, task, state="running")
+
+    updated = close_task_item(
+        item=item,
+        task=task,
+        task_item_store=stores["item"],
+        task_event_store=stores["event"],
+    )
+
+    assert updated.state == "done"
+
+
+async def test_cancel_work_item_from_running(stores) -> None:
+    task = _task(stores)
+    item = _work_item(stores, task, state="running")
+
+    updated = cancel_task_item(
+        item=item,
+        task_item_store=stores["item"],
+        worker_store=stores["worker"],
+    )
+
+    assert updated.state == "cancelled"

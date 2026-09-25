@@ -608,6 +608,11 @@ class WorkerDispatchHandler(RoleDispatchHandler):
         item_id = item.source_ids[0]
 
         def _park() -> None:
+            current = self._task_item_store.get_item(item_id)
+            if current is None or current.state in {"done", "cancelled"}:
+                # Closed/cancelled while the delivery was in flight — the park
+                # must not resurrect a terminal item.
+                return
             updated = self._task_item_store.update_item(item_id, state=state)
             if updated is None:
                 return
