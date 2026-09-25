@@ -4275,7 +4275,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         conversation_id: str,
         runner_id: str,
         *,
-        bump_updated_at: bool = True,
+        bump_updated_at: bool = False,
     ) -> Conversation:
         """
         Atomically overwrite ``conversations.runner_id``.
@@ -4316,7 +4316,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         self,
         conversation_id: str,
         *,
-        bump_updated_at: bool = True,
+        bump_updated_at: bool = False,
     ) -> Conversation:
         """
         Null out ``conversations.runner_id``. Atomic last-write-wins.
@@ -4456,7 +4456,7 @@ class SqlAlchemyConversationStore(ConversationStore):
     def set_host_id(
         self,
         conversation_id: str,
-        host_id: str,
+        host_id: str | None,
         workspace: str | None = None,
         git_branch: str | None = None,
     ) -> Conversation:

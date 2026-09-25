@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from builtins import list as builtin_list
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import asc, delete, desc, func, select, update
 
@@ -174,7 +174,7 @@ class SqlAlchemyTaskStore(TaskStore):
                 .values(state=encode_task_state("archived"), resolved_at=None)
             )
             session.commit()
-            return int(result.rowcount or 0)
+            return int(cast(Any, result).rowcount or 0)
 
     def list_by_manager_id(self, manager_id: str) -> builtin_list[Task]:
         with self._session() as session:
@@ -190,10 +190,7 @@ class SqlAlchemyTaskStore(TaskStore):
 
     def list_manager_ids(self, *, owner_user_id: str | None = None) -> builtin_list[str]:
         with self._session() as session:
-            live = [
-                encode_task_state(state)
-                for state in ("active", "idle", "agent-resolved")
-            ]
+            live = [encode_task_state(state) for state in ("active", "idle", "agent-resolved")]
             stmt = (
                 select(SqlTask.manager_id)
                 .where(SqlTask.workspace_id == current_workspace_id())

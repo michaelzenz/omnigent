@@ -302,7 +302,7 @@ export function TaskCard({
           Failed to load task dashboard.
         </div>
       ) : dashboard ? (
-        <div className="pmv2-task-card-body grid min-w-0 gap-5 p-4">
+        <div className="pmv2-task-card-body grid min-w-0 gap-5 p-4" data-testid="task-card-body">
           {/* Overview and task items stack as two full-width rows; the assets/workers
            * rail keeps its right-hand column. */}
           <div className="grid min-w-0 content-start gap-5">

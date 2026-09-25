@@ -101,9 +101,10 @@ def test_delete_removes_tags_and_workers(store: SqlAlchemyTaskStore) -> None:
     assert store.get(task_id) is None
     assert store.get_tags(task_id) == []
     # Workers are durable: deleting the task marks them deleted, not removed.
-    worker = worker_store.get_by_target_id(session_id)
-    assert worker is not None
-    assert worker.state == "deleted"
+    # Live lookups exclude the dead lane; the raw list still shows it.
+    assert worker_store.get_by_target_id(session_id) is None
+    durable = worker_store.list_workers_by_target_id(session_id)
+    assert [worker.state for worker in durable] == ["deleted"]
 
 
 def test_list_recent_orders_by_last_touch(store: SqlAlchemyTaskStore) -> None:
@@ -129,8 +130,6 @@ def test_list_recent_respects_limit(store: SqlAlchemyTaskStore) -> None:
     for i in range(5):
         store.create(task_id=_uid(f"task_lim_{i}"), title=f"T{i}", goal="g")
     assert len(store.list_recent(3)) == 3
-
-
 
 
 # ---------------------------------------------------------------------------
