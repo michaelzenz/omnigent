@@ -92,6 +92,10 @@ def _hello_text(
             frame_protocol_version=1,
             name=name,
             managed_worktree_leases=managed_worktree_leases,
+            # The tunnel route refuses hellos without a skill configuration
+            # (4001) — commit 8f38bd85c made the fields mandatory.
+            skill_sync_harnesses={},
+            skill_search_roots=[],
         )
     )
 
@@ -343,7 +347,8 @@ async def test_create_worktree_unknown_session_404(wt_setup: _WtSetupWithStats) 
             json={
                 "repo_path": "/Users/corey/repo",
                 "branch_name": "feature/x",
-                "session_id": "conv_missing",
+                # Well-formed 32-hex id that names no conversation.
+                "session_id": "b7e3c9a1d4f2465f8a0b1c2d3e4f5a6b",
             },
         )
     assert resp.status_code == 404, resp.text

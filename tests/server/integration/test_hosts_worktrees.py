@@ -73,7 +73,15 @@ def _hello_text(name: str = _HOST_NAME) -> str:
     :returns: JSON-encoded hello frame.
     """
     return encode_host_frame(
-        HostHelloFrame(version="0.1.0-test", frame_protocol_version=1, name=name)
+        HostHelloFrame(
+            version="0.1.0-test",
+            frame_protocol_version=1,
+            name=name,
+            # The tunnel route refuses hellos without a skill configuration
+            # (4001) — commit 8f38bd85c made the fields mandatory.
+            skill_sync_harnesses={},
+            skill_search_roots=[],
+        )
     )
 
 

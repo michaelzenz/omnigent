@@ -5910,6 +5910,7 @@ async def _create_worktree_and_relocate_via_rest(
     git_options: dict[str, Any] = {
         "branch_name": target_branch.strip(),
         "managed": True,
+        "escalate_boundary": True,
     }
     parent_branch = args.get("parent_branch")
     if parent_branch is not None:

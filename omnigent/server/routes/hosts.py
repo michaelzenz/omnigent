@@ -17,9 +17,9 @@ from the DB so a host connected to replica B reads back as
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import secrets
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -483,16 +483,104 @@ class LaunchRunnerRequest(BaseModel):
     git: SessionGitOptions | None = None
 
 
+# How long the boundary-approval card stays up during a launch. The
+# tool client's HTTP budget is 300s; this must stay comfortably inside
+# it so a silent UI still fails the launch, not the tool call.
+_BOUNDARY_ESCALATION_TIMEOUT_S: float = 120.0
+
+
+async def _escalate_boundary_with_human(
+    *,
+    request: Request,
+    session_id: str,
+    host_name: str | None,
+    workspace: str,
+    spec_cwd: str | None,
+    branch_name: str | None,
+    conversation_store: ConversationStore,
+) -> str:
+    """Ask the human to approve creating a worktree outside the sandbox.
+
+    The caller has already established the requested folder fails the
+    agent's ``os_env.cwd`` boundary check and holds no managed claim.
+    Publishes the standard approval-card elicitation on the session
+    stream and awaits the verdict:
+
+    - ``accept``  → the folder is canonicalized (host stat) and the
+      canonical path returned for this single launch. Nothing is
+      persisted — the verdict IS the grant, consumed in-request.
+    - ``decline`` → 403; the human said no.
+    - ``None`` (timeout / no open UI / disconnect) → 400, fail-closed.
+
+    The agent cannot mint the verdict itself: resolution rides the
+    dedicated elicitation URL (LEVEL_EDIT, cross-user ownership guard),
+    which generic session events cannot reach.
+
+    :returns: The canonical (realpath) workspace for this launch.
+    :raises HTTPException: 403 on explicit decline, 400 on timeout.
+    """
+    from omnigent.server.routes._sessions.orchestration import (
+        _publish_and_wait_for_harness_elicitation,
+    )
+    from omnigent.server.schemas import ElicitationRequestParams
+
+    boundary = spec_cwd if spec_cwd else "the agent's declared workspace"
+    message = (
+        f"Create worktree for branch '{branch_name or '(generated)'}' from "
+        f"'{workspace}' on host '{host_name or 'unknown'}'? The folder is "
+        f"OUTSIDE this session's sandbox boundary ('{boundary}'). Approve "
+        f"only if you trust this request."
+    )
+    params = ElicitationRequestParams(
+        mode="form",
+        message=message,
+        content_preview=json.dumps(
+            {
+                "kind": "worktree_boundary_escalation",
+                "workspace": workspace,
+                "boundary": spec_cwd,
+                "branch_name": branch_name,
+            }
+        )[:1024],
+    )
+    verdict = await _publish_and_wait_for_harness_elicitation(
+        request,
+        session_id=session_id,
+        params=params,
+        timeout_s=_BOUNDARY_ESCALATION_TIMEOUT_S,
+        conversation_store=conversation_store,
+    )
+    if verdict is not None and verdict.action == "decline":
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"worktree creation from '{workspace}' outside the sandbox "
+                "boundary was declined"
+            ),
+        )
+    if verdict is None or verdict.action != "accept":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"no response to the boundary-approval prompt for '{workspace}' "
+                f"within {_BOUNDARY_ESCALATION_TIMEOUT_S:.0f}s; the folder "
+                "stays outside the sandbox boundary"
+            ),
+        )
+    # Accepted. Canonicalization + the directory re-check happen in the
+    # caller (it owns the host connection and the stat helper); a stat
+    # failure after acceptance is infra (409), not a boundary verdict.
+    return workspace
+
+
 async def _canonical_managed_worktree_path(
     *,
     host_registry: HostRegistry,
     host_conn: HostConnection,
-    workspace: str,
+    canonical_workspace: str | None,
     session_id: str,
-    ask_host_stat: Callable[..., Awaitable[dict[str, Any]]],
 ) -> str | None:
-    """Canonicalize a workspace and confirm the session's claim on it with
-    the host's managed-worktree registry; ``None`` when not confirmed.
+    """Confirm the session's claim on an already-canonical managed folder.
 
     Used by the runner-launch boundary carve-out: a managed folder the
     session already holds a claim on (it created the folder, or bound it
@@ -504,6 +592,12 @@ async def _canonical_managed_worktree_path(
     Read-only on the host (``op="check"``): no claim is created or
     extended. The bind flow grants the claim where its mode calls for it.
 
+    :param canonical_workspace: Realpath of the rejected folder, from the
+        boundary error (the validation stat already computed it). ``None``
+        → not confirmed, no probe.
+    :returns: The canonical path when the host confirms the folder is a
+        registered managed worktree AND the session holds a valid claim;
+        ``None`` otherwise.
     :raises WorktreeHostUnavailableError: When the probe round-trip
         fails (timeout / dropped tunnel) — infra, mapped to 409 by the
         caller rather than masked as a boundary violation.
@@ -514,22 +608,7 @@ async def _canonical_managed_worktree_path(
         worktree_lease_on_host,
     )
 
-    # Canonicalize first — the registry keys on absolute paths, while the
-    # caller may pass a tilde path (the host is the only ~ expander). Stat
-    # failure here is a rare between-checks race (the boundary check just
-    # statted the path successfully), treated as not-confirmed.
-    try:
-        stat = await ask_host_stat(
-            host_registry=host_registry,
-            host_conn=host_conn,
-            path=workspace,
-        )
-    except WorkspaceValidationError:
-        return None
-    if not stat.get("exists") or stat.get("type") != "directory":
-        return None
-    canonical = stat.get("canonical_path")
-    if not isinstance(canonical, str) or not canonical:
+    if not canonical_workspace:
         return None
     try:
         result = await worktree_lease_on_host(
@@ -537,15 +616,16 @@ async def _canonical_managed_worktree_path(
             host_conn=host_conn,
             op="check",
             session_id=session_id,
-            worktree_path=canonical,
+            worktree_path=canonical_workspace,
         )
     except WorktreeHostUnavailableError:
         raise
     except WorktreeProxyError:
         return None
     if result.get("managed") is True and result.get("valid") is True:
-        return canonical
+        return canonical_workspace
     return None
+
 
 
 class CreateWorktreeRequest(BaseModel):
@@ -912,15 +992,66 @@ def create_hosts_router(
                     canonical = await _canonical_managed_worktree_path(
                         host_registry=host_registry,
                         host_conn=conn,
-                        workspace=body.workspace,
+                        canonical_workspace=exc.canonical_workspace,
                         session_id=body.session_id,
-                        ask_host_stat=_ask_host_stat,
                     )
                 except WorktreeHostUnavailableError as probe_exc:
                     raise HTTPException(status_code=409, detail=probe_exc.message) from probe_exc
                 if canonical is None:
-                    raise HTTPException(status_code=400, detail=exc.message) from exc
-                workspace = canonical
+                    # No claim on the folder. When the caller opted in,
+                    # ask the human: the elicitation verdict is the
+                    # grant — consumed in-request, so there is nothing
+                    # to replay and the agent cannot self-approve (the
+                    # resolve route is LEVEL_EDIT-gated, cross-user
+                    # guarded, and unreachable from the runner).
+                    if body.git is not None and body.git.escalate_boundary:
+                        approved = await _escalate_boundary_with_human(
+                            request=request,
+                            session_id=body.session_id,
+                            host_name=target.host.name,
+                            workspace=body.workspace,
+                            spec_cwd=spec_cwd,
+                            branch_name=body.git.branch_name,
+                            conversation_store=conversation_store,
+                        )
+                        # Canonicalize the approved folder for this
+                        # launch. A stat failure after acceptance is
+                        # infra, not a boundary verdict — 409, not a
+                        # re-litigated 400.
+                        try:
+                            approved_stat = await _ask_host_stat(
+                                host_registry=host_registry,
+                                host_conn=conn,
+                                path=approved,
+                            )
+                        except WorkspaceValidationError as stat_exc:
+                            raise HTTPException(
+                                status_code=409, detail=stat_exc.message
+                            ) from stat_exc
+                        if (
+                            not approved_stat.get("exists")
+                            or approved_stat.get("type") != "directory"
+                        ):
+                            raise HTTPException(
+                                status_code=400,
+                                detail=(
+                                    f"approved folder is not a directory on "
+                                    f"host '{target.host.name}': {approved}"
+                                ),
+                                # Post-acceptance: unrelated to the boundary
+                                # rejection this except-block is handling.
+                            ) from None
+                        approved_canonical = approved_stat.get("canonical_path")
+                        if not isinstance(approved_canonical, str) or not approved_canonical:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"host returned no canonical path for '{approved}'",
+                            ) from None
+                        workspace = approved_canonical
+                    else:
+                        raise HTTPException(status_code=400, detail=exc.message) from exc
+                else:
+                    workspace = canonical
         else:
             _logger.warning(
                 "launch_runner: workspace boundary validation skipped for "
