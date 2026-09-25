@@ -1613,7 +1613,7 @@ class ConversationStore(ABC):
         conversation_id: str,
         runner_id: str,
         *,
-        bump_updated_at: bool = True,
+        bump_updated_at: bool = False,
     ) -> Conversation:
         """
         Replace ``conversations.runner_id`` for a conversation.
@@ -1646,7 +1646,7 @@ class ConversationStore(ABC):
         self,
         conversation_id: str,
         *,
-        bump_updated_at: bool = True,
+        bump_updated_at: bool = False,
     ) -> Conversation:
         """
         Null out ``conversations.runner_id``.
@@ -1751,7 +1751,7 @@ class ConversationStore(ABC):
     def set_host_id(
         self,
         conversation_id: str,
-        host_id: str,
+        host_id: str | None,
         workspace: str | None = None,
         git_branch: str | None = None,
     ) -> Conversation:

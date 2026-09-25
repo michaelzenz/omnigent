@@ -1,6 +1,13 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Pmv2ChatProvider, usePmv2Chat } from "./Pmv2ChatContext";
+
+// openManager round-trips a manager-queue hold through the server before
+// switching the target; stub it so the jsdom test needs no network.
+vi.mock("@/lib/agentTasksApi", () => ({
+  acquireManagerQueueHold: vi.fn(async () => ({ token: "hold-token" })),
+  releaseManagerQueueHold: vi.fn(async () => undefined),
+}));
 
 function Probe() {
   const chat = usePmv2Chat();
@@ -37,7 +44,7 @@ describe("Pmv2ChatContext", () => {
     expect(screen.getByTestId("target-role")).toHaveTextContent("secretary");
   });
 
-  it("switches role, opens manager/worker targets, and dismisses back to role", () => {
+  it("switches role, opens manager/worker targets, and dismisses back to role", async () => {
     render(
       <Pmv2ChatProvider>
         <Probe />
@@ -47,8 +54,9 @@ describe("Pmv2ChatContext", () => {
     fireEvent.click(screen.getByRole("button", { name: "broker" }));
     expect(screen.getByTestId("target-role")).toHaveTextContent("broker");
 
+    // openManager awaits the server-side queue hold before switching.
     fireEvent.click(screen.getByRole("button", { name: "manager" }));
-    expect(screen.getByTestId("target-kind")).toHaveTextContent("manager");
+    await waitFor(() => expect(screen.getByTestId("target-kind")).toHaveTextContent("manager"));
 
     fireEvent.click(screen.getByRole("button", { name: "dismiss" }));
     expect(screen.getByTestId("target-kind")).toHaveTextContent("role");

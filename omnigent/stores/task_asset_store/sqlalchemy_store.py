@@ -86,17 +86,17 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
                 ),
             )
             assert next_id is not None
-            dialect = session.bind.dialect.name
-            values = dict(
-                workspace_id=workspace_id,
-                id=next_id,
-                task_id=task_id,
-                kind=kind,
-                category=category,
-                title=title,
-                url=url,
-                created_at=now_epoch(),
-            )
+            dialect = cast(Any, session.bind).dialect.name
+            values: dict[str, Any] = {
+                "workspace_id": workspace_id,
+                "id": next_id,
+                "task_id": task_id,
+                "kind": kind,
+                "category": category,
+                "title": title,
+                "url": url,
+                "created_at": now_epoch(),
+            }
             if source_worker_id is not None:
                 values["source_worker_id"] = source_worker_id
             # A provided provenance re-points the chip to the latest harvester;
@@ -122,9 +122,13 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
                     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
                     insert_cls = sqlite_insert
-                stmt = insert_cls(SqlTaskAsset).values(**values).on_conflict_do_update(
-                    index_elements=["workspace_id", "task_id", "url"],
-                    set_=conflict_update,
+                stmt = (
+                    insert_cls(SqlTaskAsset)
+                    .values(**values)
+                    .on_conflict_do_update(
+                        index_elements=["workspace_id", "task_id", "url"],
+                        set_=conflict_update,
+                    )
                 )
             session.execute(stmt)
             session.commit()
