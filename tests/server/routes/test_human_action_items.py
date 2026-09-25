@@ -28,7 +28,6 @@ async def _create_pending_task(client: httpx.AsyncClient, manager_id: str, seed:
         json={
             "title": f"task-{seed}",
             "goal": "goal",
-            "state": "pending",
             "manager_id": manager_id,
         },
     )
