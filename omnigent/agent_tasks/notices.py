@@ -229,8 +229,8 @@ def _format_session_deleted_notice(event) -> str:
         lines.append(f"  Project: {payload['project_name']}\n")
     lines.extend(
         [
-            f"  Session ID: {session_id}\n",
-            "  The session no longer exists — user manually deleted it.",
+            f"Session ID: {session_id}\n",
+            "The session no longer exists — user manually deleted it. Task may already finished.",
         ]
     )
     return "".join(lines)
