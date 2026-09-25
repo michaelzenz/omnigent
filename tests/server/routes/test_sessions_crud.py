@@ -164,6 +164,49 @@ async def test_patch_prompt_profile_accepts_per_turn_auto_include(
     assert response.json()["prompt_profile"] == {"mode": "auto_include"}
 
 
+async def test_patch_prompt_profile_accepts_include_all(
+    client: httpx.AsyncClient,
+    omniharness_session_id: str,
+) -> None:
+    response = await client.patch(
+        f"/v1/sessions/{omniharness_session_id}",
+        json={"prompt_profile": {"mode": "include_all"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["prompt_profile"] == {"mode": "include_all"}
+
+
+async def test_omniharness_snapshot_defaults_to_include_all(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """An OmniHarness session with no persisted mode reads as Include All."""
+    from omnigent.execution_targets import ONIH_OPENAI_AGENTS_TARGET
+
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    conv_store = SqlAlchemyConversationStore(db_uri)
+    agent = agent_store.get_by_name(ONIH_OPENAI_AGENTS_TARGET)
+    assert agent is not None
+    conv = conv_store.create_conversation(agent_id=agent.id)
+
+    response = await client.get(f"/v1/sessions/{conv.id}")
+
+    assert response.status_code == 200
+    assert response.json()["prompt_profile"] == {"mode": "include_all"}
+
+
+async def test_non_omniharness_snapshot_keeps_prompt_profile_unset(
+    client: httpx.AsyncClient,
+    session_id: str,
+) -> None:
+    """Sessions that cannot use profiles still report an unset selection."""
+    response = await client.get(f"/v1/sessions/{session_id}")
+
+    assert response.status_code == 200
+    assert response.json()["prompt_profile"] is None
+
+
 async def test_patch_prompt_profile_rejects_non_omniharness_agent(
     client: httpx.AsyncClient,
     session_id: str,

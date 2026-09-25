@@ -5135,9 +5135,7 @@ function SessionConfigModal({
   const profileSelection =
     promptProfile?.mode === "fixed"
       ? promptProfile.profileId
-      : promptProfile?.mode === "auto_include"
-        ? "auto_include"
-        : "auto";
+      : (promptProfile?.mode ?? "include_all");
   const { llmModel, usesServerModelOptions, modelOptions, pickerSelectedModel, modelLabel } =
     useResolvedComposerModel(modelPickerKind, codexModelOptions, sdkModelOptions);
 
@@ -5287,7 +5285,9 @@ function SessionConfigModal({
               ? { mode: "auto" }
               : draftProfileSelection === "auto_include"
                 ? { mode: "auto_include" }
-                : { mode: "fixed", profileId: draftProfileSelection },
+                : draftProfileSelection === "include_all"
+                  ? { mode: "include_all" }
+                  : { mode: "fixed", profileId: draftProfileSelection },
           );
           // Persist the pick as the harness-level remembered option so the
           // New Chat dialog seeds from it on the next session creation.

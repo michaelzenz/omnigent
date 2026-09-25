@@ -254,7 +254,7 @@ def _to_conversation(
         root_conversation_id=row.root_conversation_id,
         agent_id=row.agent_id,
         prompt_profile_mode=cast(
-            Literal["auto", "auto_include", "fixed"] | None,
+            Literal["auto", "auto_include", "fixed", "include_all"] | None,
             row.prompt_profile_mode,
         ),
         prompt_profile_id=row.prompt_profile_id,
@@ -299,7 +299,7 @@ def _validate_prompt_profile_columns(mode: str | None, profile_id: str | None) -
     """Enforce the nullable tagged-union shape stored on conversations."""
     if mode is None and profile_id is None:
         return
-    if mode in {"auto", "auto_include"} and profile_id is None:
+    if mode in {"auto", "auto_include", "include_all"} and profile_id is None:
         return
     if mode == "fixed" and profile_id:
         return

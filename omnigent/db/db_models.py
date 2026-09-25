@@ -966,7 +966,7 @@ class SqlConversation(ConversationBase):
     __table_args__ = (
         CheckConstraint(
             "prompt_profile_mode IS NULL OR "
-            "prompt_profile_mode IN ('auto', 'auto_include', 'fixed')",
+            "prompt_profile_mode IN ('auto', 'auto_include', 'fixed', 'include_all')",
             name="ck_conversations_prompt_profile_mode",
         ),
         # No bare created_at/updated_at indexes: the sessions list is ACL-scoped

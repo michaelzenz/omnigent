@@ -249,7 +249,10 @@ export interface ModelUsage {
 }
 
 export type PromptProfileSelection =
-  { mode: "auto" } | { mode: "auto_include" } | { mode: "fixed"; profileId: string };
+  | { mode: "auto" }
+  | { mode: "auto_include" }
+  | { mode: "include_all" }
+  | { mode: "fixed"; profileId: string };
 
 /**
  * One still-running background shell reported by the claude-native `Stop`

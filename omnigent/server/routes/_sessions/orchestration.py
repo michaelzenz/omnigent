@@ -1033,6 +1033,7 @@ def _build_session_response(
     viewer_id: str | None = None,
     agent_store: AgentStore | None = None,
     agent_cache: AgentCache | None = None,
+    agent_uses_omniharness: bool = False,
 ) -> SessionResponse:
     """
     Build a :class:`SessionResponse` from store-side entities.
@@ -1103,6 +1104,9 @@ def _build_session_response(
         ``None`` is treated as ``[]``.
     :param agent_store: Optional store used to resolve the session harness.
     :param agent_cache: Optional cache used to load the session harness spec.
+    :param agent_uses_omniharness: Whether the bound agent is an OmniHarness
+        target; precomputed by callers that already resolved the agent so the
+        prompt-profile default needs no second store read.
     :returns: The :class:`SessionResponse` for the API.
     :raises OmnigentError: If ``conv.agent_id`` is ``None``.
     """
@@ -1127,6 +1131,17 @@ def _build_session_response(
     labels = labels_with_closed_status(_labels_for_viewer(conv.labels, viewer_id), conv.title)
     if agent_name in (_CLAUDE_NATIVE_MODEL, _CODEX_NATIVE_MODEL):
         labels = {**labels, _CLAUDE_NATIVE_UI_LABEL_KEY: _CLAUDE_NATIVE_UI_LABEL_VALUE}
+    # Include All is the effective prompt-profile default: a top-level
+    # OmniHarness session with no persisted mode injects every enabled
+    # profile per turn, so the snapshot reports that mode instead of an
+    # unset selection. Sub-agent children never inject profiles.
+    _effective_prompt_profile_mode = conv.prompt_profile_mode
+    if (
+        _effective_prompt_profile_mode is None
+        and conv.parent_conversation_id is None
+        and agent_uses_omniharness
+    ):
+        _effective_prompt_profile_mode = "include_all"
     return SessionResponse(
         id=conv.id,
         agent_id=conv.agent_id,
@@ -1159,10 +1174,10 @@ def _build_session_response(
         ),
         prompt_profile=(
             None
-            if conv.prompt_profile_mode is None
+            if _effective_prompt_profile_mode is None
             else (
-                {"mode": conv.prompt_profile_mode}
-                if conv.prompt_profile_mode in {"auto", "auto_include"}
+                {"mode": _effective_prompt_profile_mode}
+                if _effective_prompt_profile_mode in {"auto", "auto_include", "include_all"}
                 else {"mode": "fixed", "profile_id": conv.prompt_profile_id}
             )
         ),
@@ -5317,6 +5332,16 @@ async def _forward_event_to_runner(
         and conv.prompt_profile_mode in {"auto", "auto_include"}
     )
     _profile_include = conv.prompt_profile_mode == "auto_include"
+    # Include All (and the legacy default: no persisted mode) injects every
+    # enabled profile deterministically — no AI selection call. An explicit
+    # fixed manual chosen upstream (e.g. a pmv2 role manual) wins.
+    _profile_include_all = (
+        body.type == "message"
+        and body.data.get("role") == "user"
+        and _uses_omniharness
+        and conv.prompt_profile_mode in {None, "include_all"}
+        and profile_instructions is None
+    )
     _profile_selected_this_turn = False
     if _profile_dynamic and prompt_profile_store is None:
         raise OmnigentError(
@@ -5341,11 +5366,31 @@ async def _forward_event_to_runner(
             execution_context = dict(execution_context)
             names = [profile.name for profile in profiles]
             execution_context["profile"] = names[0] if len(names) == 1 else None
-            if _profile_include:
+            if _profile_include or _profile_include_all:
                 execution_context["profiles"] = names
             body.data["execution_context"] = execution_context
             forwarded_data["execution_context"] = execution_context
             runner_body["execution_context"] = execution_context
+
+    if _profile_include_all:
+        if prompt_profile_store is None:
+            # Include All injects what is available; with no store wired
+            # (e.g. system-dispatched turns that carry no store) the turn
+            # proceeds with no injected profiles rather than failing.
+            _logger.debug(
+                "prompt profile store unavailable; skipping include-all injection for session=%s",
+                session_id,
+            )
+        else:
+            _all_profiles = await asyncio.to_thread(
+                prompt_profile_store.list,
+                enabled_only=True,
+                visible_only=True,
+            )
+            _apply_auto_profiles(_all_profiles)
+            # No AI selection call — the deterministic injection above is
+            # the turn's profile selection.
+            _profile_selected_this_turn = True
 
     _omniharness_routing_settings = None
     if model_settings_store is not None and (_uses_omniharness or _is_onih_child):
@@ -8961,6 +9006,12 @@ async def _create_session_from_existing_agent(
                 prompt_profile_store,
                 require_selectable=True,
             )
+    elif is_omniharness_agent(agent) and body.parent_session_id is None:
+        # Include All is the default prompt-profile mode: an OmniHarness
+        # session created without an explicit selection injects every
+        # enabled profile on each turn. Sub-agent children never inject
+        # profiles, so they keep no persisted mode.
+        prompt_profile_mode = "include_all"
 
     # Top-level Smart Routing: "auto" on a native wrapper agent means the client
     # picked Smart Routing with no bundle agent, and its ``agent_id`` is only a
@@ -11073,11 +11124,15 @@ async def _get_session_snapshot(
     context_window: int | None = None
     context_window_is_estimate = False
     agent_name: str | None = None
+    agent_uses_omniharness = False
     if agent_store is not None and agent_cache is not None and conv.agent_id is not None:
         try:
             agent = await asyncio.to_thread(agent_store.get, conv.agent_id)
             if agent is not None:
                 agent_name = agent.name
+                from omnigent.execution_targets import is_omniharness_agent
+
+                agent_uses_omniharness = is_omniharness_agent(agent)
                 if agent.bundle_location is not None:
                     # Offload to a worker thread: on a cold cache this fetches
                     # the bundle from the artifact store and parses the spec —
@@ -11227,6 +11282,7 @@ async def _get_session_snapshot(
         viewer_id=viewer_id,
         agent_store=agent_store,
         agent_cache=agent_cache,
+        agent_uses_omniharness=agent_uses_omniharness,
     )
 
 

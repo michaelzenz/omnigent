@@ -2394,7 +2394,7 @@ describe("Composer config gear", () => {
     fireEvent.click(gear()!);
     await screen.findByTestId("composer-config-modal");
     expect(screen.queryByTestId("composer-config-model")).toBeNull();
-    expect(screen.getByTestId("composer-config-profile")).toHaveTextContent("Auto Select");
+    expect(screen.getByTestId("composer-config-profile")).toHaveTextContent("Include All");
     fireEvent.click(screen.getByTestId("composer-config-profile"));
     expect(screen.getByRole("option", { name: "Auto Include" })).toBeTruthy();
     fireEvent.click(screen.getByRole("option", { name: "Auto Select" }));

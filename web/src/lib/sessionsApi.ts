@@ -156,7 +156,11 @@ interface SessionResponseWire {
   title?: string | null;
   labels?: Record<string, string>;
   prompt_profile:
-    { mode: "auto" } | { mode: "auto_include" } | { mode: "fixed"; profile_id: string } | null;
+    | { mode: "auto" }
+    | { mode: "auto_include" }
+    | { mode: "include_all" }
+    | { mode: "fixed"; profile_id: string }
+    | null;
   /** Canonical working directory; ``null`` when unbound. */
   workspace?: string | null;
   /**
@@ -513,7 +517,11 @@ export async function createSession(
     sub_agent_name?: string | null;
     title?: string;
     prompt_profile?:
-      { mode: "auto" } | { mode: "auto_include" } | { mode: "fixed"; profile_id: string } | null;
+      | { mode: "auto" }
+      | { mode: "auto_include" }
+      | { mode: "include_all" }
+      | { mode: "fixed"; profile_id: string }
+      | null;
   } = { agent_id: agentId, initial_items: initialItems };
   if (options.parentSessionId !== undefined) {
     body.parent_session_id = options.parentSessionId;
@@ -1035,6 +1043,7 @@ export async function updateSession(
     | Record<string, string>
     | { mode: "auto" }
     | { mode: "auto_include" }
+    | { mode: "include_all" }
     | { mode: "fixed"; profile_id: string }
   > = {};
   if ("reasoningEffort" in updates) {

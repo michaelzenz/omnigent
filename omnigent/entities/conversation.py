@@ -226,7 +226,7 @@ class Conversation:
     kind: str = "default"
     parent_conversation_id: str | None = None
     agent_id: str | None = None
-    prompt_profile_mode: Literal["auto", "auto_include", "fixed"] | None = None
+    prompt_profile_mode: Literal["auto", "auto_include", "fixed", "include_all"] | None = None
     prompt_profile_id: str | None = None
     runner_id: str | None = None
     host_id: str | None = None
