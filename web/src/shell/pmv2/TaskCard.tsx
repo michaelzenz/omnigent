@@ -261,9 +261,9 @@ export function TaskCard({
             {state !== "agent-resolved" ? (
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="icon-sm"
-                className="shrink-0 text-[#15803d] dark:text-[#4ade80]"
+                className="shrink-0 hover:bg-[rgba(34,197,94,0.1)]!"
                 disabled={patchTask.isPending}
                 aria-label="Mark task resolved"
                 title="Mark task resolved (agent-resolved) — parks it at the queue end"
@@ -282,7 +282,7 @@ export function TaskCard({
                 {patchTask.isPending ? (
                   <Loader2Icon className="size-4 animate-spin" aria-hidden />
                 ) : (
-                  <CheckIcon aria-hidden />
+                  <CheckIcon className="size-4 text-[#15803d] dark:text-[#4ade80]" aria-hidden />
                 )}
               </Button>
             ) : null}
