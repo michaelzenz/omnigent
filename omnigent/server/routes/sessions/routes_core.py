@@ -42,7 +42,7 @@ from omnigent.entities import (
 )
 from omnigent.entities.permission import SessionPermission
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.execution_targets import conversation_uses_omniharness
+from omnigent.execution_targets import conversation_uses_omniharness, is_omniharness_agent
 from omnigent.model_override import validate_model_override
 from omnigent.profile_selection import load_prompt_profile_instructions
 from omnigent.reasoning_effort import (
@@ -3122,6 +3122,8 @@ def register_core_routes(
             permission_level=level,
             last_task_error=None,
             agent_name=base_agent.name,
+            agent_store=agent_store,
+            agent_uses_omniharness=is_omniharness_agent(base_agent),
         )
 
     # ── POST /sessions/{session_id}/switch-agent ─────────────────
@@ -3353,4 +3355,6 @@ def register_core_routes(
             permission_level=level,
             last_task_error=None,
             agent_name=target_agent.name,
+            agent_store=agent_store,
+            agent_uses_omniharness=is_omniharness_agent(target_agent),
         )

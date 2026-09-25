@@ -396,6 +396,13 @@ class PromptProfileAutoIncludeSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class PromptProfileIncludeAllSelection(BaseModel):
+    """Include every enabled prompt profile on each turn, with no selection."""
+
+    mode: Literal["include_all"]
+    model_config = ConfigDict(extra="forbid")
+
+
 class PromptProfileFixedSelection(BaseModel):
     """Pin a session to one prompt profile."""
 
@@ -405,7 +412,10 @@ class PromptProfileFixedSelection(BaseModel):
 
 
 PromptProfileSelection = Annotated[
-    PromptProfileAutoSelection | PromptProfileAutoIncludeSelection | PromptProfileFixedSelection,
+    PromptProfileAutoSelection
+    | PromptProfileAutoIncludeSelection
+    | PromptProfileIncludeAllSelection
+    | PromptProfileFixedSelection,
     Field(discriminator="mode"),
 ]
 

@@ -37,7 +37,7 @@ import type { AgentBundleInput } from "@/lib/agentBundle";
 import { PromptProfileSelect } from "@/components/HarnessConfigControls";
 import { useOmniHarnessSettings, useUpdateOmniHarnessSettings } from "@/hooks/useModelSettings";
 
-export type ProfileSelection = "auto" | string;
+export type ProfileSelection = "auto" | "auto_include" | "include_all" | string;
 
 export function PromptProfileConfigControl({
   profiles,
@@ -61,9 +61,13 @@ export function PromptProfileConfigControl({
         />
       </div>
       <ManageProfilesDialog
-        selectedProfileId={selection === "auto" || selection === "auto_include" ? null : selection}
+        selectedProfileId={
+          selection === "auto" || selection === "auto_include" || selection === "include_all"
+            ? null
+            : selection
+        }
         onSelectProfile={(profile) => onSelect(profile.id)}
-        onSelectedProfileRemoved={() => onSelect("auto")}
+        onSelectedProfileRemoved={() => onSelect("include_all")}
       />
     </div>
   );
@@ -83,7 +87,14 @@ export function ProfileControls({
   onSelect: (selection: ProfileSelection, profile?: PromptProfile) => void;
 }) {
   const selected = profiles.find((profile) => profile.id === selection);
-  const label = selection === "auto" ? "Auto Select" : (selected?.name ?? "Auto Select");
+  const label =
+    selection === "auto"
+      ? "Auto Select"
+      : selection === "include_all"
+        ? "Include All"
+        : selection === "auto_include"
+          ? "Auto Include"
+          : (selected?.name ?? "Include All");
 
   return (
     <div
@@ -105,6 +116,14 @@ export function ProfileControls({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-64">
+          <DropdownMenuItem
+            data-testid="new-chat-landing-profile-include-all"
+            data-active={selection === "include_all" ? "true" : undefined}
+            onSelect={() => onSelect("include_all")}
+            className="data-[active=true]:bg-muted"
+          >
+            Include All
+          </DropdownMenuItem>
           <DropdownMenuItem
             data-testid="new-chat-landing-profile-auto"
             data-active={selection === "auto" ? "true" : undefined}
@@ -130,7 +149,7 @@ export function ProfileControls({
       <ManageProfilesDialog
         selectedProfileId={selectedProfileId}
         onSelectProfile={(profile) => onSelect(profile.id, profile)}
-        onSelectedProfileRemoved={() => onSelect("auto")}
+        onSelectedProfileRemoved={() => onSelect("include_all")}
       />
     </div>
   );

@@ -110,6 +110,26 @@ describe("ProfileControls", () => {
     );
   });
 
+  it("offers Include All in the dropdown", () => {
+    const onSelect = vi.fn();
+    render(
+      <ProfileControls
+        profiles={[]}
+        selection="include_all"
+        selectedProfileId={null}
+        disabled={false}
+        onSelect={onSelect}
+      />,
+    );
+
+    expect(screen.getByTestId("new-chat-landing-profile-select").textContent).toContain(
+      "Include All",
+    );
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-profile-select"), { button: 0 });
+    fireEvent.click(screen.getByTestId("new-chat-landing-profile-include-all"));
+    expect(onSelect).toHaveBeenCalledWith("include_all");
+  });
+
   it("shows disabled profiles in management and toggles enabled", async () => {
     mocks.rows = [profile({ enabled: false })];
     mocks.update.mockResolvedValue(profile());

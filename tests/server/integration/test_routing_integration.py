@@ -2485,3 +2485,176 @@ async def test_an_auto_harness_outage_leaves_the_route_once_label_unclaimed(
     assert routed is not None
     assert routed.model_override == GPT_MODEL
     assert routed.labels.get(ROUTING_DECISION_LABEL_KEY)
+
+
+# ── Include All (deterministic default-mode injection) ──────────────
+
+
+def _capturing_runner_client(captured: list[dict[str, Any]]) -> httpx.AsyncClient:
+    """A runner client that records every forwarded turn body, then acks 202."""
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(202, json={"queued": True})
+
+    return httpx.AsyncClient(
+        base_url="http://runner.test",
+        transport=httpx.MockTransport(_handler),
+    )
+
+
+def _profile_turn_body(text: str) -> SessionEventInput:
+    return SessionEventInput(
+        type="message",
+        data={
+            "role": "user",
+            "content": [{"type": "input_text", "text": text}],
+            "execution_context": {
+                "profile": "turn",
+                "harness": "omniharness",
+                "model": None,
+            },
+        },
+    )
+
+
+async def _include_all_session(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> tuple[str, SqlAlchemyConversationStore, SqlAlchemyPromptProfileStore, Any]:
+    agent = await create_test_agent(
+        client,
+        name="omniharness",
+        executor={"type": "omnigent", "config": {"harness": "openai-agents"}},
+    )
+    created = await client.post("/v1/sessions", json={"agent_id": agent["id"]})
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    conv_store = SqlAlchemyConversationStore(db_uri)
+    conv = conv_store.update_conversation(
+        session_id,
+        prompt_profile_mode="include_all",
+    )
+    assert conv is not None
+    profile_store = SqlAlchemyPromptProfileStore(db_uri)
+    return session_id, conv_store, profile_store, conv
+
+
+async def test_include_all_injects_enabled_visible_profiles_without_ai_call(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    session_id, conv_store, profile_store, conv = await _include_all_session(client, db_uri)
+    profile_store.create("aa" * 16, "First", "Be first.")
+    profile_store.create("bb" * 16, "Second", "Be second.")
+    profile_store.create("cc" * 16, "Disabled", "Never injected.", enabled=False)
+    profile_store.create("dd" * 16, "Hidden", "Never injected.", visible=False)
+    selector = AsyncMock(return_value=OmniHarnessTurnSelection())
+    captured: list[dict[str, Any]] = []
+
+    with patch(
+        "omnigent.omniharness_turn_selection.select_omniharness_turn",
+        new=selector,
+    ):
+        async with _capturing_runner_client(captured) as runner_client:
+            await orchestration_module._forward_event_to_runner(
+                session_id,
+                conv,
+                _profile_turn_body("use every profile"),
+                conv_store,
+                runner_client,
+                agent_name="omniharness",
+                prompt_profile_store=profile_store,
+                uses_omniharness=True,
+            )
+
+    selector.assert_not_awaited()
+    assert captured[0]["profile_instructions"] == (
+        "## Prompt profile: First\nBe first.\n\n## Prompt profile: Second\nBe second."
+    )
+    message = next(
+        item
+        for item in conv_store.list_items(session_id).data
+        if getattr(item, "type", None) == "message"
+    )
+    assert message.data.execution_context.profiles == ["First", "Second"]
+
+
+async def test_legacy_unset_mode_defaults_to_include_all(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    session_id, conv_store, profile_store, conv = await _include_all_session(client, db_uri)
+    # Simulate a legacy row: no persisted mode at all.
+    conv_store.update_conversation(session_id, _unset_prompt_profile=True)
+    conv = conv_store.get_conversation(session_id)
+    assert conv is not None and conv.prompt_profile_mode is None
+    profile_store.create("aa" * 16, "Only", "Legacy default.")
+    captured: list[dict[str, Any]] = []
+
+    async with _capturing_runner_client(captured) as runner_client:
+        await orchestration_module._forward_event_to_runner(
+            session_id,
+            conv,
+            _profile_turn_body("legacy default"),
+            conv_store,
+            runner_client,
+            agent_name="omniharness",
+            prompt_profile_store=profile_store,
+            uses_omniharness=True,
+        )
+
+    # A single profile rides alone (no section header) — same as auto modes.
+    assert captured[0]["profile_instructions"] == "Legacy default."
+
+
+async def test_include_all_never_clobbers_an_explicit_manual(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    session_id, conv_store, profile_store, conv = await _include_all_session(client, db_uri)
+    conv_store.update_conversation(session_id, _unset_prompt_profile=True)
+    conv = conv_store.get_conversation(session_id)
+    assert conv is not None and conv.prompt_profile_mode is None
+    profile_store.create("aa" * 16, "Workspace", "Should not appear.")
+    captured: list[dict[str, Any]] = []
+
+    async with _capturing_runner_client(captured) as runner_client:
+        await orchestration_module._forward_event_to_runner(
+            session_id,
+            conv,
+            _profile_turn_body("notice turn"),
+            conv_store,
+            runner_client,
+            agent_name="omniharness",
+            # System-dispatched turns (e.g. pmv2 role manuals) carry their
+            # instructions explicitly.
+            profile_instructions="Role manual.",
+            prompt_profile_store=profile_store,
+            uses_omniharness=True,
+        )
+
+    assert captured[0]["profile_instructions"] == "Role manual."
+
+
+async def test_include_all_without_profile_store_skips_injection(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    session_id, conv_store, _profile_store, conv = await _include_all_session(client, db_uri)
+    captured: list[dict[str, Any]] = []
+
+    async with _capturing_runner_client(captured) as runner_client:
+        # System-dispatched turns carry no profile store; the turn must
+        # proceed with no injected profiles rather than failing.
+        await orchestration_module._forward_event_to_runner(
+            session_id,
+            conv,
+            _profile_turn_body("no store"),
+            conv_store,
+            runner_client,
+            agent_name="omniharness",
+            uses_omniharness=True,
+        )
+
+    assert "profile_instructions" not in captured[0]

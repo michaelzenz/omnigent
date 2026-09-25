@@ -2783,7 +2783,7 @@ export function NewChatLandingScreen() {
     () =>
       restoredDraft?.profileSelection ??
       readHarnessOptions(OMNIHARNESS_AGENT_NAME).promptProfile ??
-      "auto",
+      "include_all",
   );
   const [selectedHostId, setSelectedHostId] = useState<string | null>(
     () => restoredDraft?.selectedHostId ?? null,
@@ -3477,10 +3477,11 @@ export function NewChatLandingScreen() {
     if (
       profileSelection !== "auto" &&
       profileSelection !== "auto_include" &&
+      profileSelection !== "include_all" &&
       !profiles.some((profile) => profile.id === profileSelection)
     ) {
-      setProfileSelection("auto");
-      writeHarnessOption(OMNIHARNESS_AGENT_NAME, { promptProfile: "auto" });
+      setProfileSelection("include_all");
+      writeHarnessOption(OMNIHARNESS_AGENT_NAME, { promptProfile: "include_all" });
     }
   }, [profileSelection, profiles, profilesLoading]);
 
@@ -3657,8 +3658,10 @@ export function NewChatLandingScreen() {
                     ? "Auto Select"
                     : profileSelection === "auto_include"
                       ? "Auto Include"
-                      : (profiles.find((profile) => profile.id === profileSelection)?.name ??
-                        "Auto Select"),
+                      : profileSelection === "include_all"
+                        ? "Include All"
+                        : (profiles.find((profile) => profile.id === profileSelection)?.name ??
+                          "Include All"),
               },
             ]
           : []),
@@ -3901,7 +3904,7 @@ export function NewChatLandingScreen() {
     );
     setPickedEffort(isOnihPiTargetName(selectedAgent?.name) ? (stored.effort ?? "") : "");
     if (omniharnessSelected) {
-      setProfileSelection(stored.promptProfile ?? "auto");
+      setProfileSelection(stored.promptProfile ?? "include_all");
       setSubagentRoutingMode(
         stored.subagentRouting === "on" || stored.subagentRouting === "off"
           ? stored.subagentRouting
@@ -4822,9 +4825,11 @@ export function NewChatLandingScreen() {
       const sessionPromptProfile = promptProfilesEnabled
         ? profileSelection === "auto_include"
           ? { mode: "auto_include" as const }
-          : promptProfile
-            ? { mode: "fixed" as const, profile_id: promptProfile.id }
-            : { mode: "auto" as const }
+          : profileSelection === "include_all"
+            ? { mode: "include_all" as const }
+            : promptProfile
+              ? { mode: "fixed" as const, profile_id: promptProfile.id }
+              : { mode: "auto" as const }
         : null;
       const trimmedBranch = branchName.trim();
       // `shouldCreateWorktree` (component scope): true only when a branch is

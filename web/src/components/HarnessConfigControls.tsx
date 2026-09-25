@@ -24,6 +24,7 @@ export const EFFORT_SELECT_NONE = "__none__";
 export const EFFORT_UNAVAILABLE_PLACEHOLDER = "—";
 export const PROMPT_PROFILE_AUTO = "__auto_profile__";
 export const PROMPT_PROFILE_AUTO_INCLUDE = "__auto_include_profile__";
+export const PROMPT_PROFILE_INCLUDE_ALL = "__include_all_profile__";
 
 /** One entry in the Model row's harness-model list. */
 export interface RoutingModelOption {
@@ -78,7 +79,9 @@ export function PromptProfileSelect({
           ? PROMPT_PROFILE_AUTO
           : value === "auto_include"
             ? PROMPT_PROFILE_AUTO_INCLUDE
-            : value
+            : value === "include_all"
+              ? PROMPT_PROFILE_INCLUDE_ALL
+              : value
       }
       onValueChange={(next) =>
         onValueChange(
@@ -86,7 +89,9 @@ export function PromptProfileSelect({
             ? "auto"
             : next === PROMPT_PROFILE_AUTO_INCLUDE
               ? "auto_include"
-              : next,
+              : next === PROMPT_PROFILE_INCLUDE_ALL
+                ? "include_all"
+                : next,
         )
       }
     >
@@ -94,6 +99,7 @@ export function PromptProfileSelect({
         <SelectValue />
       </SelectTrigger>
       <SelectContent position="popper" align="start">
+        <SelectItem value={PROMPT_PROFILE_INCLUDE_ALL}>Include All</SelectItem>
         <SelectItem value={PROMPT_PROFILE_AUTO}>Auto Select</SelectItem>
         <SelectItem value={PROMPT_PROFILE_AUTO_INCLUDE}>Auto Include</SelectItem>
         {profiles.map((profile) => (

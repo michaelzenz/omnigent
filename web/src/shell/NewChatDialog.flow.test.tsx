@@ -1928,6 +1928,36 @@ describe("NewChatLandingScreen create flow", () => {
     expect(body.model_override).toBeUndefined();
   });
 
+  it("defaults to Include All when no profile was remembered", async () => {
+    setAgents([
+      agent({
+        id: "ag_omniharness",
+        name: "omniharness",
+        display_name: "OmniHarness",
+        harness: "openai-agents",
+        builtin: true,
+      }),
+    ]);
+    promptProfileMocks.rows = [promptProfile({ id: "profile_research", name: "Research" })];
+    vi.mocked(authenticatedFetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "conv_new" }),
+    } as unknown as Response);
+
+    renderLanding();
+    await waitForWorkspaceSeed();
+    typeMessage("start a chat");
+    fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
+
+    const sessionCall = vi
+      .mocked(authenticatedFetch)
+      .mock.calls.find(([url]) => url === "/v1/sessions");
+    expect(sessionCall).toBeTruthy();
+    if (!sessionCall) throw new Error("Expected a session create call");
+    const body = JSON.parse((sessionCall[1] as RequestInit).body as string);
+    expect(body.prompt_profile).toEqual({ mode: "include_all" });
+  });
+
   it("persists Auto Select for per-turn server selection", async () => {
     const base = agent({
       id: "ag_omniharness",
