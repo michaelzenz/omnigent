@@ -43,6 +43,7 @@ import {
 } from "@/lib/agentTasksApi";
 import { interrupt as interruptSession } from "@/lib/sessionsApi";
 import { useChatStore } from "@/store/chatStore";
+import { tokenizeQuery } from "@/shell/pmv2/boardSearchHighlight";
 import { FIXTURE_TASK_LIST } from "@/shell/pmv2/fixtures/mockTaskDashboard";
 import { isPmv2FixtureMode } from "@/shell/pmv2/fixtures/pmv2FixtureMode";
 import {
@@ -139,16 +140,17 @@ export function useAgentTaskBoardSearch(query: string): UseQueryResult<AgentTask
   });
 
   if (fixtureEnabled) {
-    // Fixture mode has no server; match against the fixture task list so the
-    // fixture board stays demonstrable.
-    const needle = debounced.toLowerCase();
-    const matches: AgentTaskBoardMatch[] = debounced
-      ? FIXTURE_TASK_LIST.filter(
-          (task) =>
-            task.title.toLowerCase().includes(needle) ||
-            (task.description?.toLowerCase().includes(needle) ?? false) ||
-            task.id.toLowerCase().includes(needle),
-        ).map((task) => ({
+    // Fixture mode has no server; mirror the server's token-AND match (every
+    // whitespace-split token must hit somewhere) against the fixture task
+    // list so the fixture board stays demonstrable.
+    const tokens = tokenizeQuery(debounced);
+    const matches: AgentTaskBoardMatch[] = tokens.length
+      ? FIXTURE_TASK_LIST.filter((task) => {
+          const texts = [task.title, task.goal ?? "", task.description ?? "", task.id].map((text) =>
+            text.toLowerCase(),
+          );
+          return tokens.every((token) => texts.some((text) => text.includes(token)));
+        }).map((task) => ({
           task_id: task.id,
           matched_in: ["task"],
           item_ids: [],

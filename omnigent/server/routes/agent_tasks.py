@@ -143,9 +143,9 @@ _logger = logging.getLogger(__name__)
 _VALID_TASK_STATES = frozenset(TASK_STATE)
 
 # Board search result cap: the board itself lists pending + live tasks, so a
-# few hundred matches is already an outlier; beyond the cap the lowest-ranked
-# matches (bottom of the board) are dropped and the board shows the count via
-# its own pagination line.
+# few hundred matches is already an outlier; beyond the cap the lowest-
+# scoring matches are dropped and the board shows the count via its own
+# pagination line.
 BOARD_SEARCH_DEFAULT_LIMIT = 100
 BOARD_SEARCH_MAX_LIMIT = 500
 
@@ -1921,16 +1921,19 @@ def create_agent_tasks_router(
     ) -> dict[str, Any]:
         """Board search for the pmv2 task list.
 
-        Matches the query (case-insensitive substring) against board-visible
-        task text (title/goal/description/id), task items, assets, and
-        worker lane text. Chat content, executions, and the manager
-        conversation are deliberately not probed — the search targets the
-        task's rendered content and its live workers' lane text.
+        Token-AND match: the query is lowercased and split on whitespace,
+        and every token must match somewhere in board-visible task text
+        (title/goal/description/id), task items, assets, and worker lane
+        text — any field, any order. Results are ranked best match first
+        (exact phrase hits and full title coverage score highest, then field
+        importance); ties keep the task store order. Chat content,
+        executions, and the manager conversation are deliberately not probed
+        — the search targets the task's rendered content and its live
+        workers' lane text.
 
-        The first ``limit`` matches are returned in board order
-        (queue_rank desc, id desc — top of the board first). When the full
-        match count reaches the cap the board hints that more matches exist
-        below; full pagination comes later.
+        The first ``limit`` matches are returned (best score first). When
+        the full match count reaches the cap the board hints that more
+        matches exist below; full pagination comes later.
 
         Returns per-entity match ids so the board can filter its cards and
         ring the matched items/assets/workers without any client-side text

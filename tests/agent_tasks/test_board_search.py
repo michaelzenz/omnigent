@@ -18,13 +18,17 @@ def _uid(seed: str) -> str:
 class BoardFixture:
     """One task with stores wired up, mirroring the board-search route flow."""
 
-    def __init__(self, db_uri: str, seed: str) -> None:
+    def __init__(self, db_uri: str, seed: str, *, title: str = "Anchor title") -> None:
         self.task_store = SqlAlchemyTaskStore(db_uri)
         self.item_store = SqlAlchemyTaskItemStore(db_uri)
         self.worker_store = SqlAlchemyWorkerStore(db_uri)
         self.asset_store = SqlAlchemyTaskAssetStore(db_uri)
-        self.task_id = _uid(f"{seed}_task")
-        self.task_store.create(self.task_id, "Anchor title", "anchor goal", state="active")
+        self.task_id = self.add_task("base", title=title)
+
+    def add_task(self, seed: str, *, title: str, goal: str = "") -> str:
+        task_id = _uid(f"{seed}_task")
+        self.task_store.create(task_id, title, goal, state="active")
+        return task_id
 
     def add_item(
         self,
@@ -35,11 +39,12 @@ class BoardFixture:
         instructions: str | None = None,
         worker_id: str | None = None,
         state: str = "pending",
+        task_id: str | None = None,
     ) -> str:
         item_id = _uid(f"{seed}_item")
         self.item_store.create_item(
             item_id,
-            self.task_id,
+            task_id or self.task_id,
             title,
             state=state,
             description=description,
@@ -135,6 +140,38 @@ def test_matches_worker_lane_text(db_uri: str) -> None:
     assert results[0]["matched_in"] == ["worker"]
 
 
+def test_token_and_matches_across_entities(db_uri: str) -> None:
+    """Tokens may land in different fields: the title carries one token, an
+    item title the other — the task still matches and both entities ring."""
+    board = BoardFixture(db_uri, "cross_entity", title="Migrate external tables")
+    item_id = board.add_item("i1", title="optimize run failed")
+    results = board.search("migrate   optimize")
+    assert len(results) == 1
+    assert results[0]["matched_in"] == ["item", "task"]
+    assert results[0]["item_ids"] == [item_id]
+
+
+def test_token_and_requires_every_token(db_uri: str) -> None:
+    board = BoardFixture(db_uri, "partial_token")
+    board.add_item("i1", title="optimize run failed")
+    assert board.search("migrate optimize") == []
+
+
+def test_results_ranked_best_match_first(db_uri: str) -> None:
+    """Exact phrase in the title > all tokens in the title > tokens spread
+    across a title and an item title."""
+    board = BoardFixture(db_uri, "ranking")
+    phrase_id = board.add_task("phrase", title="migrate optimize now")
+    titled_id = board.add_task("titled", title="optimize and migrate tables")
+    spread_id = board.add_task("spread", title="Migrate external tables")
+    board.add_item("i1", title="optimize run failed", task_id=spread_id)
+
+    results = board.search("migrate optimize")
+    assert [result["task_id"] for result in results] == [phrase_id, titled_id, spread_id]
+    scores = [result["score"] for result in results]
+    assert scores[0] > scores[1] > scores[2]
+
+
 def test_nonmatching_query_excludes_task(db_uri: str) -> None:
     board = BoardFixture(db_uri, "no_match")
     board.add_item("i1", title="Unrelated item")
@@ -145,19 +182,6 @@ def test_empty_query_returns_no_results(db_uri: str) -> None:
     board = BoardFixture(db_uri, "empty_query")
     assert board.search("") == []
     assert board.search("   ") == []
-
-
-def test_results_are_in_board_order(db_uri: str) -> None:
-    """Results follow the board's sort-order column (queue_rank desc, id desc) —
-    the board filters its cards in place, so search must not reorder them."""
-    board = BoardFixture(db_uri, "order")
-    first = board.task_store.create(_uid("order_t1"), "Sync report", "sync goal", state="active")
-    second = board.task_store.create(_uid("order_t2"), "Sync report", "sync goal", state="active")
-    third = board.task_store.create(_uid("order_t3"), "Sync report", "sync goal", state="active")
-    assert [t.queue_rank for t in (first, second, third)] == [1, 2, 3]
-
-    results = board.search("sync")
-    assert [r["task_id"] for r in results] == [third.id, second.id, first.id]
 
 
 def test_terminated_worker_is_out_of_scope(db_uri: str) -> None:

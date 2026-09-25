@@ -316,7 +316,8 @@ export async function fetchTaskDashboard(taskId: string): Promise<TaskDashboard>
 }
 
 /** Server-side board search match for one task. Ids let the board ring the
- * matched rows without any client-side text matching. */
+ * matched rows without any client-side text matching. Results are
+ * score-ordered, best match first. */
 export interface AgentTaskBoardMatch {
   task_id: string;
   /** Coarse match sources: "task" | "item" | "asset" | "worker". */

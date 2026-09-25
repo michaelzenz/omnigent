@@ -48,8 +48,9 @@ export function Pmv2Board() {
   const orderKey = allTasks.map((task) => task.id).join("|");
 
   // Floating search: the server matches board-visible task text, items,
-  // assets, and worker lane text; the board just filters its cards by the
-  // returned task ids and rings the matched entities.
+  // assets, and worker lane text (token-AND, ranked best match first); the
+  // board just filters its cards by the returned task ids and rings the
+  // matched entities.
   const [searchQuery, setSearchQuery] = useState("");
   const { data: searchResults } = useAgentTaskBoardSearch(searchQuery);
   const searching = searchQuery.trim().length > 0;
@@ -64,11 +65,20 @@ export function Pmv2Board() {
   }, [searchResults]);
   // While the first request for a new query is in flight (no results yet),
   // keep showing everything — same behavior as the command palette — instead
-  // of flashing an empty board.
-  const filteredTasks = useMemo(
-    () => (searching && searchResults ? allTasks.filter((t) => matchesById.has(t.id)) : allTasks),
-    [searching, searchResults, allTasks, matchesById],
-  );
+  // of flashing an empty board. Once results arrive, matching cards render
+  // in the server's score order (best match first) instead of queue order.
+  const filteredTasks = useMemo(() => {
+    if (!searching || !searchResults) return allTasks;
+    const orderById = new Map<string, number>();
+    searchResults.forEach((match, index) => orderById.set(match.task_id, index));
+    return allTasks
+      .filter((task) => matchesById.has(task.id))
+      .sort(
+        (a, b) =>
+          (orderById.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+          (orderById.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+      );
+  }, [searching, searchResults, allTasks, matchesById]);
   // New query: back to the first page so results start at the top.
   useEffect(() => {
     setRenderLimit(BOARD_PAGE_SIZE);
