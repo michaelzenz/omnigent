@@ -287,6 +287,10 @@ async def test_dispatch_and_dashboard(
     assert dashboard_resp.status_code == 200
     dashboard = dashboard_resp.json()
     assert dashboard["derived"]["has_running_workers"] is True
+    assert dashboard["task"]["manager_id"] == manager_id
+    # The card resolves the manager row's live session pointer so the UI can
+    # open the manager chat.
+    assert dashboard["task"]["manager_conversation_id"] is not None
     assert len(dashboard["workers"]) == 1
     assert dashboard["workers"][0]["kind"] == "managed"
     assert dashboard["workers"][0]["worker_id"] == worker_id

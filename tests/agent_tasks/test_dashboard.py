@@ -13,6 +13,7 @@ from omnigent.db.utils import get_or_create_engine, now_epoch
 from omnigent.stores.conversation_store.sqlalchemy_store import (
     SqlAlchemyConversationStore,
 )
+from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_item_store.sqlalchemy_store import SqlAlchemyTaskItemStore
@@ -311,3 +312,48 @@ def test_worker_lanes_last_active_falls_back_without_conversations(
     lane = dashboard["workers"][0]
     assert lane["worker_id"] == worker.id
     assert lane["last_active_at"] is not None
+
+
+def test_dashboard_resolves_manager_conversation_id(db_uri: str) -> None:
+    """The card exposes the durable manager row's live session pointer."""
+    task_store = SqlAlchemyTaskStore(db_uri)
+    item_store = SqlAlchemyTaskItemStore(db_uri)
+    event_store = SqlAlchemyTaskEventStore(db_uri)
+    worker_store = SqlAlchemyWorkerStore(db_uri)
+    manager_store = SqlAlchemyManagerStore(db_uri)
+    manager_id = _uid("mgr_live")
+    conversation_id = _uid("mgr_live_conv")
+    manager_store.upsert(
+        manager_id,
+        owner_user_id=None,
+        role_key="manager:default",
+        description="Release manager",
+        conversation_id=conversation_id,
+    )
+    task_id = _uid("task_mgr_conv")
+    task_store.create(
+        task_id,
+        "Managed task",
+        "managed goal",
+        state="active",
+        manager_id=manager_id,
+    )
+    task = task_store.get(task_id)
+    assert task is not None
+
+    dashboard = build_task_dashboard(
+        task, event_store, item_store, worker_store, manager_store=manager_store
+    )
+    assert dashboard["task"]["manager_id"] == manager_id
+    assert dashboard["task"]["manager_conversation_id"] == conversation_id
+
+    # A dangling manager reference (row deleted) resolves to no session.
+    manager_store.delete(manager_id)
+    dangling = build_task_dashboard(
+        task, event_store, item_store, worker_store, manager_store=manager_store
+    )
+    assert dangling["task"]["manager_conversation_id"] is None
+
+    # Callers without a manager store keep the field present but unset.
+    legacy = build_task_dashboard(task, event_store, item_store, worker_store)
+    assert legacy["task"]["manager_conversation_id"] is None
