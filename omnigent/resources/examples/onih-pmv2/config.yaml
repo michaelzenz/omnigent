@@ -4,6 +4,7 @@ description: Onih for GlobalHub roles — read-only profile restricted to file r
 
 executor:
   type: omnigent
+  model: databricks-glm-5-3-flash
   config:
     harness: pi
     persistent_session: true

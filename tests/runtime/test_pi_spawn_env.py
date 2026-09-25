@@ -118,6 +118,7 @@ def test_builtin_onih_pmv2_maps_pi_executor_config(tmp_path: Path) -> None:
     assert "*__*" not in (spec.allowed_builtin_tools or [])
     assert spec.skills_filter == "none"
     assert spec.history_window_turns == 5
+    assert spec.executor.model == "databricks-glm-5-3-flash"
 
     env = _build_pi_spawn_env(spec, workdir=None)
 
@@ -129,6 +130,7 @@ def test_builtin_onih_pmv2_maps_pi_executor_config(tmp_path: Path) -> None:
     assert env["HARNESS_PI_SYSTEM_PROMPT_MODE"] == "replace"
     assert env["HARNESS_PI_SKILLS_FILTER"] == '"none"'
     assert env["HARNESS_PI_HISTORY_WINDOW_TURNS"] == "5"
+    assert env["HARNESS_PI_MODEL"] == "databricks-glm-5-3-flash"
 
 
 def test_server_proxy_configures_pi_without_remote_provider(
