@@ -316,8 +316,14 @@ async def worktree_lease_on_host(
     session_id: str,
     worktree_path: str = "",
     lease_seconds: int = 86_400,
+    timeout_s: float = 10.0,
 ) -> dict[str, object]:
     """Run a managed worktree lease op on the host.
+
+    :param timeout_s: Round-trip deadline. Lease ops queue behind the
+        managed-worktree flock on the host, which acquire holds through
+        minutes-long git work — callers on the dispatch path pass a
+        longer deadline than the 10s default.
 
     :param op: ``"check"`` (read-only: is the folder managed and does the
         session hold a valid claim), ``"grant"`` (bind the session's
@@ -349,7 +355,7 @@ async def worktree_lease_on_host(
         request_id=request_id,
         frame=frame,
         op=f"worktree lease {op}",
-        timeout_s=10.0,
+        timeout_s=timeout_s,
     )
     if result.get("status") != "ok":
         raise WorktreeProxyError(

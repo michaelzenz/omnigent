@@ -600,6 +600,7 @@ def register_events_routes(
                 op="renew",
                 session_id=conv.id,
                 worktree_path=conv.workspace,
+                timeout_s=20.0,
             )
         except WorktreeProxyError as exc:
             raise OmnigentError(exc.message, code=ErrorCode.CONFLICT) from exc
