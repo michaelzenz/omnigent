@@ -640,6 +640,7 @@ async def _renew_session_worktree_lease(session_id: str) -> None:
             op="renew",
             session_id=session_id,
             worktree_path=conv.workspace,
+            branch=conv.git_branch,
         )
     except Exception:  # noqa: BLE001
         _logger.debug("worktree lease renewal failed for %s", session_id, exc_info=True)

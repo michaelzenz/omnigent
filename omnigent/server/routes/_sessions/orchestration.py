@@ -6807,6 +6807,7 @@ async def _renew_active_auto_worktree_lease(
             op="renew",
             session_id=session_id,
             worktree_path=conv.workspace,
+            branch=conv.git_branch,
         )
     except WorktreeProxyError:
         _logger.warning("Failed to renew active worktree lease for %s", session_id)

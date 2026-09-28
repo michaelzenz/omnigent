@@ -687,6 +687,7 @@ class HostWorktreeLeaseFrame:
     session_id: str
     worktree_path: str
     lease_seconds: int = 86_400
+    branch: str | None = None
 
 
 @dataclass
@@ -1456,6 +1457,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "session_id": frame.session_id,
                 "worktree_path": frame.worktree_path,
                 "lease_seconds": frame.lease_seconds,
+                **({"branch": frame.branch} if frame.branch else {}),
             }
         )
     if isinstance(frame, HostWorktreeLeaseResultFrame):
@@ -2228,12 +2230,16 @@ def _decode_worktree_lease(msg: _JsonObject) -> HostWorktreeLeaseFrame:
     lease_seconds = msg.get("lease_seconds", 86_400)
     if not isinstance(lease_seconds, int) or isinstance(lease_seconds, bool) or lease_seconds <= 0:
         raise ValueError("frame field must be a positive int: 'lease_seconds'")
+    branch = msg.get("branch")
+    if branch is not None and not isinstance(branch, str):
+        raise ValueError("frame field must be a str: 'branch'")
     return HostWorktreeLeaseFrame(
         request_id=_required_str(msg, "request_id"),
         op=_required_str(msg, "op"),
         session_id=_required_str(msg, "session_id"),
         worktree_path=_required_str(msg, "worktree_path"),
         lease_seconds=lease_seconds,
+        branch=branch,
     )
 
 

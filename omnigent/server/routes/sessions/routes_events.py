@@ -600,6 +600,7 @@ def register_events_routes(
                 op="renew",
                 session_id=conv.id,
                 worktree_path=conv.workspace,
+                branch=conv.git_branch,
                 timeout_s=20.0,
             )
         except WorktreeProxyError as exc:
@@ -673,7 +674,10 @@ def register_events_routes(
             )
         except WorktreeProxyError as exc:
             _publish_worktree_status(conv.id, "failed", branch=conv.git_branch, error=exc.message)
-            raise OmnigentError(exc.message, code=ErrorCode.CONFLICT) from exc
+            raise OmnigentError(
+                f"Cannot relocate the session workspace: {exc.message}",
+                code=ErrorCode.CONFLICT,
+            ) from exc
         await asyncio.to_thread(
             conversation_store.set_host_id,
             conv.id,

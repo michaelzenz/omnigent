@@ -317,6 +317,7 @@ async def worktree_lease_on_host(
     worktree_path: str = "",
     lease_seconds: int = 86_400,
     timeout_s: float = 10.0,
+    branch: str | None = None,
 ) -> dict[str, object]:
     """Run a managed worktree lease op on the host.
 
@@ -346,6 +347,7 @@ async def worktree_lease_on_host(
             session_id=session_id,
             worktree_path=worktree_path,
             lease_seconds=lease_seconds,
+            branch=branch,
         )
     )
     result = await _await_host_worktree_result(

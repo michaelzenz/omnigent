@@ -3723,6 +3723,7 @@ class HostProcess:
                     worktree_path=frame.worktree_path,
                     session_id=frame.session_id,
                     lease_seconds=frame.lease_seconds,
+                    branch=frame.branch,
                 )
             except (OSError, ValueError) as exc:
                 return HostWorktreeLeaseResultFrame(

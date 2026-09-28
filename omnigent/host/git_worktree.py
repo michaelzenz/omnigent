@@ -1029,6 +1029,7 @@ def renew_auto_worktree_lease(
     worktree_path: str,
     session_id: str,
     lease_seconds: int = _AUTO_LEASE_SECONDS,
+    branch: str | None = None,
 ) -> dict[str, object]:
     """Validate and extend the session's lease.
 
@@ -1042,7 +1043,8 @@ def renew_auto_worktree_lease(
 
         ``valid=False`` with ``managed=True`` means the folder was
         reassigned: the folder's seq moved past the lease's seq (fencing),
-        or the folder record is gone. The session must relocate;
+        or the folder record is gone. Unless ``branch`` is given
+        and the folder still holds it, the session must relocate;
         ``repo_root`` (persisted on the lease) is the repo to rebuild from
         when the workspace directory no longer exists.
     """
@@ -1081,6 +1083,18 @@ def renew_auto_worktree_lease(
             return {"valid": True, "managed": True, "repo_root": folder_repo_root}
         assert isinstance(lease, dict)
         if lease.get("seq") != seq:
+            if branch is not None and folder.get("branch") == branch:
+                lease["seq"] = seq
+                lease["expires_at"] = now + lease_seconds
+                lease["last_used_at"] = now
+                if not lease.get("repo_root"):
+                    lease["repo_root"] = folder_repo_root
+                folder["last_used_at"] = now
+                return {
+                    "valid": True,
+                    "managed": True,
+                    "repo_root": lease.get("repo_root"),
+                }
             # Fenced: another session took the folder over. Relocate.
             fenced_repo_root = lease.get("repo_root") or folder_repo_root
             return {"valid": False, "managed": True, "repo_root": fenced_repo_root}
@@ -1234,7 +1248,9 @@ def create_worktree(
         if live is not None:
             raise WorktreeError(
                 f"branch {branch_name!r} is already checked out at {live.path}; "
-                "remove that worktree first or choose a different branch name"
+                "git allows a branch in only one worktree, so a new worktree "
+                "for it cannot be created — remove that worktree (or switch it "
+                "to another branch) or choose a different branch name"
             )
     # Friendly pre-check before git's raw "branch already exists" error.
     # We don't reuse the existing worktree: two sessions sharing one
@@ -1442,7 +1458,9 @@ def create_worktree_streaming(
         if live is not None:
             raise WorktreeError(
                 f"branch {branch_name!r} is already checked out at {live.path}; "
-                "remove that worktree first or choose a different branch name"
+                "git allows a branch in only one worktree, so a new worktree "
+                "for it cannot be created — remove that worktree (or switch it "
+                "to another branch) or choose a different branch name"
             )
     elif _local_branch_exists(repo_root, branch_name):
         raise WorktreeError(
