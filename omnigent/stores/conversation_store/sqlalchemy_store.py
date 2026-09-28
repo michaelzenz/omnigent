@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import traceback
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal, Protocol, cast
@@ -115,6 +116,16 @@ from omnigent.stores.conversation_store import (
 )
 
 _logger = logging.getLogger(__name__)
+
+
+def _audit_caller() -> str:
+    """Compact omnigent call chain for workspace-binding audit logs."""
+    chain = [
+        "/".join(frame.filename.split("/omnigent/")[-1].split("/")[-2:]) + f":{frame.name}"
+        for frame in traceback.extract_stack()[:-1]
+        if "/omnigent/" in frame.filename
+    ]
+    return " <- ".join(chain[-3:]) or "?"
 
 
 def _next_month(month: str) -> str:
@@ -1567,7 +1578,15 @@ class SqlAlchemyConversationStore(ConversationStore):
             )
             if meta is None:
                 return None
+            prev_ws = meta.workspace
             meta.workspace = workspace
+            _logger.info(
+                "ws-set %s: workspace %r -> %r (caller: %s)",
+                conversation_id,
+                prev_ws,
+                workspace,
+                _audit_caller(),
+            )
         with self._conv_session("set_conversation_workspace") as ap_sess:
             ap_row = ap_sess.get(
                 SqlConversation,
@@ -4369,6 +4388,15 @@ class SqlAlchemyConversationStore(ConversationStore):
                 raise ConversationNotFoundError(
                     f"conversation {conversation_id!r} does not exist",
                 )
+            _logger.info(
+                "ws-clear %s: host %r -> None, workspace %r -> None, "
+                "git_branch %r -> None (caller: %s)",
+                conversation_id,
+                meta.host_id,
+                meta.workspace,
+                meta.git_branch,
+                _audit_caller(),
+            )
             meta.host_id = None
             meta.workspace = None
             meta.git_branch = None
@@ -4499,6 +4527,11 @@ class SqlAlchemyConversationStore(ConversationStore):
                 raise ConversationNotFoundError(
                     f"conversation {conversation_id!r} does not exist",
                 )
+            prev_host, prev_ws, prev_br = (
+                meta.host_id,
+                meta.workspace,
+                meta.git_branch,
+            )
             if meta.host_id != host_id:
                 meta.execution_generation += 1
                 meta.runner_id = None
@@ -4507,6 +4540,17 @@ class SqlAlchemyConversationStore(ConversationStore):
                 meta.workspace = workspace
             if git_branch is not None:
                 meta.git_branch = git_branch
+            _logger.info(
+                "ws-bind %s: host %r -> %r, workspace %r -> %r, git_branch %r -> %r (caller: %s)",
+                conversation_id,
+                prev_host,
+                host_id,
+                prev_ws,
+                meta.workspace,
+                prev_br,
+                meta.git_branch,
+                _audit_caller(),
+            )
         with self._conv_session("set_host_id") as ap_sess:
             ap_row = ap_sess.get(SqlConversation, (current_workspace_id(), conversation_id))
             if ap_row is None:
