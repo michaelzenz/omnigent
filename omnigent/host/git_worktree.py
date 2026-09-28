@@ -39,6 +39,11 @@ else:  # pragma: no cover - Windows-only module.
 _GIT_TIMEOUT_S: float | None = None
 
 _AUTO_LEASE_SECONDS = 86_400
+# How long a folder's "preparing" reservation (claim taken before the
+# minutes-long git work, which runs with the registry lock released) is
+# honored before the pool reclaims it. Generous: a suspended host must not
+# wake up to find its mid-flight folder switched underneath it.
+_RESERVED_STALE_S = 6 * 3600
 _AUTO_CACHE_PROCESS_LOCK = threading.RLock()
 
 # Registry schema version. v2 stores folders (with a fencing ``seq``) and
@@ -397,9 +402,6 @@ def _locked_auto_cache() -> Generator[dict[str, object], None, None]:
     """Lock and persist the host-local managed-worktree registry."""
     registry_path, lock_path = _auto_cache_paths()
     with _AUTO_CACHE_PROCESS_LOCK, lock_path.open("a+", encoding="utf-8") as lock_file:
-        # Bounded exclusive wait on every platform: acquire holds the lock
-        # through minutes-long git work, and an unbounded block here would
-        # hang server RPCs past their timeouts.
         deadline = time.monotonic() + 120.0
         if fcntl is not None:
             while True:
@@ -498,6 +500,265 @@ def _worktree_is_clean(path: str) -> bool:
     return result.stdout.strip() == ""
 
 
+def _reserve_auto_worktree(
+    *,
+    reg: dict[str, object],
+    session_id: str,
+    repo_root: str,
+    base_commit: str,
+    branch_name: str,
+    reuse_existing_branch: bool,
+    branch_in_refs: bool,
+    reuse_path: str | None,
+    lease_seconds: int,
+    tried_paths: set[str],
+    on_log: Callable[[str], None] | None,
+) -> CreatedWorktree | tuple[str, str, int]:
+    """Acquire phase A: decide and reserve, under the registry lock.
+
+    Returns a :class:`CreatedWorktree` for the paths that need no git work
+    (worktree adoption / own-folder reclaim). Otherwise reserves a folder —
+    claim + fence + ``health="preparing"`` + ``reserved_at`` — and returns
+    the plan ``(kind, path, reserved_at)`` for the unlocked git phase
+    (``"switch"`` an existing pool folder, ``"add"`` a new folder for a
+    branch already in refs, ``"create"`` a fresh branch + folder).
+    """
+    folders = cast("dict[str, dict[str, object]]", reg["folders"])
+    leases = cast("dict[str, dict[str, object]]", reg["leases"])
+    now = int(time.time())
+    worktrees = {
+        worktree.path: worktree for worktree in list_worktrees(repo_path=repo_root)
+    }
+
+    def _folder_seq(path: str) -> object:
+        """Current fencing seq of a managed folder, or ``None``."""
+        folder = folders.get(path)
+        return folder.get("seq") if isinstance(folder, dict) else None
+
+    def _contended(path: str) -> bool:
+        """Whether another session holds a currently-valid claim."""
+        return any(
+            session != session_id
+            for session in _active_claim_sessions(leases, path, _folder_seq(path), now)
+        )
+
+    def _claim_folder(
+        path: str,
+        *,
+        branch: str | None,
+        bump: bool,
+    ) -> None:
+        """Take or refresh the session's claim on a managed folder.
+
+        ``bump`` fences the folder: every other session's claim becomes
+        stale (seq mismatch) and its next dispatch relocates. Only the
+        pool-adoption paths bump; co-use grants keep the current seq.
+        """
+        folder = folders.get(path)
+        if not isinstance(folder, dict):
+            folder = {
+                "repo_root": repo_root,
+                "created_at": now,
+                "seq": 1,
+                "generation": 1,
+            }
+            record = cast("dict[str, object]", folder)
+            folders[path] = record
+            new_seq = 1
+        else:
+            record = folder
+            previous_seq = folder.get("seq")
+            previous_seq = previous_seq if isinstance(previous_seq, int) else 0
+            new_seq = previous_seq + 1 if bump else previous_seq
+            record["seq"] = new_seq
+        record["branch"] = branch
+        record["base_commit"] = base_commit
+        record["health"] = "ready"
+        leases[session_id] = {
+            "folder": path,
+            "seq": new_seq,
+            "expires_at": now + lease_seconds,
+            "last_used_at": now,
+            # Survives folder-record pruning: a fenced session must be
+            # able to relocate even after its workspace dir is deleted.
+            "repo_root": repo_root,
+        }
+        record["last_used_at"] = now
+
+    def _adopt(worktree: WorktreeInfo, branch: str) -> CreatedWorktree | None:
+        """Take over an existing worktree as-is, fencing other claims.
+
+        Adopting as-is (skipping the clean check) is only safe when the
+        folder is the session's own current-generation claim — its WIP.
+        A folder whose current claim belongs to another generation may
+        hold that session's uncommitted work; adopting it dirty would
+        hand one session's WIP to another.
+        """
+        prior_lease = leases.get(session_id)
+        own_current = (
+            isinstance(prior_lease, dict)
+            and prior_lease.get("folder") == worktree.path
+            and prior_lease.get("seq") == _folder_seq(worktree.path)
+        )
+        if not own_current and not _worktree_is_clean(worktree.path):
+            if on_log is not None:
+                on_log(
+                    f"Worktree {worktree.path} holds another generation's "
+                    "uncommitted work; creating a fresh folder…"
+                )
+            return None
+        _claim_folder(worktree.path, branch=branch, bump=True)
+        if on_log is not None:
+            on_log(f"Reacquired existing worktree {worktree.path}.")
+        return CreatedWorktree(worktree_path=worktree.path, branch=branch)
+
+    if reuse_existing_branch and reuse_path is not None:
+        # Relocation: adopt the session's own worktree at its recorded
+        # path when no other live session holds it — the worktree did
+        # not change, so nothing is created or switched. The returned
+        # branch is the worktree's current one (it may differ from the
+        # recorded branch after a manual switch); the caller re-syncs
+        # the session row to it.
+        live = worktrees.get(reuse_path)
+        if live is not None and not live.is_main and live.branch is not None:
+            if _contended(reuse_path):
+                if on_log is not None:
+                    on_log(
+                        f"Worktree {reuse_path} is held by another session;"
+                        " relocating…"
+                    )
+            else:
+                adopted = _adopt(live, live.branch)
+                if adopted is not None:
+                    return adopted
+    if reuse_existing_branch:
+        # Relocation fallback: adopt a live worktree that already has
+        # the branch checked out (registry entry lost, but the branch
+        # and its worktree survived). Same ownership guard applies.
+        live = next(
+            (
+                wt
+                for wt in worktrees.values()
+                if wt.branch == branch_name and not wt.is_main
+            ),
+            None,
+        )
+        if live is not None and live.branch is not None:
+            if not _contended(live.path):
+                adopted = _adopt(live, live.branch)
+                if adopted is not None:
+                    return adopted
+
+    # Reap stale reservations: a host crash mid-checkout leaves the folder
+    # "preparing" with a live claim; free it after a generous TTL so it
+    # returns to the pool. Finalize verifies ownership, so a resume after a
+    # reap cannot double-switch a folder.
+    for path, folder in list(folders.items()):
+        if not isinstance(folder, dict) or folder.get("health") != "preparing":
+            continue
+        reserved_at = folder.get("reserved_at")
+        if not isinstance(reserved_at, int) or isinstance(reserved_at, bool):
+            continue
+        if now - reserved_at < _RESERVED_STALE_S:
+            continue
+        folder_seq = folder.get("seq")
+        for lease_session in list(leases):
+            lease = leases[lease_session]
+            if (
+                isinstance(lease, dict)
+                and lease.get("folder") == path
+                and lease.get("seq") == folder_seq
+            ):
+                leases.pop(lease_session, None)
+        folder.pop("reserved_at", None)
+
+    candidates: list[tuple[str, dict[str, object]]] = []
+    for path, folder in list(folders.items()):
+        if not isinstance(path, str) or not isinstance(folder, dict):
+            folders.pop(path, None)
+            continue
+        if folder.get("repo_root") != repo_root:
+            continue
+        worktree = worktrees.get(path)
+        if worktree is None or worktree.is_main:
+            # The worktree directory is gone — prune the record. Leases
+            # pointing at it stay until their sessions relocate.
+            folders.pop(path, None)
+            continue
+        if path in tried_paths:
+            continue
+        if _active_claim_sessions(leases, path, folder.get("seq"), now):
+            # An unexpired claim holds this folder — not a reuse candidate.
+            continue
+        candidates.append((path, folder))
+
+    def _last_used(candidate: tuple[str, dict[str, object]]) -> int:
+        value = candidate[1].get("last_used_at")
+        return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+    for path, folder in sorted(candidates, key=_last_used):
+        worktree = worktrees[path]
+        prior_lease = leases.get(session_id)
+        own_folder = (
+            isinstance(prior_lease, dict)
+            and prior_lease.get("folder") == path
+            # Only the folder's CURRENT generation can be the session's
+            # own WIP; a fenced lease means the WIP may belong to the
+            # session that took the folder over since.
+            and prior_lease.get("seq") == folder.get("seq")
+        )
+        if own_folder and worktree.branch == branch_name:
+            # Reclaiming the session's own folder — its uncommitted work
+            # is the session's WIP, so skip the clean check and reuse
+            # it as-is.
+            _claim_folder(path, branch=worktree.branch, bump=True)
+            if on_log is not None:
+                on_log(f"Reacquired existing worktree {path}.")
+            return CreatedWorktree(worktree_path=path, branch=branch_name)
+        if not _worktree_is_clean(path):
+            folder["health"] = "dirty"
+            continue
+        previous_generation = folder.get("generation")
+        folder["generation"] = (
+            previous_generation
+            if isinstance(previous_generation, int)
+            and not isinstance(previous_generation, bool)
+            else 0
+        ) + 1
+        # Reserve: claim + fence now, materialize with git below — outside
+        # the lock. Finalize flips health back to "ready".
+        _claim_folder(path, branch=branch_name, bump=True)
+        folder["health"] = "preparing"
+        folder["reserved_at"] = now
+        folder["last_used_at"] = now
+        if on_log is not None:
+            on_log(f"Reusing managed worktree {path}…")
+        return ("switch", path, now)
+    # Reserve a brand-new folder; the directory itself is created by the
+    # git work in the unlocked phase.
+    new_path = _resolve_worktree_path(repo_root)
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path = str(new_path)
+    folders[plan_path] = {
+        "repo_root": repo_root,
+        "branch": branch_name,
+        "base_commit": base_commit,
+        "seq": 1,
+        "generation": 1,
+        "health": "preparing",
+        "created_at": now,
+        "last_used_at": now,
+        "reserved_at": now,
+    }
+    leases[session_id] = {
+        "folder": plan_path,
+        "seq": 1,
+        "expires_at": now + lease_seconds,
+        "last_used_at": now,
+        "repo_root": repo_root,
+    }
+    kind = "add" if reuse_existing_branch and branch_in_refs else "create"
+    return (kind, plan_path, now)
 def acquire_auto_worktree_streaming(
     *,
     repo_path: str,
@@ -588,180 +849,36 @@ def acquire_auto_worktree_streaming(
     if base_result.returncode != 0:
         raise WorktreeError(f"base branch does not exist: {base_ref}")
     base_commit = base_result.stdout.strip()
-    now = int(time.time())
 
-    with _locked_auto_cache() as reg:
-        folders = cast("dict[str, dict[str, object]]", reg["folders"])
-        leases = cast("dict[str, dict[str, object]]", reg["leases"])
-        worktrees = {worktree.path: worktree for worktree in list_worktrees(repo_path=repo_root)}
-
-        def _folder_seq(path: str) -> object:
-            """Current fencing seq of a managed folder, or ``None``."""
-            folder = folders.get(path)
-            return folder.get("seq") if isinstance(folder, dict) else None
-
-        def _contended(path: str) -> bool:
-            """Whether another session holds a currently-valid claim."""
-            return any(
-                session != session_id
-                for session in _active_claim_sessions(leases, path, _folder_seq(path), now)
+    tried_paths: set[str] = set()
+    while True:
+        # ---- Phase A: decide and reserve, under the registry lock. ----
+        with _locked_auto_cache() as reg:
+            outcome = _reserve_auto_worktree(
+                reg=reg,
+                session_id=session_id,
+                repo_root=repo_root,
+                base_commit=base_commit,
+                branch_name=branch_name,
+                reuse_existing_branch=reuse_existing_branch,
+                branch_in_refs=branch_in_refs,
+                reuse_path=reuse_path,
+                lease_seconds=lease_seconds,
+                tried_paths=tried_paths,
+                on_log=on_log,
             )
+        if isinstance(outcome, CreatedWorktree):
+            return outcome
+        plan_kind, plan_path, reserved_at_token = outcome
 
-        def _claim_folder(
-            path: str,
-            *,
-            branch: str | None,
-            bump: bool,
-        ) -> None:
-            """Take or refresh the session's claim on a managed folder.
-
-            ``bump`` fences the folder: every other session's claim becomes
-            stale (seq mismatch) and its next dispatch relocates. Only the
-            pool-adoption paths bump; co-use grants keep the current seq.
-            """
-            folder = folders.get(path)
-            if not isinstance(folder, dict):
-                folder = {
-                    "repo_root": repo_root,
-                    "created_at": now,
-                    "seq": 1,
-                    "generation": 1,
-                }
-                record = cast("dict[str, object]", folder)
-                folders[path] = record
-                new_seq = 1
-            else:
-                record = folder
-                previous_seq = folder.get("seq")
-                previous_seq = previous_seq if isinstance(previous_seq, int) else 0
-                new_seq = previous_seq + 1 if bump else previous_seq
-                record["seq"] = new_seq
-            record["branch"] = branch
-            record["base_commit"] = base_commit
-            record["health"] = "ready"
-            leases[session_id] = {
-                "folder": path,
-                "seq": new_seq,
-                "expires_at": now + lease_seconds,
-                "last_used_at": now,
-                # Survives folder-record pruning: a fenced session must be
-                # able to relocate even after its workspace dir is deleted.
-                "repo_root": repo_root,
-            }
-            record["last_used_at"] = now
-
-        def _adopt(worktree: WorktreeInfo, branch: str) -> CreatedWorktree | None:
-            """Take over an existing worktree as-is, fencing other claims.
-
-            Adopting as-is (skipping the clean check) is only safe when the
-            folder is the session's own current-generation claim — its WIP.
-            A folder whose current claim belongs to another generation may
-            hold that session's uncommitted work; adopting it dirty would
-            hand one session's WIP to another.
-            """
-            prior_lease = leases.get(session_id)
-            own_current = (
-                isinstance(prior_lease, dict)
-                and prior_lease.get("folder") == worktree.path
-                and prior_lease.get("seq") == _folder_seq(worktree.path)
-            )
-            if not own_current and not _worktree_is_clean(worktree.path):
-                if on_log is not None:
-                    on_log(
-                        f"Worktree {worktree.path} holds another generation's "
-                        "uncommitted work; creating a fresh folder…"
-                    )
-                return None
-            _claim_folder(worktree.path, branch=branch, bump=True)
-            if on_log is not None:
-                on_log(f"Reacquired existing worktree {worktree.path}.")
-            return CreatedWorktree(worktree_path=worktree.path, branch=branch)
-
-        if reuse_existing_branch and reuse_path is not None:
-            # Relocation: adopt the session's own worktree at its recorded
-            # path when no other live session holds it — the worktree did
-            # not change, so nothing is created or switched. The returned
-            # branch is the worktree's current one (it may differ from the
-            # recorded branch after a manual switch); the caller re-syncs
-            # the session row to it.
-            live = worktrees.get(reuse_path)
-            if live is not None and not live.is_main and live.branch is not None:
-                if _contended(reuse_path):
-                    if on_log is not None:
-                        on_log(f"Worktree {reuse_path} is held by another session; relocating…")
-                else:
-                    adopted = _adopt(live, live.branch)
-                    if adopted is not None:
-                        return adopted
-        if reuse_existing_branch:
-            # Relocation fallback: adopt a live worktree that already has
-            # the branch checked out (registry entry lost, but the branch
-            # and its worktree survived). Same ownership guard applies.
-            live = next(
-                (wt for wt in worktrees.values() if wt.branch == branch_name and not wt.is_main),
-                None,
-            )
-            if live is not None and live.branch is not None:
-                if not _contended(live.path):
-                    adopted = _adopt(live, live.branch)
-                    if adopted is not None:
-                        return adopted
-        candidates: list[tuple[str, dict[str, object]]] = []
-        for path, folder in list(folders.items()):
-            if not isinstance(path, str) or not isinstance(folder, dict):
-                folders.pop(path, None)
-                continue
-            if folder.get("repo_root") != repo_root:
-                continue
-            worktree = worktrees.get(path)
-            if worktree is None or worktree.is_main:
-                # The worktree directory is gone — prune the record. Leases
-                # pointing at it stay until their sessions relocate.
-                folders.pop(path, None)
-                continue
-            if _active_claim_sessions(leases, path, folder.get("seq"), now):
-                # An unexpired claim holds this folder — not a reuse candidate.
-                continue
-            candidates.append((path, folder))
-
-        def _last_used(candidate: tuple[str, dict[str, object]]) -> int:
-            value = candidate[1].get("last_used_at")
-            return value if isinstance(value, int) and not isinstance(value, bool) else 0
-
-        for path, folder in sorted(candidates, key=_last_used):
-            worktree = worktrees[path]
-            prior_lease = leases.get(session_id)
-            own_folder = (
-                isinstance(prior_lease, dict)
-                and prior_lease.get("folder") == path
-                # Only the folder's CURRENT generation can be the session's
-                # own WIP; a fenced lease means the WIP may belong to the
-                # session that took the folder over since.
-                and prior_lease.get("seq") == folder.get("seq")
-            )
-            if own_folder and worktree.branch == branch_name:
-                # Reclaiming the session's own folder — its uncommitted work
-                # is the session's WIP, so skip the clean check and reuse
-                # it as-is.
-                _claim_folder(path, branch=worktree.branch, bump=True)
-                if on_log is not None:
-                    on_log(f"Reacquired existing worktree {path}.")
-                return CreatedWorktree(worktree_path=path, branch=branch_name)
-            if not _worktree_is_clean(path):
-                folder["health"] = "dirty"
-                continue
-            previous_generation = folder.get("generation")
-            folder["generation"] = (
-                previous_generation
-                if isinstance(previous_generation, int)
-                and not isinstance(previous_generation, bool)
-                else 0
-            ) + 1
-            folder["health"] = "preparing"
-            folder["last_used_at"] = now
-            if on_log is not None:
-                on_log(f"Reusing managed worktree {path}…")
-            try:
+        # ---- Phase B: git work with the registry lock RELEASED, so lease
+        # ops (renew/grant/release) never queue behind a checkout. ----
+        created: CreatedWorktree | None = None
+        failure: WorktreeError | None = None
+        switch_rejected = False
+        phase_b_ok = False
+        try:
+            if plan_kind == "switch":
                 switch_args = (
                     ["switch", branch_name]
                     if reuse_existing_branch
@@ -769,69 +886,108 @@ def acquire_auto_worktree_streaming(
                 )
                 result = _run_git_streaming(
                     switch_args,
-                    cwd=path,
+                    cwd=plan_path,
                     on_log=on_log,
                     label="git switch failed",
                 )
-            except WorktreeError:
-                folder["health"] = "quarantined"
-                continue
-            if result.returncode != 0:
-                folder["health"] = "quarantined"
-                continue
-            _claim_folder(path, branch=branch_name, bump=True)
-            return CreatedWorktree(worktree_path=path, branch=branch_name)
-
-        if reuse_existing_branch and branch_in_refs:
-            worktree_path = _resolve_worktree_path(repo_root)
-            worktree_path.parent.mkdir(parents=True, exist_ok=True)
-            result = _run_git_streaming(
-                ["worktree", "add", str(worktree_path), branch_name],
-                cwd=repo_root,
-                on_log=on_log,
-                label="git worktree add failed",
-            )
-            if result.returncode != 0:
-                raise _git_error("git worktree add failed", result)
-            created = CreatedWorktree(worktree_path=str(worktree_path), branch=branch_name)
-        elif reuse_existing_branch:
-            # The branch ref is gone (renamed, deleted, or created on another
-            # host): recreate it as a fresh branch off the resolved base
-            # commit instead of failing the relocation.
-            if on_log is not None:
-                on_log(f"Recreating branch {branch_name!r} from base…")
-            created = create_worktree_streaming(
-                repo_path=repo_root,
-                branch_name=branch_name,
-                base_branch=base_commit,
-                auto_fetch_base=False,
-                on_log=on_log,
-            )
-        else:
-            created = create_worktree_streaming(
-                repo_path=repo_root,
-                branch_name=branch_name,
-                base_branch=base_commit,
-                auto_fetch_base=False,
-                on_log=on_log,
-            )
-        folders[created.worktree_path] = {
-            "repo_root": repo_root,
-            "branch": created.branch,
-            "base_commit": base_commit,
-            "seq": 1,
-            "generation": 1,
-            "health": "ready",
-            "created_at": now,
-            "last_used_at": now,
-        }
-        leases[session_id] = {
-            "folder": created.worktree_path,
-            "seq": 1,
-            "expires_at": now + lease_seconds,
-            "last_used_at": now,
-            "repo_root": repo_root,
-        }
+                if result.returncode != 0:
+                    switch_rejected = True
+                else:
+                    created = CreatedWorktree(
+                        worktree_path=plan_path, branch=branch_name
+                    )
+            elif plan_kind == "add":
+                result = _run_git_streaming(
+                    ["worktree", "add", plan_path, branch_name],
+                    cwd=repo_root,
+                    on_log=on_log,
+                    label="git worktree add failed",
+                )
+                if result.returncode != 0:
+                    raise _git_error("git worktree add failed", result)
+                created = CreatedWorktree(
+                    worktree_path=plan_path, branch=branch_name
+                )
+            else:
+                if (
+                    reuse_existing_branch
+                    and not branch_in_refs
+                    and on_log is not None
+                ):
+                    on_log(f"Recreating branch {branch_name!r} from base…")
+                created = create_worktree_streaming(
+                    repo_path=repo_root,
+                    branch_name=branch_name,
+                    base_branch=base_commit,
+                    auto_fetch_base=False,
+                    on_log=on_log,
+                )
+            phase_b_ok = created is not None
+        except WorktreeError as exc:
+            failure = exc
+        finally:
+            # ---- Phase C: finalize the reservation, or roll it back. ----
+            now = int(time.time())
+            with _locked_auto_cache() as reg:
+                folders = cast("dict[str, dict[str, object]]", reg["folders"])
+                leases = cast("dict[str, dict[str, object]]", reg["leases"])
+                folder = folders.get(plan_path)
+                if phase_b_ok and failure is None and not switch_rejected:
+                    if not isinstance(folder, dict):
+                        folders[plan_path] = {
+                            "repo_root": repo_root,
+                            "branch": (
+                                created.branch if created else branch_name
+                            ),
+                            "base_commit": base_commit,
+                            "seq": 1,
+                            "generation": 1,
+                            "health": "ready",
+                            "created_at": now,
+                            "last_used_at": now,
+                        }
+                    elif folder.get("reserved_at") == reserved_at_token:
+                        folder["health"] = "ready"
+                        folder["branch"] = (
+                            created.branch if created else branch_name
+                        )
+                        folder["last_used_at"] = now
+                    else:
+                        # The reservation was reaped (host suspended past the
+                        # TTL) and someone else took the folder — never clobber
+                        # another session's claim on it.
+                        failure = WorktreeError(
+                            "reserved worktree was reclaimed before it was"
+                            " ready; retry the operation"
+                        )
+                else:
+                    if (
+                        isinstance(folder, dict)
+                        and folder.get("reserved_at") == reserved_at_token
+                    ):
+                        folder.pop("reserved_at", None)
+                        if plan_kind == "switch":
+                            folder["health"] = "quarantined"
+                        else:
+                            folders.pop(plan_path, None)
+                    lease = leases.get(session_id)
+                    if (
+                        isinstance(lease, dict)
+                        and lease.get("folder") == plan_path
+                        and (
+                            folder is None
+                            or lease.get("seq") == folder.get("seq")
+                        )
+                    ):
+                        leases.pop(session_id, None)
+        if failure is not None and plan_kind != "switch":
+            raise failure
+        if failure is not None or switch_rejected:
+            # A rejected switch falls through to the next pool candidate; a
+            # failed add/create raised above.
+            tried_paths.add(plan_path)
+            continue
+        assert created is not None
         return created
 
 
