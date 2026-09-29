@@ -4,9 +4,14 @@ import { CheckIcon, Loader2Icon, MessageSquareIcon, PencilIcon, XIcon } from "lu
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useMoveTaskToQueueEnd, usePatchAgentTask, useTaskDashboard } from "@/hooks/useAgentTasks";
+import {
+  useCloseTaskItem,
+  useMoveTaskToQueueEnd,
+  usePatchAgentTask,
+  useTaskDashboard,
+} from "@/hooks/useAgentTasks";
 import { relativeTime } from "@/lib/relativeTime";
-import type { AgentTaskBoardMatch } from "@/lib/agentTasksApi";
+import type { AgentTaskBoardMatch, TaskDashboard, TaskItemSummary } from "@/lib/agentTasksApi";
 import { cn } from "@/lib/utils";
 import { usePmv2Chat } from "./Pmv2ChatContext";
 import { TaskCardSidebar } from "./TaskCardAssets";
@@ -133,6 +138,30 @@ function EditableGoal({ taskId, goal }: { taskId: string; goal: string }) {
   );
 }
 
+/** Every open (non-terminal) item on the card: the v2 active-items read
+ * model when present, else inbox + worker-lane rows. Resolving the task
+ * closes all of them first. */
+function collectOpenItems(dashboard: TaskDashboard | undefined): TaskItemSummary[] {
+  if (!dashboard) return [];
+  if (dashboard.active_items) return dashboard.active_items;
+  const seen = new Set<string>();
+  const items: TaskItemSummary[] = [];
+  const push = (item: TaskItemSummary | null | undefined) => {
+    if (!item || seen.has(item.id)) return;
+    if (item.state === "done" || item.state === "cancelled") return;
+    seen.add(item.id);
+    items.push(item);
+  };
+  for (const item of dashboard.inbox_items) push(item);
+  for (const lane of dashboard.workers) {
+    for (const row of lane.rows) {
+      if (row.kind === "item") push(row.item);
+      else push(row.execution.item);
+    }
+  }
+  return items;
+}
+
 export function TaskCard({
   taskId,
   title,
@@ -171,6 +200,7 @@ export function TaskCard({
   const { data: dashboard, isLoading, error } = useTaskDashboard(taskId, { enabled: inView });
   const { target, openManager, isManagerSelected, dismissToRole } = usePmv2Chat();
   const moveToEnd = useMoveTaskToQueueEnd(taskId);
+  const closeItem = useCloseTaskItem(taskId);
   const patchTask = usePatchAgentTask(taskId);
   const managerSelected = isManagerSelected(taskId);
   const selectedWorkerId =
@@ -186,6 +216,7 @@ export function TaskCard({
   const unmanaged = !effectiveManagerId;
   const [managerHoldPending, setManagerHoldPending] = useState(false);
   const [managerHoldError, setManagerHoldError] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
 
   return (
     <article
@@ -264,22 +295,28 @@ export function TaskCard({
                 variant="ghost"
                 size="icon-sm"
                 className="shrink-0 hover:bg-[rgba(34,197,94,0.1)]!"
-                disabled={patchTask.isPending}
+                disabled={resolving}
                 aria-label="Mark task resolved"
-                title="Mark task resolved (agent-resolved) — parks it at the queue end"
+                title="Mark task resolved (agent-resolved) — closes all open items"
                 data-testid={`task-card-resolve-${taskId}`}
                 onClick={async (event) => {
                   event.stopPropagation();
                   event.currentTarget.blur();
                   const cancelExplicitMove = onMovedToEnd?.(taskId);
+                  setResolving(true);
                   try {
+                    await Promise.allSettled(
+                      collectOpenItems(dashboard).map((item) => closeItem.mutateAsync(item.id)),
+                    );
                     await patchTask.mutateAsync({ state: "agent-resolved" });
                   } catch {
                     cancelExplicitMove?.();
+                  } finally {
+                    setResolving(false);
                   }
                 }}
               >
-                {patchTask.isPending ? (
+                {resolving ? (
                   <Loader2Icon className="size-4 animate-spin" aria-hidden />
                 ) : (
                   <CheckIcon className="size-4 text-[#15803d] dark:text-[#4ade80]" aria-hidden />

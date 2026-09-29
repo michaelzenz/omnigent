@@ -101,7 +101,12 @@ vi.mock("@/hooks/useWorkerProviders", () => ({
   useCreateWorkerProvider: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
 }));
 
-import { useDeleteTaskAsset, usePatchAgentTask, useTaskDashboard } from "@/hooks/useAgentTasks";
+import {
+  useCloseTaskItem,
+  useDeleteTaskAsset,
+  usePatchAgentTask,
+  useTaskDashboard,
+} from "@/hooks/useAgentTasks";
 
 const mockedDashboard = vi.mocked(useTaskDashboard);
 
@@ -467,5 +472,96 @@ describe("TaskCard", () => {
     renderCard("agent-resolved");
 
     expect(screen.queryByTestId("task-card-resolve-task-1")).not.toBeInTheDocument();
+  });
+
+  it("closes all open items (any state) before resolving", async () => {
+    const closeMutate = vi.fn().mockResolvedValue(undefined);
+    const patchMutate = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(useCloseTaskItem).mockReturnValue({
+      mutateAsync: closeMutate,
+      isPending: false,
+    } as unknown as ReturnType<typeof useCloseTaskItem>);
+    vi.mocked(usePatchAgentTask).mockReturnValue({
+      mutateAsync: patchMutate,
+      isPending: false,
+    } as unknown as ReturnType<typeof usePatchAgentTask>);
+    mockedDashboard.mockReturnValue({
+      data: {
+        task: {
+          id: "task-1",
+          title: "Land PR #123",
+          description: null,
+          state: "active",
+          manager_conversation_id: null,
+        },
+        derived: { has_running_workers: false },
+        inbox_items: [],
+        active_items: [
+          {
+            id: "item-inbox",
+            title: "Pending work",
+            description: null,
+            instructions: null,
+            internal_note: null,
+            state: "pending",
+            worker_id: null,
+            created_at: 1,
+            updated_at: null,
+          },
+          {
+            id: "item-running",
+            title: "Running work",
+            description: null,
+            instructions: null,
+            internal_note: null,
+            state: "running",
+            worker_id: "worker-1",
+            created_at: 2,
+            updated_at: null,
+          },
+          {
+            id: "item-human",
+            title: "Human action",
+            description: null,
+            instructions: null,
+            internal_note: null,
+            state: "pending",
+            worker_id: null,
+            kind: "human_action",
+            created_at: 3,
+            updated_at: null,
+          },
+          {
+            id: "item-done",
+            title: "Already done",
+            description: null,
+            instructions: null,
+            internal_note: null,
+            state: "done",
+            worker_id: "worker-1",
+            created_at: 1,
+            updated_at: null,
+          },
+        ],
+        reconcile_queue_count: 0,
+        assets: [],
+        workers: [],
+      },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useTaskDashboard>);
+
+    renderCard();
+    fireEvent.click(screen.getByTestId("task-card-resolve-task-1"));
+
+    await waitFor(() => expect(patchMutate).toHaveBeenCalled());
+    expect(closeMutate.mock.calls.map((call) => call[0])).toEqual([
+      "item-inbox",
+      "item-running",
+      "item-human",
+    ]);
+    expect(closeMutate.mock.invocationCallOrder[0]).toBeLessThan(
+      patchMutate.mock.invocationCallOrder[0],
+    );
   });
 });
