@@ -7970,8 +7970,15 @@ async def _run_compact_locked(
                     "Native Pi compaction requires a live runner",
                     code=ErrorCode.CONFLICT,
                 )
+            wake_model = (
+                conv.model_override
+                or spec.executor.model
+                or (spec.llm.model if spec.llm is not None else None)
+            )
+            wake_system_prompt = spec.instructions or ""
             response = await runner_client.post(
                 f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}/compact-harness",
+                json={"model": wake_model, "system_prompt": wake_system_prompt},
                 timeout=250.0,
             )
             if response.status_code < 400:

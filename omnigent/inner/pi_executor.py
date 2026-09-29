@@ -2519,19 +2519,100 @@ class PiExecutor(Executor):
             logger.debug("PiExecutor: session close after interrupt failed: %s", exc)
             return False
 
-    async def compact_session(self, session_key: str) -> _JsonObject:
+    async def _wake_for_compact(
+        self,
+        session_key: str,
+        *,
+        model: str | None,
+        system_prompt: str,
+    ) -> bool:
+        """Spawn pi from its persisted session so native compaction can run.
+
+        Compaction runs inside pi's own runtime, which needs a live
+        subprocess; after a runner restart none exists until the next
+        turn. Resume the on-disk session (pi's own jsonl IS its live
+        context — exactly what compaction operates on) instead of
+        requiring a canonical rebuild.
+
+        :returns: ``True`` when pi is live and compaction can proceed;
+            ``False`` when there is no persisted session to resume (the
+            caller raises the no-live-process error and the server falls
+            back to server-side compaction).
+        """
+        if self._onih_session_store is None:
+            return False
+        active = self._onih_session_store.active_dir(session_key)
+        if not any(active.glob("*.jsonl")):
+            return False
+        # Pi's compactor calls the model to generate the summary — refresh
+        # the gateway credential first or the wake would 401 mid-compact.
+        if self._gateway:
+            if self._gateway_host_override is None:
+                creds = _read_databrickscfg(self._databricks_profile)
+                if creds is not None:
+                    self._databricks_token = creds.token
+            else:
+                if self._gateway_auth_command:
+                    token = _fetch_shell_command_token(self._gateway_auth_command)
+                    if token:
+                        self._databricks_token = token
+        try:
+            await self._ensure_rpc(
+                session_key,
+                system_prompt=system_prompt or "",
+                model=model,
+                tools=[],
+                thinking=None,
+                canonical_items=None,
+                resume_existing=True,
+            )
+        except Exception as _wake_exc:  # noqa: BLE001 — wake is best-effort
+            logger.warning(
+                "PiExecutor: compaction wake spawn failed for %s: %s",
+                session_key,
+                _wake_exc,
+                exc_info=True,
+            )
+            state = self._session_states.pop(session_key, None)
+            if state is not None and state.rpc is not None:
+                with contextlib.suppress(Exception):
+                    await state.rpc.close()
+            return False
+        return True
+
+    async def compact_session(
+        self,
+        session_key: str,
+        *,
+        model: str | None = None,
+        system_prompt: str = "",
+    ) -> _JsonObject:
         """Run Pi's native compactor and return its canonical recovery payload.
+
+        :param model: Session model id — configured on a wake-spawn so pi's
+            summarizing model call resolves. Ignored when pi is already live.
+        :param system_prompt: Session system prompt — sizes the wake-spawn's
+            compaction reserve. Ignored when pi is already live.
 
         Raises OmnigentError so harness error mapping turns failures into
         structured responses the runner can surface, instead of a bare 500.
         """
         state = self._session_states.get(session_key)
-        if state is None or state.rpc is None:
-            raise OmnigentError(
-                f"{NO_LIVE_PI_PROCESS_MESSAGE}; send a message to respawn the "
-                "session first, then compact",
-                code=ErrorCode.CONFLICT,
-            )
+        if (
+            state is None
+            or state.rpc is None
+            or state.rpc.process is None
+            or state.rpc.process.returncode is not None
+        ):
+            if not await self._wake_for_compact(
+                session_key, model=model, system_prompt=system_prompt
+            ):
+                raise OmnigentError(
+                    f"{NO_LIVE_PI_PROCESS_MESSAGE}; send a message to respawn the "
+                    "session first, then compact",
+                    code=ErrorCode.CONFLICT,
+                )
+            state = self._session_states.get(session_key)
         rpc = state.rpc
         command_id = f"compact_{session_key}"
         await rpc.send_command({"type": "compact", "id": command_id})
@@ -3056,6 +3137,7 @@ class PiExecutor(Executor):
         tools: list[ToolSpec],
         thinking: str | None = None,
         canonical_items: list[dict[str, Any]] | None = None,
+        resume_existing: bool = False,
     ) -> _PiRpcSession:
         """Get or create a Pi RPC subprocess for the given session.
 
@@ -3139,73 +3221,75 @@ class PiExecutor(Executor):
             session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"omnigent:{session_key}"))
         if self._onih_session_store is not None:
             if canonical_items is None:
-                raise ValueError("persistent Onih Pi startup requires canonical history")
-            completed_items = list(canonical_items)
-            if (
-                completed_items
-                and completed_items[-1].get("type") == "message"
-                and completed_items[-1].get("role") == "user"
-            ):
-                completed_items.pop()
-            staging_dir = self._onih_session_store.rebuild(
-                conversation_id=session_key,
-                pi_session_id=session_id or "",
-                items=completed_items,
-                workspace=pathlib.Path(self._cwd or os.getcwd()),
-                provider="omnigent",
-                model=effective_model or "",
-            )
-            validator = _PiRpcSession()
-            try:
-                await validator.start(
-                    self._pi_launch_path,
-                    env=env,
-                    cwd=self._cwd,
-                    model=pi_model or None,
-                    system_prompt=system_prompt or None,
-                    extra_args=extra_args or None,
-                    launch_options=replace(launch_options, session_dir=staging_dir),
-                    session_id=session_id,
+                if not resume_existing:
+                    raise ValueError("persistent Onih Pi startup requires canonical history")
+            else:
+                completed_items = list(canonical_items)
+                if (
+                    completed_items
+                    and completed_items[-1].get("type") == "message"
+                    and completed_items[-1].get("role") == "user"
+                ):
+                    completed_items.pop()
+                staging_dir = self._onih_session_store.rebuild(
+                    conversation_id=session_key,
+                    pi_session_id=session_id or "",
+                    items=completed_items,
+                    workspace=pathlib.Path(self._cwd or os.getcwd()),
+                    provider="omnigent",
+                    model=effective_model or "",
                 )
-                validation_id = f"validate_{session_id}"
-                await validator.send_command({"type": "get_state", "id": validation_id})
-                while True:
-                    validation_line = await validator.read_line(timeout=15.0)
-                    if validation_line is None:
-                        if validator._read_task is not None and validator._read_task.done():
-                            if validator.process is not None:
-                                with contextlib.suppress(asyncio.TimeoutError):
-                                    await asyncio.wait_for(
-                                        asyncio.shield(validator.process.wait()), timeout=1.0
-                                    )
-                            if validator._stderr_task is not None:
-                                with contextlib.suppress(asyncio.TimeoutError):
-                                    await asyncio.wait_for(
-                                        asyncio.shield(validator._stderr_task), timeout=1.0
-                                    )
-                        stderr = "\n".join(validator._stderr_lines)
-                        detail = f" Stderr: {stderr}" if stderr else ""
-                        raise RuntimeError(
-                            f"Pi exited while validating reconstructed session.{detail}"
-                        )
-                    validation_event = json.loads(validation_line)
-                    if validation_event.get("type") != "response":
-                        continue
-                    if validation_event.get("command") != "get_state":
-                        continue
-                    if not validation_event.get("success", True):
-                        raise RuntimeError(
-                            str(validation_event.get("error", "Pi rejected reconstructed session"))
-                        )
-                    break
-            except BaseException:
-                shutil.rmtree(staging_dir, ignore_errors=True)
-                self._onih_session_store.release(session_key)
-                raise
-            finally:
-                await validator.close()
-            active_dir = self._onih_session_store.activate(session_key, staging_dir)
-            launch_options = replace(launch_options, session_dir=active_dir)
+                validator = _PiRpcSession()
+                try:
+                    await validator.start(
+                        self._pi_launch_path,
+                        env=env,
+                        cwd=self._cwd,
+                        model=pi_model or None,
+                        system_prompt=system_prompt or None,
+                        extra_args=extra_args or None,
+                        launch_options=replace(launch_options, session_dir=staging_dir),
+                        session_id=session_id,
+                    )
+                    validation_id = f"validate_{session_id}"
+                    await validator.send_command({"type": "get_state", "id": validation_id})
+                    while True:
+                        validation_line = await validator.read_line(timeout=15.0)
+                        if validation_line is None:
+                            if validator._read_task is not None and validator._read_task.done():
+                                if validator.process is not None:
+                                    with contextlib.suppress(asyncio.TimeoutError):
+                                        await asyncio.wait_for(
+                                            asyncio.shield(validator.process.wait()), timeout=1.0
+                                        )
+                                if validator._stderr_task is not None:
+                                    with contextlib.suppress(asyncio.TimeoutError):
+                                        await asyncio.wait_for(
+                                            asyncio.shield(validator._stderr_task), timeout=1.0
+                                        )
+                            stderr = "\n".join(validator._stderr_lines)
+                            detail = f" Stderr: {stderr}" if stderr else ""
+                            raise RuntimeError(
+                                f"Pi exited while validating reconstructed session.{detail}"
+                            )
+                        validation_event = json.loads(validation_line)
+                        if validation_event.get("type") != "response":
+                            continue
+                        if validation_event.get("command") != "get_state":
+                            continue
+                        if not validation_event.get("success", True):
+                            raise RuntimeError(
+                                str(validation_event.get("error", "Pi rejected reconstructed session"))
+                            )
+                        break
+                except BaseException:
+                    shutil.rmtree(staging_dir, ignore_errors=True)
+                    self._onih_session_store.release(session_key)
+                    raise
+                finally:
+                    await validator.close()
+                active_dir = self._onih_session_store.activate(session_key, staging_dir)
+                launch_options = replace(launch_options, session_dir=active_dir)
 
         await rpc.start(
             self._pi_launch_path,

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import re
@@ -45,7 +46,7 @@ from omnigent.inner.executor import (
 from omnigent.inner.pi_executor import NO_LIVE_PI_PROCESS_MESSAGE
 from omnigent.inner.tracing import TracingContext, is_tracing_enabled
 from omnigent.policies.types import FAIL_CLOSED_PHASES
-from omnigent.runtime.harnesses._scaffold import HarnessApp, PolicyVerdictPayload, TurnContext
+from omnigent.runtime.harnesses._scaffold import CompactEvent, HarnessApp, PolicyVerdictPayload, TurnContext
 from omnigent.runtime.tool_output import cap_tool_output
 from omnigent.server.schemas import (
     CreateResponseRequest,
@@ -159,7 +160,7 @@ class ExecutorAdapter(HarnessApp):
         # short-circuits — so it is observed-only.
         self._observed_tool_calls: dict[str, tuple[str, str]] = {}
 
-    async def _handle_compact_event(self) -> Response:
+    async def _handle_compact_event(self, body: CompactEvent) -> Response:
         if self._active_turn_ctx is not None:
             return JSONResponse(
                 status_code=409,
@@ -168,9 +169,16 @@ class ExecutorAdapter(HarnessApp):
         executor = self._ensure_executor()
         compact = getattr(executor, "compact_session", None)
         if compact is None:
-            return await super()._handle_compact_event()
+            return await super()._handle_compact_event(body)
+        compact_kwargs: dict[str, Any] = {}
+        if body.model is not None or body.system_prompt is not None:
+            params = inspect.signature(compact).parameters
+            if "model" in params:
+                compact_kwargs["model"] = body.model
+            if "system_prompt" in params:
+                compact_kwargs["system_prompt"] = body.system_prompt or ""
         try:
-            payload = await compact(self._session_key)
+            payload = await compact(self._session_key, **compact_kwargs)
         except OmnigentError as exc:
             if exc.code == ErrorCode.CONFLICT and exc.message.startswith(
                 NO_LIVE_PI_PROCESS_MESSAGE

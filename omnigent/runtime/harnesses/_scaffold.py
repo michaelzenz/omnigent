@@ -268,9 +268,18 @@ class InterruptEvent(BaseModel):
 
 
 class CompactEvent(BaseModel):
-    """Downward request to run the live harness's native compactor."""
+    """Downward request to run the live harness's native compactor.
+
+    :param model: Session model id, used by executors whose wake-spawn
+        must configure a provider for the summarizing model call
+        (e.g. pi's compactor generates the summary itself).
+    :param system_prompt: Session system prompt, used by wake-spawns
+        to size the compaction reserve consistently with a normal turn.
+    """
 
     type: Literal["compact"]
+    model: str | None = None
+    system_prompt: str | None = None
 
 
 class ToolResultEvent(BaseModel):
@@ -1195,7 +1204,7 @@ class HarnessApp:
         if isinstance(body, InterruptEvent):
             return await self._handle_interrupt_event()
         if isinstance(body, CompactEvent):
-            return await self._handle_compact_event()
+            return await self._handle_compact_event(body)
         if isinstance(body, ToolResultEvent):
             return await self._handle_tool_result_event(body)
         if isinstance(body, ApprovalEvent):
@@ -1212,7 +1221,7 @@ class HarnessApp:
             code=ErrorCode.INVALID_INPUT,
         )
 
-    async def _handle_compact_event(self) -> Response:
+    async def _handle_compact_event(self, body: CompactEvent) -> Response:
         raise OmnigentError(
             "this harness does not support native compaction",
             code=ErrorCode.INVALID_INPUT,

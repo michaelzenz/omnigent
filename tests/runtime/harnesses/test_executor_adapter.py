@@ -2710,6 +2710,7 @@ async def test_compact_maps_no_live_process_to_structured_409() -> None:
     from omnigent.errors import ErrorCode, OmnigentError
     from omnigent.inner.pi_executor import NO_LIVE_PI_PROCESS_MESSAGE
     from omnigent.runtime.harnesses._executor_adapter import ExecutorAdapter
+    from omnigent.runtime.harnesses._scaffold import CompactEvent
 
     class _NoLiveCompactExecutor(Executor):
         async def compact_session(self, session_key: str) -> dict[str, Any]:
@@ -2720,7 +2721,7 @@ async def test_compact_maps_no_live_process_to_structured_409() -> None:
             )
 
     adapter = ExecutorAdapter(executor_factory=lambda: _NoLiveCompactExecutor(), session_key="sk")
-    resp = await adapter._handle_compact_event()
+    resp = await adapter._handle_compact_event(CompactEvent())
 
     assert resp.status_code == 409
     body = json.loads(resp.body)
@@ -2734,6 +2735,7 @@ async def test_compact_reraises_other_conflicts() -> None:
 
     from omnigent.errors import ErrorCode, OmnigentError
     from omnigent.runtime.harnesses._executor_adapter import ExecutorAdapter
+    from omnigent.runtime.harnesses._scaffold import CompactEvent
 
     class _AbortedCompactExecutor(Executor):
         async def compact_session(self, session_key: str) -> dict[str, Any]:
@@ -2741,4 +2743,4 @@ async def test_compact_reraises_other_conflicts() -> None:
 
     adapter = ExecutorAdapter(executor_factory=lambda: _AbortedCompactExecutor(), session_key="sk")
     with pytest.raises(OmnigentError):
-        await adapter._handle_compact_event()
+        await adapter._handle_compact_event(CompactEvent())

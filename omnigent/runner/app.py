@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 import click
 import httpcore
 import httpx
-from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
+from fastapi import Body, FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from omnigent.acp_cli_harnesses import ACP_CLI_HARNESSES
@@ -11178,13 +11178,46 @@ def create_runner_app(
             await process_manager.release(session_id)
 
     @app.post("/v1/sessions/{session_id}/compact-harness")
-    async def compact_live_harness(session_id: str) -> JSONResponse:
+    async def compact_live_harness(
+        session_id: str,
+        payload: dict[str, Any] | None = Body(default=None),
+    ) -> JSONResponse:
         if process_manager is None:
             return JSONResponse(status_code=501, content={"error": "runner_not_configured"})
         if session_id in _active_turns or process_manager.has_active_turn(session_id):
             return JSONResponse(status_code=409, content={"error": "session_busy"})
         try:
-            client = await process_manager.get_client(session_id, "any")
+            try:
+                client = await process_manager.get_client(session_id, "any")
+            except NoLiveHarnessError:
+                spec = await _resolve_session_agent_spec_or_none(session_id)
+                harness_name = "pi"
+                spawn_env = None
+                if spec is not None:
+                    harness_name = (
+                        canonicalize_harness(getattr(spec.executor, "harness_kind", None) or "pi")
+                        or "pi"
+                    )
+                    spawn_env = _build_spawn_env_from_spec(
+                        spec,
+                        harness_name,
+                        model_override=(payload or {}).get("model"),
+                        session_id=session_id,
+                    )
+                if spawn_env is None:
+                    return JSONResponse(status_code=409, content={"error": "no_live_harness"})
+                try:
+                    client = await process_manager.get_client(
+                        session_id, harness_name, env=spawn_env
+                    )
+                except Exception:
+                    _logger.warning(
+                        "Compaction wake spawn failed for %s (harness=%s)",
+                        session_id,
+                        harness_name,
+                        exc_info=True,
+                    )
+                    return JSONResponse(status_code=409, content={"error": "no_live_harness"})
             # Spinner bracket: the harness RPC is synchronous and can take
             # minutes on a large context — without in_progress the web UI
             # shows nothing until the whole compact has finished.
@@ -11193,7 +11226,7 @@ def create_runner_app(
             )
             response = await client.post(
                 f"/v1/sessions/{session_id}/events",
-                json={"type": "compact"},
+                json={"type": "compact", **(payload or {})},
                 timeout=240.0,
             )
             response.raise_for_status()
@@ -11676,10 +11709,29 @@ def create_runner_app(
                 return conn
 
         if model.startswith(("databricks/", "databricks-")):
-            _db_profile = (
-                spec.executor.profile or (spec.executor.config or {}).get("profile") or "DEFAULT"
-            )
-            return _resolve_databricks_connection(_db_profile, session_id)
+            _db_profile = spec.executor.profile or (spec.executor.config or {}).get("profile")
+            if not _db_profile:
+                # No spec-level profile: fall back to the configured
+                # ``databricks`` provider entry (its ``profile:`` field), so a
+                # spec that routes the model via the databricks provider
+                # summarizes with the same workspace instead of [DEFAULT].
+                try:
+                    from omnigent.onboarding.detected import effective_config_with_detected
+                    from omnigent.onboarding.provider_config import load_config, load_providers
+
+                    _providers = load_providers(
+                        effective_config_with_detected(load_config())
+                    )
+                    _entry = _providers.get("databricks")
+                    if _entry is not None and _entry.profile:
+                        _db_profile = _entry.profile
+                except Exception:  # noqa: BLE001 — best-effort profile lookup
+                    _logger.warning(
+                        "/v1/summarize: databricks provider profile lookup failed",
+                        exc_info=True,
+                        extra={"session_id": runner_primary_session_id()},
+                    )
+            return _resolve_databricks_connection(_db_profile or "DEFAULT", session_id)
 
         return None
 
