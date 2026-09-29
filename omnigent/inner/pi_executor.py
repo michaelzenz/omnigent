@@ -2976,6 +2976,11 @@ class PiExecutor(Executor):
             tool_names.append("read")
         # Defensive dedupe, order-preserving.
         tool_names = list(dict.fromkeys(tool_names))
+        logger.info(
+            "pi spawn tools: native_tools=%s allowlist=%s",
+            self._launch_options.native_tools,
+            ",".join(tool_names) or "<none>",
+        )
         if tool_names:
             extra_args.extend(["--tools", ",".join(tool_names)])
 

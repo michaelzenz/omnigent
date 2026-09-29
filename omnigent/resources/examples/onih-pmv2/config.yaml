@@ -11,7 +11,7 @@ executor:
     canonical_rebuild: true
     system_prompt_mode: replace
     isolated_resources: true
-    native_tools: false
+    native_tools: true
     native_skills: false
 
 # Stateless-router context window: the extension's "context" hook truncates
