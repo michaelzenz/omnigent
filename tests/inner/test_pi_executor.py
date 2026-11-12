@@ -10,6 +10,7 @@ import os
 import shlex
 import shutil
 import socket
+import subprocess
 import tempfile
 import textwrap
 import threading
@@ -40,6 +41,7 @@ from omnigent.inner.pi_executor import (
     PiExecutor,
     PiSubprocessConfig,
     _build_models_json,
+    _build_pi_prompt,
     _databricks_model_wire_catalog,
     _generate_extension_js,
     _only_configured_family,
@@ -2299,6 +2301,92 @@ def test_pi_tools_arg_skips_unnamed_entries() -> None:
         import shutil
 
         shutil.rmtree(config.tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.parametrize("bridged", [True, False], ids=["bridged-tools", "pi-tools-only"])
+def test_pi_tools_arg_exposes_only_allowlisted_pi_tools(bridged: bool) -> None:
+    """
+    An allowlist exposes exactly the Pi tools it names (built-ins and the
+    pi-mcp-adapter ``mcp`` proxy), never ``bash``, and still writes the
+    bridge extension that policy-gates them when nothing is bridged.
+    """
+    with patch("omnigent.inner.pi_executor._find_pi_cli", return_value="/usr/bin/pi"):
+        executor = PiExecutor(allowed_builtin_tools=["read", "grep", "mcp", "sys_session_list"])
+    tools = (
+        [{"name": "sys_session_list", "description": "x", "parameters": {"type": "object"}}]
+        if bridged
+        else []
+    )
+    config = executor._build_env_and_dir(tools, 9999, "tok-test", None)
+    try:
+        names_arg = config.extra_args[config.extra_args.index("--tools") + 1]
+        pi_tools = ["grep", "mcp", "read"]
+        expected = sorted([*pi_tools, "sys_session_list"]) if bridged else pi_tools
+        assert sorted(names_arg.split(",")) == expected
+        extension = config.extra_args[config.extra_args.index("--extension") + 1]
+        assert os.path.basename(extension) == "omnigent_tools.js"
+    finally:
+        shutil.rmtree(config.tmp_dir, ignore_errors=True)
+
+
+async def test_tool_server_starts_for_allowlisted_pi_tools_alone() -> None:
+    """The policy gate for Pi's own tools needs the bridge even when nothing is bridged."""
+    executor = PiExecutor(pi_path="/usr/bin/pi", allowed_builtin_tools=["mcp"])
+    try:
+        assert await executor._ensure_tool_server([]) is not None
+    finally:
+        assert executor._tool_server is not None
+        await executor._tool_server.stop()
+
+
+def test_pi_history_window_extension_keeps_last_user_turns() -> None:
+    """
+    The generated ``context`` hook sends each model call only the last N
+    user turns, keeping every tool result with its turn.
+    """
+    if not shutil.which("node"):
+        pytest.skip("node is required to run the generated extension")
+    with patch("omnigent.inner.pi_executor._find_pi_cli", return_value="/usr/bin/pi"):
+        executor = PiExecutor(history_window_turns=2)
+    config = executor._build_env_and_dir([], None, None, None)
+    try:
+        extension = config.extra_args[config.extra_args.index("--extension") + 1]
+        script = textwrap.dedent(
+            f"""
+            const hooks = {{}};
+            require({json.dumps(extension)})({{ on: (name, fn) => {{ hooks[name] = fn; }} }});
+            const roles = {{ u: "user", a: "assistant", t: "toolResult" }};
+            const messages = ["u1", "a1", "u2", "a2", "t2", "u3", "a3"].map(
+              (id) => ({{ id, role: roles[id[0]] }}),
+            );
+            hooks.context({{ messages }}).then((result) => {{
+              console.log(JSON.stringify(result.messages.map((message) => message.id)));
+            }});
+            """
+        )
+        output = subprocess.run(
+            ["node", "-e", script], capture_output=True, text=True, check=True
+        ).stdout
+        assert json.loads(output) == ["u2", "a2", "t2", "u3", "a3"]
+    finally:
+        shutil.rmtree(config.tmp_dir, ignore_errors=True)
+
+
+def test_build_pi_prompt_replays_only_the_history_window() -> None:
+    """A fresh Pi process gets the same window as a running one."""
+    messages = [
+        {"role": "user", "content": "first question"},
+        {"role": "assistant", "content": "first answer"},
+        {"role": "user", "content": "second question"},
+        {"role": "assistant", "content": "second answer"},
+        {"role": "user", "content": "third question"},
+    ]
+
+    prompt = _build_pi_prompt(messages, is_first_turn=True, history_window_turns=2)
+
+    assert isinstance(prompt, str)
+    assert "first" not in prompt
+    assert "second question" in prompt and "third question" in prompt
 
 
 # ---------------------------------------------------------------------------

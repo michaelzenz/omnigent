@@ -49,7 +49,7 @@ from omnigent.inner.tools import (
     _schema_from_callable,
 )
 from omnigent.llms.routing import infer_harness_from_model as _infer_harness_from_model
-from omnigent.spec.parser import parse_tool_groups
+from omnigent.spec.parser import parse_allowed_builtin_tools, parse_tool_groups
 from omnigent.spec.types import (
     AgentSpec,
     ExecutorAuth,
@@ -1154,6 +1154,9 @@ def agent_def_to_agent_spec(
     tool_groups = parse_tool_groups(
         raw_yaml.get("tool_groups") if raw_yaml else None, spawn=agent_def.spawn
     )
+    allowed_builtin_tools = parse_allowed_builtin_tools(
+        raw_yaml.get("allowed_builtin_tools") if raw_yaml else None
+    )
 
     return AgentSpec(
         spec_version=_SYNTHETIC_SPEC_VERSION,
@@ -1172,6 +1175,7 @@ def agent_def_to_agent_spec(
         timers=agent_def.timers,
         spawn=agent_def.spawn,
         tool_groups=tool_groups,
+        allowed_builtin_tools=allowed_builtin_tools,
         # AgentDef.agent_session_sharing is the raw YAML string
         # ("none"/"non-public"/"public"); map it to the SharePolicy enum
         # AgentSpec expects.

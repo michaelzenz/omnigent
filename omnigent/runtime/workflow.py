@@ -1700,6 +1700,10 @@ def _build_pi_spawn_env(
     env["HARNESS_PI_SKILLS_FILTER"] = json.dumps(spec.skills_filter)
     env["HARNESS_PI_CONTEXT_FILES"] = json.dumps(spec.executor.config.get("context_files", True))
     env["HARNESS_PI_SYSTEM_PROMPT_MODE"] = spec.executor.config.get("system_prompt_mode", "append")
+    env["HARNESS_PI_HISTORY_WINDOW_TURNS"] = str(
+        spec.executor.config.get("history_window_turns", 0)
+    )
+    env["HARNESS_PI_ALLOWED_BUILTIN_TOOLS"] = json.dumps(spec.allowed_builtin_tools)
     if spec.name:
         env["HARNESS_PI_AGENT_NAME"] = spec.name
     if cwd is not None:

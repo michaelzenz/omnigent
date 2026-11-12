@@ -209,6 +209,12 @@ def validate_omnigent_executor(
                 "instructions",
                 "pi-native system_prompt_mode='replace' requires non-empty authored instructions",
             )
+    if "history_window_turns" in spec.executor.config:
+        window = spec.executor.config["history_window_turns"]
+        if isinstance(window, bool) or not isinstance(window, int) or window < 0:
+            result.add("executor.config.history_window_turns", "must be a non-negative integer")
+        if harness != "pi":
+            result.add("executor.config.history_window_turns", "only supported with harness 'pi'")
     if not harness:
         result.add(
             "executor.config.harness",

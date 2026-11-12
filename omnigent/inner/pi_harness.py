@@ -68,6 +68,11 @@ Env vars read at startup:
   Defaults to true.
 - ``HARNESS_PI_SYSTEM_PROMPT_MODE``: ``append`` (default) or ``replace`` Pi's
   base prompt with Omnigent's composed instructions.
+- ``HARNESS_PI_HISTORY_WINDOW_TURNS``: Limit each model call to the last N
+  user turns. ``0`` (default) keeps the full history.
+- ``HARNESS_PI_ALLOWED_BUILTIN_TOOLS``: JSON list of the spec's
+  ``allowed_builtin_tools``, or ``null`` when the spec sets none. Pi's own
+  tools are exposed only when named in the list.
 - ``HARNESS_PI_AGENT_NAME``: Agent display name. Reserved for
   future use; currently unused by Pi.
 """
@@ -107,6 +112,8 @@ _ENV_OS_ENV = "HARNESS_PI_OS_ENV"
 _ENV_SKILLS_FILTER = "HARNESS_PI_SKILLS_FILTER"
 _ENV_CONTEXT_FILES = "HARNESS_PI_CONTEXT_FILES"
 _ENV_SYSTEM_PROMPT_MODE = "HARNESS_PI_SYSTEM_PROMPT_MODE"
+_ENV_HISTORY_WINDOW_TURNS = "HARNESS_PI_HISTORY_WINDOW_TURNS"
+_ENV_ALLOWED_BUILTIN_TOOLS = "HARNESS_PI_ALLOWED_BUILTIN_TOOLS"
 _ENV_BUNDLE_DIR = "HARNESS_PI_BUNDLE_DIR"
 _ENV_AGENT_NAME = "HARNESS_PI_AGENT_NAME"
 _ENV_GATEWAY_BASE_URL = "HARNESS_PI_GATEWAY_BASE_URL"
@@ -248,7 +255,62 @@ def _build_pi_executor() -> Executor:
         skills_filter=_resolve_skills_filter(),
         context_files=_parse_truthy(_ENV_CONTEXT_FILES, default=True),
         system_prompt_mode=os.environ.get(_ENV_SYSTEM_PROMPT_MODE, "append"),
+        history_window_turns=_resolve_history_window_turns(),
+        allowed_builtin_tools=_resolve_allowed_builtin_tools(),
     )
+
+
+def _resolve_history_window_turns() -> int:
+    """
+    Resolve the executor's ``history_window_turns`` from env config.
+
+    :returns: The window from :data:`_ENV_HISTORY_WINDOW_TURNS`, or ``0``
+        (full history) when it is unset or not a non-negative integer.
+    """
+    raw = os.environ.get(_ENV_HISTORY_WINDOW_TURNS, "").strip()
+    if not raw:
+        return 0
+    try:
+        window = int(raw)
+    except ValueError:
+        window = -1
+    if window < 0:
+        _logger.warning(
+            "%s=%r is not a non-negative integer; keeping the full history",
+            _ENV_HISTORY_WINDOW_TURNS,
+            raw,
+        )
+        return 0
+    return window
+
+
+def _resolve_allowed_builtin_tools() -> list[str] | None:
+    """
+    Resolve the spec's ``allowed_builtin_tools`` from env config.
+
+    Fails closed: a value that cannot be read becomes an empty allowlist,
+    so none of Pi's own tools are exposed.
+
+    :returns: The decoded names, ``None`` when unset or ``null`` (no
+        allowlist), or ``[]`` when malformed.
+    """
+    raw = os.environ.get(_ENV_ALLOWED_BUILTIN_TOOLS, "").strip()
+    if not raw:
+        return None
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError:
+        decoded = raw
+    if decoded is None:
+        return None
+    if isinstance(decoded, list) and all(isinstance(name, str) for name in decoded):
+        return decoded
+    _logger.warning(
+        "%s is not a JSON list of tool names (%r); exposing none of Pi's own tools",
+        _ENV_ALLOWED_BUILTIN_TOOLS,
+        raw,
+    )
+    return []
 
 
 def _resolve_skills_filter() -> str | list[str]:

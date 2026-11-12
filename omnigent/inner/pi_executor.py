@@ -232,6 +232,13 @@ class ToolExecutor(Protocol):
     ) -> Awaitable[dict[str, Any]] | dict[str, Any]: ...
 
 
+# Tools Pi provides itself: its built-ins plus ``mcp``, the proxy tool the
+# pi-mcp-adapter extension registers for the host's MCP servers. An
+# ``allowed_builtin_tools`` list exposes the ones it names; without one, only
+# ``read`` is exposed, and only for skill loading.
+_PI_TOOL_NAMES = ("read", "bash", "edit", "write", "grep", "find", "ls", "mcp")
+
+
 # Native-tool policy gate wired by :class:`PiExecutor`. Invoked with a native
 # (non-bridged) tool name + argument dict; returns ``{"block": bool, "reason":
 # str}``. Pi's native tools (e.g. ``read``, enabled for skill loading) execute
@@ -742,6 +749,33 @@ module.exports = function(pi) {{
       }},
     }});
   }}
+}};
+"""
+
+
+def _generate_history_window_extension_js(window: int) -> str:
+    """Generate a Pi extension that limits each model call to the last *window* user turns.
+
+    Pi fires ``context`` before every model call and sends the messages the
+    hook returns instead. Cutting at a user message keeps each tool call
+    with its result.
+
+    :param window: Trailing user turns to keep, e.g. ``5``.
+    """
+    return f"""\
+// Auto-generated Omnigent history window extension for Pi.
+const WINDOW = {window};
+
+module.exports = function(pi) {{
+  pi.on("context", async (event) => {{
+    if (!event || !Array.isArray(event.messages)) return;
+    const userIndexes = [];
+    event.messages.forEach((message, index) => {{
+      if (message && message.role === "user") userIndexes.push(index);
+    }});
+    if (userIndexes.length <= WINDOW) return;
+    return {{ messages: event.messages.slice(userIndexes[userIndexes.length - WINDOW]) }};
+  }});
 }};
 """
 
@@ -1711,7 +1745,28 @@ def _split_pi_prompt(blocks: list[_JsonObject]) -> tuple[str, list[dict[str, str
     return "\n".join(text_parts), images
 
 
-def _build_pi_prompt(messages: list[Message], *, is_first_turn: bool) -> str | list[_JsonObject]:
+def _window_history_tail(messages: list[Message], window: int) -> list[Message]:
+    """
+    Keep the last *window* turns of *messages*, cut at user-message boundaries.
+
+    :param messages: Conversation history, oldest first.
+    :param window: Trailing user turns to keep; below ``1`` keeps everything.
+    :returns: *messages* from the first kept user message onward.
+    """
+    user_indexes = [
+        index for index, message in enumerate(messages) if message.get("role") == "user"
+    ]
+    if window < 1 or len(user_indexes) <= window:
+        return messages
+    return messages[user_indexes[-window] :]
+
+
+def _build_pi_prompt(
+    messages: list[Message],
+    *,
+    is_first_turn: bool,
+    history_window_turns: int = 0,
+) -> str | list[_JsonObject]:
     """
     Build the prompt to send to Pi.
 
@@ -1725,8 +1780,11 @@ def _build_pi_prompt(messages: list[Message], *, is_first_turn: bool) -> str | l
     :param is_first_turn: ``True`` when this is the first turn
         against a freshly-started Pi subprocess, so the full
         history needs to be serialized into the prompt.
+    :param history_window_turns: When above ``0``, serialize only the
+        last N user turns.
     :returns: A string prompt or a list of content block dicts.
     """
+    messages = _window_history_tail(messages, history_window_turns)
     user_messages = [m for m in messages if m.get("role") == "user"]
 
     if is_first_turn and len(messages) > 1 and len(user_messages) > 1:
@@ -2170,6 +2228,8 @@ class PiExecutor(Executor):
         context_files: bool = True,
         system_prompt_mode: str = "append",
         preserve_model_ids: bool = False,
+        history_window_turns: int = 0,
+        allowed_builtin_tools: Sequence[str] | None = None,
     ) -> None:
         """Create a PiExecutor.
 
@@ -2179,6 +2239,12 @@ class PiExecutor(Executor):
             Explicit agent instructions are unaffected.
         :param system_prompt_mode: ``append`` retains Pi's base prompt;
             ``replace`` uses Omnigent's composed instructions as the base.
+        :param history_window_turns: When above ``0``, each model call sees
+            only the last N user turns, with their replies and tool calls.
+        :param allowed_builtin_tools: The spec's built-in allowlist. The Pi
+            tools it names (built-ins, and ``mcp`` from pi-mcp-adapter) are
+            exposed and policy-gated like ``read``; ``None`` exposes only
+            ``read``, and only for skill loading.
         :param os_env: Optional OS environment / sandbox spec.  When set, the
             Pi subprocess is wrapped in the same sandbox other
             harnesses use.
@@ -2245,6 +2311,14 @@ class PiExecutor(Executor):
         if system_prompt_mode not in ("append", "replace"):
             raise ValueError("system_prompt_mode must be 'append' or 'replace'")
         self._system_prompt_mode = system_prompt_mode
+        if history_window_turns < 0:
+            raise ValueError("history_window_turns must be non-negative")
+        self._history_window_turns = history_window_turns
+        self._allowed_pi_tools: tuple[str, ...] | None = (
+            None
+            if allowed_builtin_tools is None
+            else tuple(name for name in _PI_TOOL_NAMES if name in allowed_builtin_tools)
+        )
         resolved_pi = pi_path or _find_pi_cli()
         if not resolved_pi:
             raise ImportError(
@@ -2588,8 +2662,8 @@ class PiExecutor(Executor):
         return self._gateway_model_wire_apis
 
     async def _ensure_tool_server(self, tools: list[ToolSpec]) -> int | None:
-        """Start the authenticated bridge for tools or gateway credentials."""
-        if not tools and not self._gateway:
+        """Start the authenticated bridge for tools, native-tool policy, or gateway credentials."""
+        if not tools and not self._gateway and not self._allowed_pi_tools:
             return None
         if self._tool_server is None:
             self._tool_server = _ToolServer()
@@ -2785,8 +2859,9 @@ class PiExecutor(Executor):
                 with open(fallback_path, "w") as f:
                     json.dump(retry_settings, f, indent=2)
 
-        # Generate the Omnigent tool bridge extension if tools are available.
-        if tools and tool_server_port is not None:
+        # Generate the Omnigent tool bridge extension when there are tools to
+        # bridge or allowlisted Pi tools whose calls it must gate.
+        if (tools or self._allowed_pi_tools) and tool_server_port is not None:
             if tool_server_token is None:
                 # A port without a token would spawn the bridge
                 # unauthenticated; fail loud instead.
@@ -2814,11 +2889,20 @@ class PiExecutor(Executor):
             # ``tool_call`` hook routes it (and any other native tool) through
             # an Omnigent TOOL_CALL policy verdict; see
             # :func:`_generate_extension_js` and
-            # :meth:`PiExecutor._gate_native_tool`.
-            if self._skills_filter != "none":
+            # :meth:`PiExecutor._gate_native_tool`. An allowlist replaces
+            # this default with the Pi tools it names.
+            if self._allowed_pi_tools is not None:
+                tool_names.extend(self._allowed_pi_tools)
+            elif self._skills_filter != "none":
                 tool_names.append("read")
             if tool_names:
                 extra_args.extend(["--tools", ",".join(tool_names)])
+
+        if self._history_window_turns:
+            window_path = os.path.join(tmp_dir, "omnigent_history_window.js")
+            with open(window_path, "w") as f:
+                f.write(_generate_history_window_extension_js(self._history_window_turns))
+            extra_args.extend(["--extension", window_path])
 
         return PiSubprocessConfig(env=env, tmp_dir=tmp_dir, extra_args=extra_args)
 
@@ -3110,7 +3194,11 @@ class PiExecutor(Executor):
         state = self._session_states.get(session_key)
         is_first_turn = state is not None and not state._has_sent_prompt
 
-        prompt = _build_pi_prompt(messages, is_first_turn=is_first_turn)
+        prompt = _build_pi_prompt(
+            messages,
+            is_first_turn=is_first_turn,
+            history_window_turns=self._history_window_turns,
+        )
 
         if not prompt:
             # No prompt built (e.g. empty message list on a resumed session) —

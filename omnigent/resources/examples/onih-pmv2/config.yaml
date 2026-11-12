@@ -11,8 +11,30 @@ executor:
   config:
     harness: pi
     system_prompt_mode: replace
+    history_window_turns: 5
 
 skills: none
+
+tools:
+  builtins:
+    - search_conversations
+
+# No shell and no file edits. `mcp` reaches the host's MCP servers through the
+# pi-mcp-adapter extension.
+allowed_builtin_tools:
+  - read
+  - grep
+  - find
+  - ls
+  - mcp
+  - search_conversations
+  - sys_session_list
+  - sys_session_get_info
+  - sys_session_get_history
+  - sys_scheduled_task_create
+  - sys_scheduled_task_list
+  - sys_scheduled_task_update
+  - sys_scheduled_task_delete
 
 # system_prompt_mode: replace requires non-empty instructions.
 instructions: |

@@ -195,6 +195,26 @@ class ToolManager:
         self._register_policy_tools()
         self._register_scheduled_task_tools()
         self._register_browser_tools()
+        self._apply_builtin_allowlist(client_tool_specs or [])
+
+    def _apply_builtin_allowlist(self, client_tool_specs: list[ClientSideToolSpec]) -> None:
+        """
+        Drop the built-ins the spec's ``allowed_builtin_tools`` does not name.
+
+        The runner's dispatch gate reads this registry too, so an unlisted
+        built-in is neither advertised nor runnable. The agent's own local
+        tools and request-time client tools are not built-ins and stay.
+
+        :param client_tool_specs: The client tools registered at init.
+        """
+        allowed = self._spec.allowed_builtin_tools
+        if allowed is None:
+            return
+        kept = set(allowed)
+        kept.update(info.name for info in self._spec.local_tools)
+        kept.update(spec.name for spec in client_tool_specs)
+        for name in [name for name in self._tools if name not in kept]:
+            self._tools.pop(name).shutdown()
 
     def _register_policy_tools(self) -> None:
         """

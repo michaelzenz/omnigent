@@ -79,6 +79,42 @@ def test_executor_factory_reads_system_prompt_mode(
     assert executor.call_args.kwargs["system_prompt_mode"] == (mode or "append")
 
 
+@pytest.mark.parametrize(("value", "expected"), [(None, 0), ("5", 5), ("-1", 0), ("five", 0)])
+def test_executor_factory_reads_history_window_turns(
+    monkeypatch: pytest.MonkeyPatch, value: str | None, expected: int
+) -> None:
+    if value is None:
+        monkeypatch.delenv("HARNESS_PI_HISTORY_WINDOW_TURNS", raising=False)
+    else:
+        monkeypatch.setenv("HARNESS_PI_HISTORY_WINDOW_TURNS", value)
+    with patch("omnigent.inner.pi_harness.PiExecutor") as executor:
+        pi_harness._build_pi_executor()
+    assert executor.call_args.kwargs["history_window_turns"] == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, None),
+        ("null", None),
+        ('["read", "grep"]', ["read", "grep"]),
+        ('{"read": true}', []),
+        ("read", []),
+    ],
+)
+def test_executor_factory_reads_allowed_builtin_tools(
+    monkeypatch: pytest.MonkeyPatch, value: str | None, expected: list[str] | None
+) -> None:
+    """An allowlist the wrap cannot read fails closed: none of Pi's own tools."""
+    if value is None:
+        monkeypatch.delenv("HARNESS_PI_ALLOWED_BUILTIN_TOOLS", raising=False)
+    else:
+        monkeypatch.setenv("HARNESS_PI_ALLOWED_BUILTIN_TOOLS", value)
+    with patch("omnigent.inner.pi_harness.PiExecutor") as executor:
+        pi_harness._build_pi_executor()
+    assert executor.call_args.kwargs["allowed_builtin_tools"] == expected
+
+
 def test_executor_factory_reads_env_vars(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

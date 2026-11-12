@@ -1777,3 +1777,20 @@ def test_tool_groups_all_false_keeps_the_load_bearing_tools() -> None:
         "sys_session_rename",
         "sys_cancel_task",
     } <= names
+
+
+# ─── ``allowed_builtin_tools:`` — keeping only the named built-ins ──────
+
+
+@pytest.mark.parametrize(
+    "allowed", [["sys_session_list", "sys_scheduled_task_list"], []], ids=["named", "empty"]
+)
+def test_allowed_builtin_tools_drops_unnamed_builtins_but_not_client_tools(
+    allowed: list[str],
+) -> None:
+    """An allowlist trims framework built-ins only; a request's client tools stay."""
+    spec = AgentSpec(spec_version=1, skills_filter="none", allowed_builtin_tools=allowed)
+
+    mgr = ToolManager(spec, client_tool_specs=[_make_client_side_spec("get_weather")])
+
+    assert set(mgr.get_tool_names()) == {*allowed, "get_weather"}

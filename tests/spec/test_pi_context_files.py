@@ -202,3 +202,33 @@ def test_sdk_replacement_allows_runtime_instructions(tmp_path: Path) -> None:
         instructions=None,
     )
     assert load(path).instructions is None
+
+
+def test_history_window_turns_survives_bundle_transport(tmp_path: Path) -> None:
+    path = _write_agent(
+        tmp_path, directory=True, executor={"harness": "pi", "history_window_turns": 3}
+    )
+
+    spec = load(_bundle_agent(path), dest=tmp_path / "uploaded")
+
+    assert spec.executor.config["history_window_turns"] == 3
+
+
+@pytest.mark.parametrize(
+    ("harness", "window", "message"),
+    [
+        ("pi", -1, "must be a non-negative integer"),
+        ("pi", True, "must be a non-negative integer"),
+        ("pi", "5", "must be a non-negative integer"),
+        ("codex", 5, "only supported with harness 'pi'"),
+    ],
+    ids=["negative", "boolean", "string", "unsupported-harness"],
+)
+def test_history_window_turns_rejects_invalid_values(
+    tmp_path: Path, harness: str, window: object, message: str
+) -> None:
+    path = _write_agent(
+        tmp_path, directory=True, executor={"harness": harness, "history_window_turns": window}
+    )
+    with pytest.raises(OmnigentError, match=rf"history_window_turns.*{message}"):
+        load(path)

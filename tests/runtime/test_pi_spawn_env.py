@@ -119,6 +119,34 @@ def test_pi_spawn_env_sets_system_prompt_mode(
     assert env["HARNESS_PI_SYSTEM_PROMPT_MODE"] == (mode or "append")
 
 
+@pytest.mark.parametrize(
+    ("window", "allowed", "expected_window", "expected_allowed"),
+    [
+        (None, None, "0", "null"),
+        (5, ["read", "sys_session_list"], "5", '["read", "sys_session_list"]'),
+    ],
+)
+def test_pi_spawn_env_sets_history_window_and_builtin_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+    window: int | None,
+    allowed: list[str] | None,
+    expected_window: str,
+    expected_allowed: str,
+) -> None:
+    """The spec decides both, even when the parent environment disagrees."""
+    spec = _make_spec()
+    if window is not None:
+        spec.executor.config["history_window_turns"] = window
+    spec.allowed_builtin_tools = allowed
+    monkeypatch.setenv("HARNESS_PI_HISTORY_WINDOW_TURNS", "9")
+    monkeypatch.setenv("HARNESS_PI_ALLOWED_BUILTIN_TOOLS", '["bash"]')
+
+    env = _build_pi_spawn_env(spec)
+
+    assert env["HARNESS_PI_HISTORY_WINDOW_TURNS"] == expected_window
+    assert env["HARNESS_PI_ALLOWED_BUILTIN_TOOLS"] == expected_allowed
+
+
 def _ucode_state_for_pi(
     monkeypatch: pytest.MonkeyPatch, *, model: str | None, with_pi_entry: bool
 ):

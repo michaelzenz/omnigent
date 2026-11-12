@@ -105,7 +105,7 @@ _YAML_1_2_BOOL_RE = re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$")
 
 # ``executor.config`` keys whose YAML types must survive instead of being string-coerced.
 _STRUCTURED_EXECUTOR_CONFIG_KEYS: frozenset[str] = frozenset(
-    {"context_files", "system_prompt_mode"}
+    {"context_files", "system_prompt_mode", "history_window_turns"}
 )
 
 # Copy the resolver dict onto the subclass before mutating — it's inherited
@@ -315,6 +315,7 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
     # Top-level ``tool_groups:`` opts out of framework-owned tool groups
     # that otherwise register on every agent; each group defaults to on.
     tool_groups = parse_tool_groups(raw.get("tool_groups"), spawn=spawn)
+    allowed_builtin_tools = parse_allowed_builtin_tools(raw.get("allowed_builtin_tools"))
     # Top-level ``agent_session_sharing:`` flag is the SOLE enabler of
     # the ``sys_session_share`` tool, independent of ``spawn`` /
     # ``tools.agents`` (and unrelated to server-API / CLI sharing).
@@ -360,6 +361,7 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
         timers=timers,
         spawn=spawn,
         tool_groups=tool_groups,
+        allowed_builtin_tools=allowed_builtin_tools,
         agent_session_sharing=agent_session_sharing,
     )
 
@@ -559,6 +561,33 @@ def parse_tool_groups(raw: object, *, spawn: bool) -> ToolGroupsConfig:
     groups = ToolGroupsConfig(**enabled)
     _reject_orphaned_agent_id_tools(groups, spawn=spawn)
     return groups
+
+
+def parse_allowed_builtin_tools(raw: object) -> list[str] | None:
+    """
+    Parse the top-level ``allowed_builtin_tools:`` list.
+
+    Strict like :func:`parse_tool_groups`: the list exists to remove tools,
+    so a malformed value fails the load rather than silently leaving every
+    built-in registered. Shared by the native parser and the
+    omnigent-dialect adapter so both loaders reject the same input.
+
+    :param raw: The raw value, or ``None`` if absent, e.g.
+        ``["read", "sys_session_list"]``.
+    :returns: The names in declaration order without duplicates, or
+        ``None`` when *raw* is ``None`` (no restriction).
+    :raises OmnigentError: If *raw* is not a list of non-empty strings.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or not all(
+        isinstance(name, str) and name.strip() for name in raw
+    ):
+        raise OmnigentError(
+            "allowed_builtin_tools must be a YAML list of tool names",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    return list(dict.fromkeys(name.strip() for name in raw))
 
 
 def _reject_orphaned_agent_id_tools(groups: ToolGroupsConfig, *, spawn: bool) -> None:

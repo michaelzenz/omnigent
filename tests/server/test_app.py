@@ -1684,7 +1684,9 @@ def test_ensure_default_agents_seeds_onih_role_profiles(
 
     A trimmed roster only hides them. Pi refuses ``system_prompt_mode:
     replace`` without instructions, and headless role sessions have no
-    picker to choose a model, so each bundle must carry both.
+    picker to choose a model, so each bundle must carry both. Roles get no
+    shell or file-editing tools, reach MCP through Pi's ``mcp`` proxy, and
+    keep a short history window.
     """
     monkeypatch.setenv(SEEDED_AGENTS_ENV, "polly")
 
@@ -1702,6 +1704,10 @@ def test_ensure_default_agents_seeds_onih_role_profiles(
     assert spec.executor.config.get("system_prompt_mode") == "replace"
     assert spec.instructions and spec.instructions.strip()
     assert spec.executor.model
+    assert spec.executor.config.get("history_window_turns") == 5
+    assert spec.allowed_builtin_tools is not None
+    assert not {"bash", "edit", "write"} & set(spec.allowed_builtin_tools)
+    assert "mcp" in spec.allowed_builtin_tools
 
 
 def test_ensure_default_polly_agent_is_idempotent(seed_stores: _SeedStores) -> None:

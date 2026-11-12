@@ -317,3 +317,16 @@ async def test_surface_probe_does_not_fork_the_working_tree(
         schema["function"]["name"] for schema in request_schemas
     } >= tool_dispatch._OS_ENV_TOOLS
     create_env.assert_not_called()
+
+
+async def test_execute_tool_refuses_builtin_outside_the_allowlist() -> None:
+    """``allowed_builtin_tools`` narrows dispatch, not just the advertised schemas."""
+    spec = AgentSpec(spec_version=1, spawn=True, allowed_builtin_tools=["sys_session_list"])
+
+    out = await tool_dispatch.execute_tool(
+        tool_name="sys_session_create",
+        arguments=json.dumps({"agent_id": "ag_any"}),
+        agent_spec=spec,
+    )
+
+    assert "is not enabled for this agent" in json.loads(out)["error"]

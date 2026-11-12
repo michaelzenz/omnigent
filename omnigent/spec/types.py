@@ -1593,6 +1593,15 @@ class AgentSpec:  # type: ignore[explicit-any]  # params: dict[str, Any] field (
         an absent block changes nothing; a spec sets a group to
         ``false`` to drop tools it cannot use from the advertised
         payload. See :class:`ToolGroupsConfig` for the groups.
+    :param allowed_builtin_tools: Allowlist of built-in tool names. YAML
+        key is ``allowed_builtin_tools:`` (top-level list). ``None``
+        (default) leaves the built-in surface unrestricted; a list keeps
+        only the named built-ins, so ``[]`` allows none. It covers the
+        tools ``ToolManager`` registers and the tools Pi provides itself
+        (``read``, ``grep``, ..., and ``mcp`` from pi-mcp-adapter), which
+        Pi exposes only when named here. The agent's local tools, client
+        tools, and tools from MCP servers in the spec are not built-ins
+        and are unaffected.
     :param agent_session_sharing: Authority for the agent to share the
         session it is running in, via ``sys_session_share``. YAML key is
         ``agent_session_sharing:`` (top-level, like ``spawn:``). This
@@ -1655,6 +1664,7 @@ class AgentSpec:  # type: ignore[explicit-any]  # params: dict[str, Any] field (
     timers: bool = False
     spawn: bool = False
     tool_groups: ToolGroupsConfig = field(default_factory=ToolGroupsConfig)
+    allowed_builtin_tools: list[str] | None = None
     agent_session_sharing: SharePolicy = SharePolicy.NONE
     source_rel_dir: str | None = field(default=None, compare=False)
 

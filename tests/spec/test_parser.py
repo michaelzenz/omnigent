@@ -3581,6 +3581,28 @@ def test_parse_tool_groups_discovery_off_once_its_consumers_are_off(tmp_path: Pa
     assert spec.tool_groups.scheduled_tasks is False
 
 
+def test_parse_allowed_builtin_tools_keeps_order_and_drops_duplicates(agent_dir: Path) -> None:
+    """An absent key leaves built-ins unrestricted; a list keeps its first mentions."""
+    assert parse(agent_dir).allowed_builtin_tools is None
+    config = {
+        "spec_version": 1,
+        "name": "read-only",
+        "allowed_builtin_tools": ["read", "sys_session_list", "read"],
+    }
+    (agent_dir / "config.yaml").write_text(yaml.dump(config))
+    assert parse(agent_dir).allowed_builtin_tools == ["read", "sys_session_list"]
+
+
+@pytest.mark.parametrize("value", ["read", ["read", 3], ["read", " "], {"read": True}], ids=str)
+def test_parse_allowed_builtin_tools_rejects_non_name_lists(tmp_path: Path, value: object) -> None:
+    """The list exists to remove tools, so a malformed one must fail the load."""
+    config = {"spec_version": 1, "name": "malformed", "allowed_builtin_tools": value}
+    (tmp_path / "config.yaml").write_text(yaml.dump(config))
+    with pytest.raises(OmnigentError, match="allowed_builtin_tools must be a YAML list") as exc:
+        parse(tmp_path)
+    assert exc.value.code == ErrorCode.INVALID_INPUT
+
+
 # ─── Top-level ``spawn:`` flag (spawn-write opt-in) ───────────
 
 

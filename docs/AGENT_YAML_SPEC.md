@@ -51,6 +51,7 @@ of the agent YAML.
 | `cancellable` | Optional | Whether the session can be cancelled. Defaults to `true`. |
 | `timers` | Optional | Whether timer tools are exposed. Defaults to `false`. |
 | `tool_groups` | Optional | Opt out of framework-owned tool groups the agent cannot use. Every group defaults to `true`. |
+| `allowed_builtin_tools` | Optional | Keep only the named built-in tools, including Pi's own tools such as `read`. `[]` allows none. Local and client tools, and tools from MCP servers in the spec, are unaffected. |
 
 ## Executor
 
@@ -258,6 +259,33 @@ tool summaries and coding guidelines; tool schemas and execution still work.
 directory footer, and extension hooks remain active; extensions can modify the
 final prompt. This setting supports `pi` and `pi-native` only. Native settings
 apply on the next terminal launch; explicit native CLI arguments remain available.
+
+### Pi tools and history window
+
+Pi's own tools (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`) stay off
+with `harness: pi`, except `read` for loading skills. A top-level
+`allowed_builtin_tools` list exposes exactly the Pi tools it names, and Omnigent
+policies gate their calls like any other tool call. Naming `mcp` exposes the
+proxy tool of the [pi-mcp-adapter](https://www.npmjs.com/package/pi-mcp-adapter)
+extension, which reaches the MCP servers in the host's Pi `mcp.json`, when
+that extension is installed.
+
+In a directory bundle, `executor.config.history_window_turns` limits each model
+call to the last N user turns, together with the replies, tool calls, and tool
+results that follow them. Omnigent still stores the whole conversation. `0`, the
+default, sends the full history.
+
+```yaml
+spec_version: 1
+name: triage-agent
+executor:
+  type: omnigent
+  config:
+    harness: pi
+    history_window_turns: 5
+allowed_builtin_tools: [read, grep, find, ls, sys_session_list]
+instructions: AGENTS.md
+```
 
 ### GitHub Copilot
 
