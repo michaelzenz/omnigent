@@ -57,6 +57,8 @@ RESTRICT_TO_AGENT_NAMES_KEY = "restrict_to_agent_names"
 #: Agent name a fresh New Chat starts on, e.g. ``"polly"``.
 DEFAULT_AGENT_NAME_KEY = "default_agent_name"
 SESSION_TITLE_INSTRUCTIONS_MAX_CHARS = 4_000
+GLOBALHUB_HOST_ID_MAX_CHARS = 256
+GLOBALHUB_WORKSPACE_MAX_CHARS = 4_096
 
 
 def resolve_config_path() -> Path | None:

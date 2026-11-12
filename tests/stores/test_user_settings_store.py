@@ -11,7 +11,9 @@ from omnigent.db.db_models import workspace_scope
 from omnigent.db.utils import get_or_create_engine
 from omnigent.server.server_config import SESSION_TITLE_INSTRUCTIONS_MAX_CHARS
 from omnigent.stores.user_settings_store import (
+    GLOBALHUB_PLACEMENT_PREFERENCE_KEY,
     SESSION_TITLE_INSTRUCTIONS_PREFERENCE_KEY,
+    GlobalHubPlacement,
     UserSettingsStore,
     open_user_settings_store,
     session_owner_title_instructions,
@@ -19,6 +21,7 @@ from omnigent.stores.user_settings_store import (
 
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
+PLACEMENT = GlobalHubPlacement(host_id="host_alice", workspace="/Users/alice/globalhub")
 
 
 @pytest.fixture()
@@ -26,7 +29,13 @@ def store(db_uri: str) -> UserSettingsStore:
     return UserSettingsStore(db_uri)
 
 
-def _write_raw_value(db_uri: str, user_id: str, value: bytes) -> None:
+def _write_raw_value(
+    db_uri: str,
+    user_id: str,
+    value: bytes,
+    *,
+    key: str = SESSION_TITLE_INSTRUCTIONS_PREFERENCE_KEY,
+) -> None:
     with get_or_create_engine(db_uri).begin() as connection:
         # Untyped columns skip the value codec while letting each dialect quote ``key``.
         raw_preferences = table(
@@ -40,7 +49,7 @@ def _write_raw_value(db_uri: str, user_id: str, value: bytes) -> None:
             insert(raw_preferences).values(
                 workspace_id=0,
                 user_id=user_id,
-                key=SESSION_TITLE_INSTRUCTIONS_PREFERENCE_KEY,
+                key=key,
                 value=value,
             )
         )
@@ -122,6 +131,38 @@ def test_invalid_stored_value_falls_back_to_default(
     _write_raw_value(db_uri, ALICE, stored)
 
     assert store.get_session_title_instructions(user_id=ALICE) is None
+
+
+def test_globalhub_placement_round_trips_and_clears(store: UserSettingsStore) -> None:
+    assert store.get_globalhub_placement(user_id=ALICE) is None
+
+    store.save_globalhub_placement(PLACEMENT, user_id=ALICE)
+
+    assert store.get_globalhub_placement(user_id=ALICE) == PLACEMENT
+    assert store.get_globalhub_placement(user_id=BOB) is None
+    assert store.get_session_title_instructions(user_id=ALICE) is None
+
+    store.save_globalhub_placement(None, user_id=ALICE)
+
+    assert store.get_globalhub_placement(user_id=ALICE) is None
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        pytest.param(b"\x00\x01not a zstd frame", id="corrupt-zstd"),
+        pytest.param(b"not json", id="not-json"),
+        pytest.param(b'["host_alice", "/Users/alice"]', id="not-object"),
+        pytest.param(b'{"host_id": "host_alice"}', id="missing-workspace"),
+        pytest.param(b'{"host_id": 7, "workspace": "/Users/alice"}', id="non-string-host"),
+    ],
+)
+def test_invalid_stored_globalhub_placement_is_ignored(
+    store: UserSettingsStore, db_uri: str, stored: bytes
+) -> None:
+    _write_raw_value(db_uri, ALICE, stored, key=GLOBALHUB_PLACEMENT_PREFERENCE_KEY)
+
+    assert store.get_globalhub_placement(user_id=ALICE) is None
 
 
 def test_open_store_requires_sql_storage(db_uri: str) -> None:

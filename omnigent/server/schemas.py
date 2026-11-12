@@ -44,6 +44,10 @@ from omnigent.entities import (
 from omnigent.entities.conversation import StartupInputOptions
 from omnigent.inner.native_attachments import reject_authored_framework_notices
 from omnigent.onboarding.sandboxes.profiles import SandboxProfileSummary
+from omnigent.server.server_config import (
+    GLOBALHUB_HOST_ID_MAX_CHARS,
+    GLOBALHUB_WORKSPACE_MAX_CHARS,
+)
 
 # ── Shared ──────────────────────────────────────────────────────
 
@@ -5824,6 +5828,32 @@ class SessionTitleInstructionsResponse(BaseModel):
 
     instructions: str | None
     max_chars: int
+
+
+class GlobalHubSettingsRequest(BaseModel):
+    """Set where the caller's GlobalHub role sessions run; null for both clears it.
+
+    The host must be one of the caller's own hosts and online, and the workspace
+    an existing directory on it; the server stores the canonical path.
+    """
+
+    host_id: str | None = Field(..., min_length=1, max_length=GLOBALHUB_HOST_ID_MAX_CHARS)
+    workspace: str | None = Field(..., min_length=1, max_length=GLOBALHUB_WORKSPACE_MAX_CHARS)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _both_or_neither(self) -> Self:
+        if (self.host_id is None) != (self.workspace is None):
+            raise ValueError("set host_id and workspace together, or both to null to clear")
+        return self
+
+
+class GlobalHubSettingsResponse(BaseModel):
+    """Where the caller's GlobalHub role sessions run; both null until it is set."""
+
+    host_id: str | None
+    workspace: str | None
 
 
 # ── Projects ──────────────────────────────────────────────────────

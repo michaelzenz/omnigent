@@ -7,9 +7,11 @@ Account deletion already removes a user's ``preferences`` rows.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import zstandard
@@ -27,6 +29,8 @@ from omnigent.db.utils import (
 )
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.server.server_config import (
+    GLOBALHUB_HOST_ID_MAX_CHARS,
+    GLOBALHUB_WORKSPACE_MAX_CHARS,
     SESSION_TITLE_INSTRUCTIONS_MAX_CHARS,
     normalize_session_title_instructions,
 )
@@ -36,6 +40,22 @@ _logger = logging.getLogger(__name__)
 SESSION_TITLE_INSTRUCTIONS_PREFERENCE_KEY = "session_title_instructions"
 # UTF-8 needs at most four bytes per character.
 _MAX_DECODED_BYTES = SESSION_TITLE_INSTRUCTIONS_MAX_CHARS * 4
+GLOBALHUB_PLACEMENT_PREFERENCE_KEY = "globalhub_placement"
+# JSON-escaping can grow a character to six bytes; the keys add a little more.
+_MAX_PLACEMENT_BYTES = (GLOBALHUB_WORKSPACE_MAX_CHARS + GLOBALHUB_HOST_ID_MAX_CHARS) * 6 + 64
+
+
+@dataclass(frozen=True)
+class GlobalHubPlacement:
+    """Where a user's GlobalHub role sessions run.
+
+    :param host_id: One of the user's hosts, e.g. ``"host_a1b2c3d4..."``.
+    :param workspace: Canonical absolute path on that host, e.g.
+        ``"/Users/alice/globalhub"``.
+    """
+
+    host_id: str
+    workspace: str
 
 
 class UserSettingsStore:
@@ -60,26 +80,100 @@ class UserSettingsStore:
 
     def get_session_title_instructions(self, *, user_id: str | None) -> str | None:
         """Return the user's saved title instructions, or ``None`` when unset or invalid."""
+        value = self._read(
+            "read_session_title_instructions",
+            SESSION_TITLE_INSTRUCTIONS_PREFERENCE_KEY,
+            user_id=user_id,
+            max_decoded_bytes=_MAX_DECODED_BYTES,
+        )
+        if value is None:
+            return None
+        return normalize_session_title_instructions(
+            value, source="saved session title instructions"
+        )
+
+    def get_globalhub_placement(self, *, user_id: str | None) -> GlobalHubPlacement | None:
+        """Return where the user's GlobalHub role sessions run, or ``None`` when unset."""
+        value = self._read(
+            "read_globalhub_placement",
+            GLOBALHUB_PLACEMENT_PREFERENCE_KEY,
+            user_id=user_id,
+            max_decoded_bytes=_MAX_PLACEMENT_BYTES,
+        )
+        if value is None:
+            return None
+        try:
+            stored = json.loads(value)
+        except ValueError:
+            stored = None
+        host_id = stored.get("host_id") if isinstance(stored, dict) else None
+        workspace = stored.get("workspace") if isinstance(stored, dict) else None
+        if not isinstance(host_id, str) or not isinstance(workspace, str):
+            _logger.warning("stored GlobalHub placement is malformed — ignoring it")
+            return None
+        return GlobalHubPlacement(host_id=host_id, workspace=workspace)
+
+    def save_globalhub_placement(
+        self, placement: GlobalHubPlacement | None, *, user_id: str | None
+    ) -> None:
+        """Save or clear where the user's GlobalHub role sessions run.
+
+        :param placement: The validated host and canonical workspace; ``None``
+            clears the setting.
+        :param user_id: The authenticated user, or ``None`` in single-user mode.
+        """
+        value = (
+            json.dumps({"host_id": placement.host_id, "workspace": placement.workspace})
+            if placement is not None
+            else None
+        )
+        self._write(
+            "save_globalhub_placement",
+            GLOBALHUB_PLACEMENT_PREFERENCE_KEY,
+            value,
+            user_id=user_id,
+        )
+
+    def _read(
+        self, operation: str, key: str, *, user_id: str | None, max_decoded_bytes: int
+    ) -> str | None:
+        """Return the user's stored value for ``key``, or ``None`` when unset or unreadable."""
         preference_user_id = RESERVED_USER_LOCAL if user_id is None else user_id
-        with self._session("read_session_title_instructions") as session:
+        with self._session(operation) as session:
             # Decode raw bytes here so a malformed value cannot fail in the ORM result processor.
             raw = session.scalar(
                 select(type_coerce(SqlPreference.value, LargeBinary)).where(
                     SqlPreference.workspace_id == current_workspace_id(),
                     SqlPreference.user_id == preference_user_id,
-                    SqlPreference.key == SESSION_TITLE_INSTRUCTIONS_PREFERENCE_KEY,
+                    SqlPreference.key == key,
                 )
             )
         if raw is None:
             return None
         try:
-            value = decode(raw, max_decoded_bytes=_MAX_DECODED_BYTES)
+            return decode(raw, max_decoded_bytes=max_decoded_bytes)
         except (ValueError, zstandard.ZstdError):
-            _logger.warning("stored session title instructions are unreadable — ignoring them")
+            _logger.warning("stored setting %r is unreadable — ignoring it", key)
             return None
-        return normalize_session_title_instructions(
-            value, source="saved session title instructions"
-        )
+
+    def _write(self, operation: str, key: str, value: str | None, *, user_id: str | None) -> None:
+        """Store ``value`` for the user's ``key``, or delete the row when ``value`` is ``None``."""
+        preference_user_id = RESERVED_USER_LOCAL if user_id is None else user_id
+
+        def write(session: Session) -> None:
+            require_active_account(session, user_id)
+            if value is not None:
+                upsert_preference_row(session, user_id=preference_user_id, key=key, value=value)
+                return
+            session.execute(
+                delete(SqlPreference).where(
+                    SqlPreference.workspace_id == current_workspace_id(),
+                    SqlPreference.user_id == preference_user_id,
+                    SqlPreference.key == key,
+                )
+            )
+
+        run_write_transaction(self._session_immediate, operation, write)
 
     def save_session_title_instructions(
         self, instructions: str | None, *, user_id: str | None
@@ -95,27 +189,12 @@ class UserSettingsStore:
         if len(value) > SESSION_TITLE_INSTRUCTIONS_MAX_CHARS:
             limit = SESSION_TITLE_INSTRUCTIONS_MAX_CHARS
             raise ValueError(f"Session title instructions exceed {limit} characters")
-        preference_user_id = RESERVED_USER_LOCAL if user_id is None else user_id
-
-        def write(session: Session) -> None:
-            require_active_account(session, user_id)
-            if value:
-                upsert_preference_row(
-                    session,
-                    user_id=preference_user_id,
-                    key=SESSION_TITLE_INSTRUCTIONS_PREFERENCE_KEY,
-                    value=value,
-                )
-                return
-            session.execute(
-                delete(SqlPreference).where(
-                    SqlPreference.workspace_id == current_workspace_id(),
-                    SqlPreference.user_id == preference_user_id,
-                    SqlPreference.key == SESSION_TITLE_INSTRUCTIONS_PREFERENCE_KEY,
-                )
-            )
-
-        run_write_transaction(self._session_immediate, "save_session_title_instructions", write)
+        self._write(
+            "save_session_title_instructions",
+            SESSION_TITLE_INSTRUCTIONS_PREFERENCE_KEY,
+            value or None,
+            user_id=user_id,
+        )
         return value or None
 
 
