@@ -32,6 +32,9 @@ class BuiltinRole:
     :param session_label: ``ROLE_LABEL`` value on the role's sessions, e.g.
         ``"task_manager"``.
     :param manual_file: Packaged default manual, e.g. ``"task_manager.md"``.
+    :param agent_name: Built-in agent the role's sessions run, e.g. ``"onih-pmv2"``.
+    :param singleton: Whether each user has exactly one session for the role.
+        Managers are not singletons: each manager gets its own session.
     """
 
     key: str
@@ -40,6 +43,8 @@ class BuiltinRole:
     description: str
     session_label: str
     manual_file: str
+    agent_name: str
+    singleton: bool
 
     def default_manual(self) -> str:
         """Return the manual packaged with omnigent for this role."""
@@ -73,6 +78,8 @@ BUILTIN_ROLES = (
         description="Triages incoming events and routes work to tasks.",
         session_label=BROKER_ROLE_VALUE,
         manual_file="task_broker.md",
+        agent_name="onih-pmv2",
+        singleton=True,
     ),
     BuiltinRole(
         key=MANAGER_ROLE_KEY,
@@ -81,6 +88,8 @@ BUILTIN_ROLES = (
         description="Owns a task, plans work, and supervises Workers.",
         session_label=MANAGER_ROLE_VALUE,
         manual_file="task_manager.md",
+        agent_name="onih-pmv2",
+        singleton=False,
     ),
     BuiltinRole(
         key=CUSTODIAN_ROLE_KEY,
@@ -89,6 +98,8 @@ BUILTIN_ROLES = (
         description="Maintains session hygiene and executes system-notice actions.",
         session_label=CUSTODIAN_ROLE_VALUE,
         manual_file="task_custodian.md",
+        agent_name="onih-custodian",
+        singleton=True,
     ),
 )
 _ROLES_BY_KEY = {role.key: role for role in BUILTIN_ROLES}

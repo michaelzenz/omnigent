@@ -1,4 +1,4 @@
-"""The caller's definitions of the GlobalHub roles (``/v1/agent-tasks/roles``)."""
+"""The caller's GlobalHub roles and role sessions (``/v1/agent-tasks/roles``)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import asyncio
 
 from fastapi import APIRouter, Request
 
+from omnigent.agent_tasks.role_sessions import RoleSessionStores, ensure_role_session
 from omnigent.agent_tasks.roles import (
     BUILTIN_ROLES,
     ROLE_OVERRIDE_FIELDS,
@@ -17,26 +18,28 @@ from omnigent.agent_tasks.roles import (
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
+from omnigent.server.routes._sessions.helpers import _announce_session_added
 from omnigent.server.schemas import (
     GlobalHubRoleProfile,
     GlobalHubRoleProfileDetail,
     GlobalHubRoleProfileList,
+    GlobalHubRoleSessionResponse,
     UpdateGlobalHubRoleProfileRequest,
 )
-from omnigent.stores.user_settings_store import UserSettingsStore
 
 
 def create_agent_task_roles_router(
-    store: UserSettingsStore,
+    stores: RoleSessionStores,
     auth_provider: AuthProvider | None = None,
 ) -> APIRouter:
-    """Build the router for the caller's GlobalHub role definitions.
+    """Build the router for the caller's GlobalHub roles and role sessions.
 
-    :param store: Where each user's role overrides persist.
+    :param stores: Where role overrides and role sessions persist.
     :param auth_provider: Identifies the caller; ``None`` is single-user mode.
     :returns: A configured :class:`APIRouter`.
     """
     router = APIRouter()
+    store = stores.user_settings_store
 
     @router.get("/agent-tasks/roles/profiles", response_model=GlobalHubRoleProfileList)
     async def list_role_profiles(
@@ -93,6 +96,30 @@ def create_agent_task_roles_router(
             return role_definition(defined_role, overrides)
 
         return _profile_detail(await asyncio.to_thread(update))
+
+    @router.post("/agent-tasks/roles/{role}/session", response_model=GlobalHubRoleSessionResponse)
+    async def ensure_caller_role_session(
+        request: Request, role: str
+    ) -> GlobalHubRoleSessionResponse:
+        """Return the caller's broker or custodian session, creating it when needed.
+
+        The session runs on the caller's GlobalHub host and workspace. Each user
+        has one broker and one custodian session, but may have several managers,
+        each with its own session that the user's broker creates.
+        """
+        user_id = require_user(request, auth_provider)
+        defined_role = _require_role(role)
+        if not defined_role.singleton:
+            raise OmnigentError(
+                f"GlobalHub role {defined_role.key!r} has a session per manager, not one per user",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        session, created = await ensure_role_session(defined_role, user_id=user_id, stores=stores)
+        if created:
+            _announce_session_added(user_id, session.id)
+        return GlobalHubRoleSessionResponse(
+            role=defined_role.key, session_id=session.id, created=created
+        )
 
     return router
 

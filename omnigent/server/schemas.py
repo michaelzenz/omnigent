@@ -5888,6 +5888,17 @@ class GlobalHubRoleProfileList(BaseModel):
     data: list[GlobalHubRoleProfile]
 
 
+class GlobalHubRoleSessionResponse(BaseModel):
+    """The caller's session for a singleton GlobalHub role.
+
+    ``created`` is true when this request created the session.
+    """
+
+    role: str
+    session_id: str
+    created: bool
+
+
 class UpdateGlobalHubRoleProfileRequest(BaseModel):
     """Override fields of the caller's role definition.
 

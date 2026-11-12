@@ -3465,6 +3465,30 @@
         "title": "GlobalHubRoleProfileList",
         "type": "object"
       },
+      "GlobalHubRoleSessionResponse": {
+        "description": "The caller's session for a singleton GlobalHub role.\n\n`created` is true when this request created the session.",
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "session_id",
+          "created"
+        ],
+        "title": "GlobalHubRoleSessionResponse",
+        "type": "object"
+      },
       "GlobalHubSettingsRequest": {
         "additionalProperties": false,
         "description": "Set where the caller's GlobalHub role sessions run; null for both clears it.\n\nThe host must be one of the caller's own hosts and online, and the workspace\nan existing directory on it; the server stores the canonical path.",
@@ -13996,6 +14020,49 @@
           }
         },
         "summary": "Update Role Profile",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/roles/{role}/session": {
+      "post": {
+        "description": "Return the caller's broker or custodian session, creating it when needed.\n\nThe session runs on the caller's GlobalHub host and workspace. Managers\nhave no per-user session; the broker creates one per manager.",
+        "operationId": "ensure_caller_role_session_v1_agent_tasks_roles__role__session_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "title": "Role",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalHubRoleSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ensure Caller Role Session",
         "tags": [
           "agent-tasks"
         ]

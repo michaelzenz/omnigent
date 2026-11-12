@@ -33,6 +33,7 @@ from starlette.routing import Match, Mount, Route
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from omnigent._platform import resolve_repo_symlink
+from omnigent.agent_tasks.role_sessions import RoleSessionStores
 from omnigent.db.db_models import InvalidUuidError
 from omnigent.debug_logging import (
     add_audit_attrs,
@@ -4146,7 +4147,16 @@ def create_app(
             tags=["settings"],
         )
         app.include_router(
-            create_agent_task_roles_router(user_settings_store, auth_provider),
+            create_agent_task_roles_router(
+                RoleSessionStores(
+                    conversation_store=conversation_store,
+                    agent_store=agent_store,
+                    user_settings_store=user_settings_store,
+                    project_store=project_store,
+                    permission_store=permission_store,
+                ),
+                auth_provider,
+            ),
             prefix="/v1",
             tags=["agent-tasks"],
         )

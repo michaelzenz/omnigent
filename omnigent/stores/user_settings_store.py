@@ -56,6 +56,8 @@ _MAX_ROLE_OVERRIDE_BYTES = (
     + GLOBALHUB_ROLE_MODEL_MAX_CHARS
     + GLOBALHUB_ROLE_MANUAL_MAX_CHARS
 ) * _JSON_MAX_BYTES_PER_CHAR + 256
+GLOBALHUB_ROLE_SESSION_PREFERENCE_PREFIX = "globalhub_role_session:"
+_MAX_SESSION_ID_BYTES = 256
 
 
 @dataclass(frozen=True)
@@ -189,6 +191,41 @@ class UserSettingsStore:
             "save_globalhub_role_overrides",
             GLOBALHUB_ROLE_PREFERENCE_PREFIX + role_key,
             json.dumps(dict(overrides)) if overrides else None,
+            user_id=user_id,
+        )
+
+    def get_globalhub_role_session(self, role_key: str, *, user_id: str | None) -> str | None:
+        """Return the user's session id for a singleton GlobalHub role, or ``None``.
+
+        Singleton roles only (the broker and custodian), which have one session
+        per user. Managers have a session each and are not tracked here.
+
+        :param role_key: The singleton role's API key, e.g. ``"broker"``.
+        :param user_id: The user, or ``None`` in single-user mode.
+        """
+        return self._read(
+            "read_globalhub_role_session",
+            GLOBALHUB_ROLE_SESSION_PREFERENCE_PREFIX + role_key,
+            user_id=user_id,
+            max_decoded_bytes=_MAX_SESSION_ID_BYTES,
+        )
+
+    def save_globalhub_role_session(
+        self, role_key: str, session_id: str, *, user_id: str | None
+    ) -> None:
+        """Record the user's session for a singleton GlobalHub role.
+
+        Singleton roles only (the broker and custodian): saving again replaces
+        the recorded session, so a role with several sessions cannot use this.
+
+        :param role_key: The singleton role's API key, e.g. ``"broker"``.
+        :param session_id: The role session, e.g. ``"conv_abc123"``.
+        :param user_id: The user, or ``None`` in single-user mode.
+        """
+        self._write(
+            "save_globalhub_role_session",
+            GLOBALHUB_ROLE_SESSION_PREFERENCE_PREFIX + role_key,
+            session_id,
             user_id=user_id,
         )
 

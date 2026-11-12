@@ -1,7 +1,8 @@
-"""Tests for the caller-scoped settings routes (``/v1/settings``) and role definitions."""
+"""Tests for the caller-scoped settings routes (``/v1/settings``) and GlobalHub roles."""
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+from omnigent.agent_tasks.session_labels import CUSTODIAN_ROLE_VALUE, ROLE_LABEL
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.app import create_app
 from omnigent.server.auth import UnifiedAuthProvider
@@ -26,6 +28,7 @@ GLOBALHUB_ROUTE = "/v1/settings/globalhub"
 GLOBALHUB_UNSET = {"host_id": None, "workspace": None}
 ROLE_PROFILES_ROUTE = "/v1/agent-tasks/roles/profiles"
 MANAGER_PROFILE_ROUTE = "/v1/agent-tasks/roles/manager:default/profile"
+CUSTODIAN_SESSION_ROUTE = "/v1/agent-tasks/roles/custodian/session"
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
 
@@ -212,6 +215,44 @@ async def test_role_profiles_are_private_to_each_user(
     assert bob.json()["customized"] == []
 
 
+async def test_role_session_route_creates_then_reuses_the_custodian_session(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, db_uri: str
+) -> None:
+    host_id = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+    SqlAlchemyAgentStore(db_uri).create(
+        uuid.uuid4().hex, "onih-custodian", "bundles/onih-custodian.tar.gz"
+    )
+    unplaced = await client.post(CUSTODIAN_SESSION_ROUTE)
+
+    async def canonical_workspace(**_kwargs: object) -> str:
+        return "/Users/alice/globalhub"
+
+    monkeypatch.setattr(
+        user_settings, "validate_uploaded_bundle_host_workspace", canonical_workspace
+    )
+    placed = await client.put(
+        GLOBALHUB_ROUTE, json={"host_id": host_id, "workspace": "/Users/alice/globalhub"}
+    )
+    assert placed.status_code == 200, placed.text
+
+    first = await client.post(CUSTODIAN_SESSION_ROUTE)
+    second = await client.post(CUSTODIAN_SESSION_ROUTE)
+    manager = await client.post("/v1/agent-tasks/roles/manager:default/session")
+
+    assert unplaced.status_code == 400
+    assert first.status_code == 200, first.text
+    assert (first.json()["created"], second.json()["created"]) == (True, False)
+    assert second.json()["session_id"] == first.json()["session_id"]
+    assert manager.status_code == 400
+    session = SqlAlchemyConversationStore(db_uri).get_conversation(first.json()["session_id"])
+    assert session is not None
+    assert (session.title, session.labels[ROLE_LABEL], session.host_id) == (
+        "Task custodian",
+        CUSTODIAN_ROLE_VALUE,
+        host_id,
+    )
+
+
 async def test_info_advertises_capability(client: httpx.AsyncClient) -> None:
     info = await client.get("/v1/info")
 
@@ -239,3 +280,4 @@ async def test_requires_authenticated_user(multi_user_client: httpx.AsyncClient)
     assert (await multi_user_client.get(ROLE_PROFILES_ROUTE)).status_code == 401
     manual = await multi_user_client.put(MANAGER_PROFILE_ROUTE, json={"manual": "x"})
     assert manual.status_code == 401
+    assert (await multi_user_client.post(CUSTODIAN_SESSION_ROUTE)).status_code == 401
