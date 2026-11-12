@@ -11159,6 +11159,7 @@ def _reject_server_reserved_label_seed(labels: dict[str, str] | None) -> None:
             "MCP selection must be changed through the session MCP endpoint",
             code=ErrorCode.INVALID_INPUT,
         )
+    from omnigent.agent_tasks.session_labels import ROLE_LABEL
     from omnigent.server.routes._host_worktree import WORKTREE_ROOT_LABEL_KEY
     from omnigent.stores.conversation_store import (
         CREATED_BY_SESSION_LABEL_KEY,
@@ -11177,6 +11178,8 @@ def _reject_server_reserved_label_seed(labels: dict[str, str] | None) -> None:
         SCHEDULED_TASK_SOURCE_LABEL_KEY,
         SCHEDULED_TASK_WORKTREE_SOURCE_LABEL_KEY,
         CREATED_BY_SESSION_LABEL_KEY,
+        # Selects the GlobalHub role manual attached to every turn.
+        ROLE_LABEL,
     ):
         if key in labels:
             raise OmnigentError(

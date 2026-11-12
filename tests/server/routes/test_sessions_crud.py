@@ -19,6 +19,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
+from omnigent.agent_tasks.session_labels import MANAGER_ROLE_VALUE, ROLE_LABEL
 from omnigent.db.utils import generate_agent_id
 from omnigent.entities import USER_SESSION_TITLE_MAX_CHARS
 from omnigent.harnesses.opencode_native.app_server import OpenCodeNativeServer
@@ -786,6 +787,27 @@ async def test_patch_rejects_client_supplied_sandbox_labels(
         conv = conv_store.get_conversation(session_id)
         assert conv is not None
         assert key not in conv.labels
+
+
+async def test_patch_rejects_client_supplied_role_label(
+    client: httpx.AsyncClient,
+    session_id: str,
+    db_uri: str,
+) -> None:
+    """``omnigent.role`` marks a GlobalHub role session and selects the manual
+    the server attaches to its turns, so only the server may set it."""
+    conv_store = SqlAlchemyConversationStore(db_uri)
+
+    resp = await client.patch(
+        f"/v1/sessions/{session_id}",
+        json={"labels": {ROLE_LABEL: MANAGER_ROLE_VALUE}},
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert resp.status_code == 400
+    conv = conv_store.get_conversation(session_id)
+    assert conv is not None
+    assert ROLE_LABEL not in conv.labels
 
 
 async def test_patch_rejects_client_supplied_side_chat_thread_id_label(

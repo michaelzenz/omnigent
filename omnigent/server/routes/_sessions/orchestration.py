@@ -27,6 +27,7 @@ from fastapi import (
 from fastapi.responses import Response
 from pydantic import ValidationError
 
+from omnigent.agent_tasks.role_manuals import role_turn_instructions
 from omnigent.cli_invocation import cli_invocation
 from omnigent.db.utils import generate_agent_id, generate_task_id
 from omnigent.db.workspace_cache import WorkspaceScopedCache
@@ -7582,6 +7583,11 @@ async def _forward_event_to_runner(
     }
     if agent_revision is not None:
         runner_body["agent_revision"] = agent_revision
+    if body.type == "message":
+        # A role session's manual rides every turn and never enters history.
+        role_instructions = role_turn_instructions(conv.labels, runner_body.get("instructions"))
+        if role_instructions is not None:
+            runner_body["instructions"] = role_instructions
     # Persist the turn-initiating actor so /policies/evaluate and MCP
     # tools/call can read it back on any server replica.  Skip system-driven
     # forwards (sub-agent results, parent-wake carry created_by=None) — they

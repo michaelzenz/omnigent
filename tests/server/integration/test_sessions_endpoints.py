@@ -29,6 +29,8 @@ import pytest
 from fastapi import FastAPI
 from starlette.datastructures import Headers
 
+from omnigent.agent_tasks.role_manuals import default_role_manual
+from omnigent.agent_tasks.session_labels import MANAGER_ROLE_VALUE, ROLE_LABEL
 from omnigent.entities import (
     USER_SESSION_TITLE_MAX_CHARS,
     MessageData,
@@ -328,6 +330,48 @@ async def test_first_message_schedules_background_semantic_title(
     await coordinator.wait_for_idle()
     snapshot = await client.get(f"/v1/sessions/{session['id']}")
     assert snapshot.json()["title"] == "Debug authentication timeout"
+
+
+async def test_role_session_message_carries_role_manual_outside_history(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    db_uri: str,
+) -> None:
+    """A role session's manual rides each forwarded turn but is never persisted."""
+    forwarded: list[dict[str, Any]] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path.endswith("/events"):
+            forwarded.append(json.loads(request.content))
+        return httpx.Response(202, json={"queued": True})
+
+    agent = await create_test_agent(client)
+    role_session = await _create_session(client, agent["id"])
+    plain_session = await _create_session(client, agent["id"])
+    SqlAlchemyConversationStore(db_uri).set_labels(
+        role_session["id"], {ROLE_LABEL: MANAGER_ROLE_VALUE}
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(_handler), base_url="http://runner"
+    ) as fake_runner:
+        _route_to_runner(monkeypatch, fake_runner)
+        for session in (role_session, plain_session):
+            response = await client.post(
+                f"/v1/sessions/{session['id']}/events",
+                json={
+                    "type": "message",
+                    "data": {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "route these events"}],
+                    },
+                },
+            )
+            assert response.status_code == 202, response.text
+
+    assert forwarded[0]["instructions"] == default_role_manual(MANAGER_ROLE_VALUE)
+    assert "instructions" not in forwarded[1]
+    items = await client.get(f"/v1/sessions/{role_session['id']}/items")
+    assert "Task manager manual" not in json.dumps(items.json()["data"])
 
 
 async def test_create_titled_session_keeps_title_after_first_message(
