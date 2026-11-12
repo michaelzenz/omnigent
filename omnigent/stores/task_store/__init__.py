@@ -120,4 +120,4 @@ class TaskStore(ABC):
 
     @abstractmethod
     def delete(self, task_id: str, *, owner_user_id: str | None) -> bool:
-        """Permanently delete the owner's task; return whether it existed."""
+        """Permanently delete the owner's task and its workers; return whether it existed."""

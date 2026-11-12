@@ -958,6 +958,52 @@ class SqlManager(OmnigentBase):
     )
 
 
+class SqlWorker(OmnigentBase):
+    """
+    SQLAlchemy model for the ``workers`` table: sessions working on GlobalHub tasks.
+
+    A worker wraps one session for one task. The session's own status (busy,
+    waiting for the user, gone) is read from the session, never copied here.
+    Ownership is stamped on the row; there are no foreign keys (Rule R032).
+
+    :param id: Uuid16 primary key (bare 32-char hex in Python).
+    :param task_id: The task this worker serves. A session working on several
+        tasks has one worker per task.
+    :param owner_user_id: Owning user (the task's owner), or ``None`` in
+        single-user mode.
+    :param session_id: The wrapped session.
+    :param title: Short label for the session's recent work on this task,
+        maintained by the manager.
+    :param created_at: When the session was attached to the task.
+    :param updated_at: Unix epoch seconds of the last change, or ``None``.
+    """
+
+    __tablename__ = "workers"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    session_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        # One worker per session per task; also serves a task's roster.
+        Index("ix_workers_task_session", "workspace_id", "task_id", "session_id", unique=True),
+        # The tasks a session works on.
+        Index("ix_workers_session", "workspace_id", "session_id"),
+    )
+
+
 class SqlConversation(ConversationBase):
     """
     SQLAlchemy model for the ``conversations`` table.

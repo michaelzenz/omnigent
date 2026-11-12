@@ -42,7 +42,7 @@ from omnigent.entities.session_resources import (
     get_resource_by_id,
     resolve_terminal_entry_by_resource_id,
 )
-from omnigent.entities.task import Manager, Task
+from omnigent.entities.task import Manager, Task, Worker
 
 __all__ = [
     "DEFAULT_ENVIRONMENT_ID",
@@ -85,6 +85,7 @@ __all__ = [
     "StoredFile",
     "Task",
     "TerminalCommandData",
+    "Worker",
     "filter_resources_by_type",
     "get_resource_by_id",
     "parse_item_data",
