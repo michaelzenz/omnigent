@@ -158,6 +158,18 @@ def _create_search_conversations(config: dict[str, str]) -> Tool:
     return SearchConversationsTool()
 
 
+def _create_session_delete(config: dict[str, str]) -> Tool:
+    """
+    Lazy factory for SysSessionDeleteTool.
+
+    :param config: Tool config (unused).
+    :returns: A SysSessionDeleteTool instance.
+    """
+    from omnigent.tools.builtins.session_delete import SysSessionDeleteTool
+
+    return SysSessionDeleteTool()
+
+
 def _create_list_files(config: dict[str, str]) -> Tool:
     """
     Lazy factory for ListFilesTool.
@@ -267,6 +279,7 @@ _BUILTIN_REGISTRY: dict[str, _BuiltinFactory | None] = {
     "list_files": _create_list_files,
     "download_file": _create_download_file,
     "search_conversations": _create_search_conversations,
+    "sys_session_delete": _create_session_delete,
     "export_agent": _create_export_agent,
     # Framework-owned: need runtime context. ``web_fetch`` is
     # constructed by ToolManager before reaching this registry.

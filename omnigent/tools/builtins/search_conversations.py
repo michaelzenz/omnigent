@@ -9,6 +9,12 @@ from omnigent.tools.base import Tool, ToolContext
 from omnigent.tools.builtins._arguments import parse_json_object_arguments
 
 _MAX_SEARCH_RESULTS = 100
+_DESCRIPTION = (
+    "Search past conversations by title and message text. Use this to recall "
+    "details from prior interactions — e.g. decisions made, code reviewed, "
+    "files created, or facts discussed. Returns the matching conversations "
+    "with the text that matched."
+)
 
 
 class SearchConversationsTool(Tool):
@@ -33,13 +39,7 @@ class SearchConversationsTool(Tool):
         """
         :returns: Human-readable description of the tool.
         """
-        return (
-            "Search past conversations for relevant information. "
-            "Use this to recall details from prior interactions — "
-            "e.g. decisions made, code reviewed, files created, "
-            "or facts discussed. Returns matching messages ranked "
-            "by relevance with surrounding context."
-        )
+        return _DESCRIPTION
 
     def get_schema(self) -> dict[str, Any]:
         """
@@ -51,13 +51,7 @@ class SearchConversationsTool(Tool):
             "type": "function",
             "function": {
                 "name": "search_conversations",
-                "description": (
-                    "Search past conversations for relevant information. "
-                    "Use this to recall details from prior interactions — "
-                    "e.g. decisions made, code reviewed, files created, "
-                    "or facts discussed. Returns matching messages ranked "
-                    "by relevance with surrounding context."
-                ),
+                "description": _DESCRIPTION,
                 "parameters": {
                     "type": "object",
                     "properties": {

@@ -87,6 +87,8 @@ from omnigent.tools.builtins.os_env import (
     SysOsShellTool,
     SysOsWriteTool,
 )
+from omnigent.tools.builtins.search_conversations import SearchConversationsTool
+from omnigent.tools.builtins.session_delete import SysSessionDeleteTool
 from omnigent.tools.builtins.session_message import (
     SysSessionMessageTool,
     peer_session_messaging_enabled,
@@ -343,6 +345,10 @@ _PROJECT_TOOLS = frozenset(
         SysProjectUpdateTool.name(),
     }
 )
+# Searches the sidebar's session index, scoped to what the caller can see.
+_CONVERSATION_SEARCH_TOOLS = frozenset({SearchConversationsTool.name()})
+# Opt-in owner-gated delete; only specs that declare it register it.
+_SESSION_DELETE_TOOLS = frozenset({SysSessionDeleteTool.name()})
 _UI_TOOLS = frozenset({UiOpenFileTool.name()})
 
 # The title bound the rename tool advertises to the LLM — read once from the
@@ -928,6 +934,8 @@ _ALL_LOCAL_TOOLS = (
     | _SESSION_QUERY_TOOLS
     | _SESSION_SELF_WRITE_TOOLS
     | _PROJECT_TOOLS
+    | _CONVERSATION_SEARCH_TOOLS
+    | _SESSION_DELETE_TOOLS
     | _UI_TOOLS
     | _WEB_FETCH_TOOLS
     | _WEB_SEARCH_TOOLS
@@ -7396,6 +7404,14 @@ async def execute_tool(
                 SysProjectUpdateTool.name(): execute_project_update,
             }[tool_name]
             output = await execute(args, server_client, conversation_id)
+        elif tool_name in _CONVERSATION_SEARCH_TOOLS:
+            from omnigent.runner.session_projects import execute_search_conversations
+
+            output = await execute_search_conversations(args, server_client)
+        elif tool_name in _SESSION_DELETE_TOOLS:
+            from omnigent.runner.session_projects import execute_session_delete
+
+            output = await execute_session_delete(args, server_client, conversation_id)
         elif tool_name in _SESSION_CREATE_TOOLS:
             output = await _execute_session_create(
                 args,

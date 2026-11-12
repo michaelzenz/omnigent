@@ -20,6 +20,8 @@ from omnigent.tools.builtins.session_projects import (
 )
 
 _DEFAULT_LISTED_SESSIONS = 50
+_DEFAULT_SEARCH_RESULTS = 10
+_MAX_SEARCH_RESULTS = 100
 _SNAPSHOT_PARAMS = {"include_items": "false", "include_liveness": "false"}
 # The shared-runner check reads only the caller's runner binding.
 _CALLER_RUNNER_PARAMS = {
@@ -216,6 +218,60 @@ def _http_error(tool_name: str, response: httpx.Response) -> str:
             "detail": response.text[:1000],
         }
     )
+
+
+async def execute_search_conversations(
+    args: dict[str, Any], client: httpx.AsyncClient | None
+) -> str:
+    """
+    Search the sessions the caller can see by title and chat content.
+
+    Uses the sidebar's session search, so results follow its access rules.
+    Sub-agent and archived sessions are included, and a content match carries
+    an excerpt of the matched text.
+
+    :param args: Tool arguments: ``query`` and an optional ``limit``.
+    :param client: HTTP client pointed at the Omnigent server.
+    :returns: JSON with one ``results`` entry per matching session.
+    """
+    if client is None:
+        return json.dumps({"error": "search_conversations requires server access"})
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip() or len(query) > MAX_SEARCH_LENGTH:
+        return json.dumps({"error": f"query must be text of 1 to {MAX_SEARCH_LENGTH} characters"})
+    limit = args.get("limit", _DEFAULT_SEARCH_RESULTS)
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        return json.dumps({"error": "limit must be a positive integer"})
+    params: dict[str, str | int] = {
+        "search_query": query.strip(),
+        "visibility": "all",
+        "kind": "any",
+        "include_archived": "true",
+        "sort_by": "updated_at",
+        "limit": min(limit, _MAX_SEARCH_RESULTS),
+    }
+    try:
+        response = await client.get("/v1/sessions", params=params, timeout=30.0)
+    except httpx.HTTPError as exc:
+        return json.dumps({"error": f"search_conversations: server unreachable: {exc}"})
+    if response.is_error:
+        return _http_error("search_conversations", response)
+    results = []
+    for session in response.json().get("data", []):
+        entry: dict[str, Any] = {
+            "session_id": session.get("id"),
+            "title": session.get("title"),
+            "status": session.get("status"),
+            "updated_at": session.get("updated_at"),
+        }
+        if session.get("search_snippet"):
+            entry["excerpt"] = session["search_snippet"]
+        if session.get("archived") is True:
+            entry["archived"] = True
+        results.append(entry)
+    if not results:
+        return json.dumps({"results": [], "message": "No matching conversations found."})
+    return json.dumps({"results": results})
 
 
 async def execute_project_list(
@@ -441,10 +497,76 @@ def _unchecked_server_error(tool_name: str, where: str) -> str:
     )
 
 
+async def execute_session_delete(
+    args: dict[str, Any], client: httpx.AsyncClient | None, source_id: str | None
+) -> str:
+    """
+    Permanently delete one of the owner's sessions through the sidebar's delete.
+
+    ``DELETE /v1/sessions/{id}`` requires owner access and tears down the
+    session's tasks, runner resources, files and history. The calling session
+    cannot delete itself, nor a session whose teardown would stop its runner
+    mid-turn.
+
+    :param args: Tool arguments: ``session_id`` and an optional ``delete_branch``.
+    :param client: HTTP client pointed at the Omnigent server.
+    :param source_id: The calling session.
+    :returns: JSON with ``session_id`` and ``status``, or ``session_id`` and ``error``.
+    """
+    session_id = args.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return json.dumps({"error": "session_id must be a session ID"})
+    delete_branch = args.get("delete_branch", False)
+    if not isinstance(delete_branch, bool):
+        return json.dumps(
+            {"session_id": session_id, "error": "delete_branch must be true or false"}
+        )
+    try:
+        canonical = normalize_session_id(session_id)
+    except ValueError:
+        return json.dumps({"session_id": session_id, "error": "invalid session ID"})
+    if client is None or source_id is None:
+        return json.dumps({"error": "sys_session_delete requires an authenticated runner"})
+    if _same_session(canonical, source_id):
+        return json.dumps({"session_id": session_id, "error": "a session cannot delete itself"})
+    try:
+        snapshot = await client.get(
+            f"/v1/sessions/{canonical}", params=_SNAPSHOT_PARAMS, timeout=30.0
+        )
+        if snapshot.is_error:
+            return json.dumps({"session_id": session_id, "error": _refusal(snapshot)})
+        target = snapshot.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        return json.dumps({"session_id": session_id, "error": f"session could not be read: {exc}"})
+    level = target.get("permission_level")
+    if isinstance(level, int) and level < LEVEL_OWNER:
+        return json.dumps(
+            {"session_id": session_id, "error": "only the session's owner can delete it"}
+        )
+    if await _shares_runner(client, target, source_id):
+        return json.dumps(
+            {
+                "session_id": session_id,
+                "error": "this session shares the calling session's runner; deleting it "
+                "would stop this session too",
+            }
+        )
+    params = {"delete_branch": "true"} if delete_branch else None
+    try:
+        response = await client.delete(f"/v1/sessions/{canonical}", params=params, timeout=60.0)
+    except httpx.HTTPError as exc:
+        return json.dumps(
+            {"session_id": session_id, "error": f"sys_session_delete: server unreachable: {exc}"}
+        )
+    if response.is_error:
+        return json.dumps({"session_id": session_id, "error": _refusal(response)})
+    return json.dumps({"session_id": session_id, "status": "deleted"})
+
+
 async def _shares_runner(
     client: httpx.AsyncClient, target: dict[str, Any], source_id: str
 ) -> bool:
-    """Whether archiving *target* would stop the calling session's runner too.
+    """Whether archiving or deleting *target* would stop the calling session's runner too.
 
     A side chat can run on its parent's runner, so the archive stop of one
     tears down the other. An unreadable caller counts as shared.

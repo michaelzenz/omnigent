@@ -5,12 +5,16 @@ import json
 import httpx
 import pytest
 
+from omnigent.runner import tool_dispatch
 from omnigent.runner.identity import ORCHESTRATION_SOURCE_HEADER
 from omnigent.runner.session_projects import (
     execute_project_list,
     execute_project_update,
+    execute_search_conversations,
+    execute_session_delete,
     execute_session_update,
 )
+from omnigent.server.auth import LEVEL_OWNER
 
 pytestmark = pytest.mark.asyncio
 
@@ -867,3 +871,143 @@ async def test_project_rename_does_not_move_sessions_from_a_reused_old_name():
         f"/v1/projects/{PROJECT_ID}",
         f"/v1/sessions/{PARENT}",
     ]
+
+
+async def test_search_conversations_returns_matches_with_their_excerpts():
+    """The runner runs it through the sidebar search, sub-agents and archive included."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": SOURCE, "title": "Q3 planning", "status": "idle", "updated_at": 2},
+                    {
+                        "id": SUB_AGENT,
+                        "title": "worker",
+                        "status": "idle",
+                        "updated_at": 1,
+                        "search_snippet": "...the Q3 launch slipped...",
+                        "archived": True,
+                    },
+                ]
+            },
+        )
+
+    async with _client(handler) as client:
+        result = json.loads(
+            await execute_search_conversations({"query": " Q3 ", "limit": 500}, client)
+        )
+
+    assert tool_dispatch.should_dispatch_locally("search_conversations")
+    assert dict(requests[0].url.params) == {
+        "search_query": "Q3",
+        "visibility": "all",
+        "kind": "any",
+        "include_archived": "true",
+        "sort_by": "updated_at",
+        "limit": "100",
+    }
+    assert result == {
+        "results": [
+            {"session_id": SOURCE, "title": "Q3 planning", "status": "idle", "updated_at": 2},
+            {
+                "session_id": SUB_AGENT,
+                "title": "worker",
+                "status": "idle",
+                "updated_at": 1,
+                "excerpt": "...the Q3 launch slipped...",
+                "archived": True,
+            },
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        ({}, "query must be text"),
+        ({"query": "  "}, "query must be text"),
+        ({"query": "x" * 201}, "query must be text"),
+        ({"query": "Q3", "limit": 0}, "limit must be a positive integer"),
+        ({"query": "Q3", "limit": True}, "limit must be a positive integer"),
+    ],
+)
+async def test_search_conversations_rejects_bad_arguments_without_a_request(args, message):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"unexpected request {request.url}")
+
+    async with _client(handler) as client:
+        result = json.loads(await execute_search_conversations(args, client))
+
+    assert message in result["error"]
+
+
+def _delete_server(requests: list[httpx.Request], target: dict):
+    """Serve the target and caller snapshots, and accept any DELETE."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "DELETE":
+            return httpx.Response(200, json={"id": target["id"], "deleted": True})
+        if request.url.path == f"/v1/sessions/{target['id']}":
+            return httpx.Response(200, json=target)
+        if request.url.path == f"/v1/sessions/{SOURCE}":
+            return httpx.Response(200, json={"id": SOURCE, "runner_id": "caller-runner"})
+        return httpx.Response(404, json={"detail": "Conversation not found"})
+
+    return handler
+
+
+async def test_session_delete_removes_an_owned_session_and_its_branch():
+    requests: list[httpx.Request] = []
+    target = {"id": FAMILY_MEMBER, "permission_level": LEVEL_OWNER, "runner_id": "other-runner"}
+
+    async with _client(_delete_server(requests, target)) as client:
+        result = json.loads(
+            await execute_session_delete(
+                {"session_id": FAMILY_MEMBER, "delete_branch": True}, client, SOURCE
+            )
+        )
+
+    assert tool_dispatch.should_dispatch_locally("sys_session_delete")
+    assert result == {"session_id": FAMILY_MEMBER, "status": "deleted"}
+    deletes = [r for r in requests if r.method == "DELETE"]
+    assert [r.url.path for r in deletes] == [f"/v1/sessions/{FAMILY_MEMBER}"]
+    assert dict(deletes[0].url.params) == {"delete_branch": "true"}
+
+
+@pytest.mark.parametrize(
+    ("args", "target", "message"),
+    [
+        ({}, {"id": FAMILY_MEMBER}, "session_id must be"),
+        (
+            {"session_id": FAMILY_MEMBER, "delete_branch": "yes"},
+            {"id": FAMILY_MEMBER},
+            "delete_branch must be true or false",
+        ),
+        ({"session_id": SOURCE}, {"id": SOURCE}, "a session cannot delete itself"),
+        ({"session_id": MISSING}, {"id": FAMILY_MEMBER}, "session not found or not visible"),
+        (
+            {"session_id": FAMILY_MEMBER},
+            {"id": FAMILY_MEMBER, "permission_level": LEVEL_OWNER - 1},
+            "only the session's owner can delete it",
+        ),
+        (
+            {"session_id": FAMILY_MEMBER},
+            {"id": FAMILY_MEMBER, "permission_level": LEVEL_OWNER, "runner_id": "caller-runner"},
+            "shares the calling session's runner",
+        ),
+    ],
+    ids=["no-id", "bad-branch-flag", "itself", "not-found", "not-owner", "shared-runner"],
+)
+async def test_session_delete_refuses_without_deleting(args, target, message):
+    requests: list[httpx.Request] = []
+
+    async with _client(_delete_server(requests, target)) as client:
+        result = json.loads(await execute_session_delete(args, client, SOURCE))
+
+    assert message in result["error"]
+    assert not [r for r in requests if r.method == "DELETE"]

@@ -1794,3 +1794,16 @@ def test_allowed_builtin_tools_drops_unnamed_builtins_but_not_client_tools(
     mgr = ToolManager(spec, client_tool_specs=[_make_client_side_spec("get_weather")])
 
     assert set(mgr.get_tool_names()) == {*allowed, "get_weather"}
+
+
+def test_sys_session_delete_registers_only_when_declared() -> None:
+    """Deleting sessions is destructive, so no agent gets it without declaring it."""
+    declared = AgentSpec(
+        spec_version=1,
+        skills_filter="none",
+        tools=ToolsConfig(builtins=[BuiltinToolConfig(name="sys_session_delete")]),
+    )
+    undeclared = AgentSpec(spec_version=1, skills_filter="none")
+
+    assert "sys_session_delete" in ToolManager(declared).get_tool_names()
+    assert "sys_session_delete" not in ToolManager(undeclared).get_tool_names()

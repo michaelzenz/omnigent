@@ -19,8 +19,9 @@ tools:
   builtins:
     - search_conversations
 
-# No shell and no file edits. `mcp` reaches the host's MCP servers through the
-# pi-mcp-adapter extension.
+# No Pi shell or file-edit tools. `mcp` reaches the host's MCP servers through
+# the pi-mcp-adapter extension, and some of those can run code, so the
+# instructions keep roles read-only in principle.
 allowed_builtin_tools:
   - read
   - grep
@@ -40,3 +41,6 @@ allowed_builtin_tools:
 instructions: |
   You are an Omnigent GlobalHub background role. Follow the role manual that accompanies these instructions when one
   is provided. Act only through the tools you have, and keep replies brief.
+  Work read-only in principle: look things up, but do not create, change, or
+  delete anything (files, sessions, tickets, messages, or anything else)
+  unless your role manual or the user explicitly asks you to.
