@@ -840,6 +840,72 @@ class SqlProject(OmnigentBase):
     )
 
 
+class SqlTask(OmnigentBase):
+    """
+    SQLAlchemy model for the ``tasks`` table: tasks on a GlobalHub board.
+
+    A task is a long-lived unit of work on one user's board, owned by one
+    manager. Like ``projects``, ownership is stamped on the row and every read
+    is scoped to the owner. There are no foreign keys (Rule R032).
+
+    :param id: Uuid16 primary key (bare 32-char hex in Python).
+    :param manager_id: The manager that owns the task, or ``None`` before one
+        is assigned.
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param title: Short title shown on the board card.
+    :param description: The user-facing overview the manager maintains.
+    :param internal_note: Agent-facing context the manager maintains.
+    :param goal: The end state the task should reach.
+    :param state: A ``TASK_STATE`` code.
+    :param priority: Priority from 0 to 3.
+    :param queue_rank: Board order among the owner's tasks; higher ranks list
+        first.
+    :param created_at: Unix epoch seconds at row creation.
+    :param updated_at: Unix epoch seconds of the last change, or ``None``.
+    :param resolved_at: When the task entered ``agent-resolved``, or ``None``.
+    """
+
+    __tablename__ = "tasks"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    manager_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    internal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    goal: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="2")
+    queue_rank: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    resolved_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 3, 4, 5)", name="ck_tasks_state"),
+        CheckConstraint("priority BETWEEN 0 AND 3", name="ck_tasks_priority"),
+        # One owner's board, a state column at a time, in rank order.
+        Index(
+            "ix_tasks_owner_board",
+            "workspace_id",
+            "owner_user_id",
+            "state",
+            "queue_rank",
+            "id",
+        ),
+        # A manager's portfolio.
+        Index("ix_tasks_manager", "workspace_id", "manager_id"),
+    )
+
+
 class SqlConversation(ConversationBase):
     """
     SQLAlchemy model for the ``conversations`` table.

@@ -134,6 +134,17 @@ SCHEDULED_TASK_RUN_STATUS: dict[str, int] = {
     "starting": 6,
 }
 
+# GlobalHub tasks. Code 2 was a retired "pending" state; keep the gap so a
+# stored code never changes meaning.
+TASK_STATE: dict[str, int] = {
+    "active": 1,
+    "idle": 3,
+    "archived": 4,
+    # The manager believes the task is done; it sorts to the board's end and
+    # becomes active again when a relevant event lands.
+    "agent-resolved": 5,
+}
+
 
 def _assert_item_type_codes_cover_data_classes() -> None:
     """
@@ -325,6 +336,16 @@ def encode_scheduled_task_state(name: str) -> int:
 def decode_scheduled_task_state(code: int) -> str:
     """Decode a ``scheduled_tasks.state`` int code to its name."""
     return _decode(SCHEDULED_TASK_STATE, code, field="scheduled_tasks.state")
+
+
+def encode_task_state(name: str) -> int:
+    """Encode a ``tasks.state`` name to its int code."""
+    return _encode(TASK_STATE, name, field="tasks.state")
+
+
+def decode_task_state(code: int) -> str:
+    """Decode a ``tasks.state`` int code to its name."""
+    return _decode(TASK_STATE, code, field="tasks.state")
 
 
 def encode_scheduled_task_execution_target(name: str) -> int:
