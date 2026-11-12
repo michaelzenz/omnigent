@@ -44,6 +44,8 @@ describe("selectableSessionAgents", () => {
       agent({ name: "nessie" }),
       agent({ name: "kimi" }),
       agent({ name: "kimi-code" }),
+      agent({ name: "onih-pmv2" }),
+      agent({ name: "onih-custodian" }),
     ]);
     expect(result.map((a) => a.name)).toEqual(["hello"]);
   });

@@ -1,0 +1,21 @@
+spec_version: 1
+name: onih-custodian
+description: >-
+  Onih Pi profile for the GlobalHub session custodian role. Internal: New Chat
+  does not offer it.
+
+executor:
+  type: omnigent
+  # Role sessions start headless, so the profile pins its model.
+  model: databricks-glm-5-3-flash
+  config:
+    harness: pi
+    system_prompt_mode: replace
+
+skills: none
+
+# system_prompt_mode: replace requires non-empty instructions.
+instructions: |
+  You are the Omnigent GlobalHub session custodian. Follow the role manual that
+  accompanies these instructions when one is provided. Act only through the
+  tools you have, and keep replies brief.

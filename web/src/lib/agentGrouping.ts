@@ -97,8 +97,15 @@ export function sortAgentsForDisplay<T extends AvailableAgent>(agents: readonly 
 // Hidden from session-creation pickers. `nessie` is superseded by polly.
 // `kimi` / `kimi-code` are the headless SDK harness (kept for sub-agent /
 // `run --harness kimi` use) — pickers offer only the native TUI
-// (`kimi-native-ui`).
-export const NEW_SESSION_HIDDEN_AGENTS = new Set(["nessie", "kimi", "kimi-code"]);
+// (`kimi-native-ui`). `onih-pmv2` / `onih-custodian` run GlobalHub's background
+// roles, never a user's own session.
+export const NEW_SESSION_HIDDEN_AGENTS = new Set([
+  "nessie",
+  "kimi",
+  "kimi-code",
+  "onih-pmv2",
+  "onih-custodian",
+]);
 
 /**
  * The pickable agent set for session-creation surfaces. The new-session

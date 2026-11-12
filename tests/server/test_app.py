@@ -1675,6 +1675,35 @@ def test_ensure_default_agents_includes_antigravity(seed_stores: _SeedStores) ->
     assert seed_stores.agent_store.get_by_name(ANTIGRAVITY_NATIVE_AGENT_NAME) is not None
 
 
+@pytest.mark.parametrize("name", ["onih-pmv2", "onih-custodian"])
+def test_ensure_default_agents_seeds_onih_role_profiles(
+    seed_stores: _SeedStores, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """
+    Startup seeds the Onih Pi profiles GlobalHub roles bind by name.
+
+    A trimmed roster only hides them. Pi refuses ``system_prompt_mode:
+    replace`` without instructions, and headless role sessions have no
+    picker to choose a model, so each bundle must carry both.
+    """
+    monkeypatch.setenv(SEEDED_AGENTS_ENV, "polly")
+
+    suppressed = server_app._ensure_default_agents(
+        seed_stores.agent_store,
+        seed_stores.artifact_store,
+        seed_stores.agent_cache,
+    )
+
+    assert name in suppressed
+    seeded = seed_stores.agent_store.get_by_name(name)
+    assert seeded is not None
+    spec = seed_stores.agent_cache.load(seeded.id, seeded.bundle_location, expand_env=False).spec
+    assert spec.executor.config.get("harness") == "pi"
+    assert spec.executor.config.get("system_prompt_mode") == "replace"
+    assert spec.instructions and spec.instructions.strip()
+    assert spec.executor.model
+
+
 def test_ensure_default_polly_agent_is_idempotent(seed_stores: _SeedStores) -> None:
     """
     A second seed call is a no-op — it must not register a duplicate.

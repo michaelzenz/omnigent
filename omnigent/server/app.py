@@ -719,6 +719,12 @@ def _error_audit_extra(
 # Windows checkout (where Git leaves it as a stub text file); a no-op elsewhere.
 _DEBBY_BUNDLE_SOURCE = resolve_repo_symlink(Path(_examples_resources.__file__).parent / "debby")
 _POLLY_BUNDLE_SOURCE = resolve_repo_symlink(Path(_examples_resources.__file__).parent / "polly")
+# Internal Onih Pi profiles that GlobalHub roles run on. Real directories under
+# omnigent.resources.examples, so no symlink resolution is needed.
+_ONIH_BUNDLE_SOURCES = {
+    name: Path(_examples_resources.__file__).parent / name
+    for name in ("onih-pmv2", "onih-custodian")
+}
 
 
 class _FastAPICallNext(Protocol):
@@ -1148,6 +1154,7 @@ def _ensure_default_agents(
         | _ensure_default_acp_agents(agent_store, artifact_store, agent_cache, allowlist)
         | _ensure_default_debby_agent(agent_store, artifact_store, agent_cache, allowlist)
         | _ensure_default_polly_agent(agent_store, artifact_store, agent_cache, allowlist)
+        | _ensure_default_onih_agents(agent_store, artifact_store, agent_cache)
     )
     extras = _ensure_extra_builtin_agents(agent_store, artifact_store, agent_cache)
     if allowlist is None:
@@ -1464,6 +1471,23 @@ def _ensure_default_acp_agents(
     return frozenset(owned)
 
 
+def _build_packaged_bundle(source: Path) -> bytes:
+    """
+    Build a gzipped tarball of a packaged agent bundle directory.
+
+    :param source: Bundle directory holding ``config.yaml``, e.g. the
+        packaged ``examples/polly``.
+    :returns: Gzipped tarball bytes suitable for the artifact store.
+    """
+    import tempfile
+
+    from omnigent.spec import materialize_bundle
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bundle_dir = materialize_bundle(source, Path(tmpdir) / "bundle")
+        return _tar_gz_dir(bundle_dir)
+
+
 def _build_debby_bundle() -> bytes:
     """
     Build a gzipped tarball of the ``examples/debby`` agent bundle.
@@ -1474,13 +1498,7 @@ def _build_debby_bundle() -> bytes:
 
     :returns: Gzipped tarball bytes suitable for the artifact store.
     """
-    import tempfile
-
-    from omnigent.spec import materialize_bundle
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        bundle_dir = materialize_bundle(_DEBBY_BUNDLE_SOURCE, Path(tmpdir) / "bundle")
-        return _tar_gz_dir(bundle_dir)
+    return _build_packaged_bundle(_DEBBY_BUNDLE_SOURCE)
 
 
 def _ensure_default_debby_agent(
@@ -1542,13 +1560,7 @@ def _build_polly_bundle() -> bytes:
 
     :returns: Gzipped tarball bytes suitable for the artifact store.
     """
-    import tempfile
-
-    from omnigent.spec import materialize_bundle
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        bundle_dir = materialize_bundle(_POLLY_BUNDLE_SOURCE, Path(tmpdir) / "bundle")
-        return _tar_gz_dir(bundle_dir)
+    return _build_packaged_bundle(_POLLY_BUNDLE_SOURCE)
 
 
 def _ensure_default_polly_agent(
@@ -1599,6 +1611,38 @@ def _ensure_default_polly_agent(
         bundle_bytes=_build_polly_bundle(),
     )
     return owned
+
+
+def _ensure_default_onih_agents(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> frozenset[str]:
+    """
+    Register the internal Onih Pi profiles that GlobalHub roles run on.
+
+    Like the native rows and unlike polly, these are seeded whatever
+    ``OMNIGENT_SEEDED_AGENTS`` says: roles bind them by name, so the
+    allowlist only hides them from ``GET /v1/agents``. The web pickers
+    never offer them.
+
+    :param agent_store: Store for agent metadata.
+    :param artifact_store: Store for agent bundles.
+    :param agent_cache: Cache for loaded agent specs.
+    :returns: The packaged names this helper owns, e.g. ``"onih-pmv2"``.
+    """
+    for name, source in _ONIH_BUNDLE_SOURCES.items():
+        if not (source / "config.yaml").is_file():
+            _logger.warning("%s bundle not found at %s; skipping seed", name, source)
+            continue
+        _ensure_builtin_agent(
+            agent_store,
+            artifact_store,
+            agent_cache,
+            name=name,
+            bundle_bytes=_build_packaged_bundle(source),
+        )
+    return frozenset(_ONIH_BUNDLE_SOURCES)
 
 
 def create_app(
