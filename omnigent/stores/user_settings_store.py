@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,6 +30,9 @@ from omnigent.db.utils import (
 from omnigent.server.auth import RESERVED_USER_LOCAL
 from omnigent.server.server_config import (
     GLOBALHUB_HOST_ID_MAX_CHARS,
+    GLOBALHUB_ROLE_DESCRIPTION_MAX_CHARS,
+    GLOBALHUB_ROLE_MANUAL_MAX_CHARS,
+    GLOBALHUB_ROLE_MODEL_MAX_CHARS,
     GLOBALHUB_WORKSPACE_MAX_CHARS,
     SESSION_TITLE_INSTRUCTIONS_MAX_CHARS,
     normalize_session_title_instructions,
@@ -41,8 +44,18 @@ SESSION_TITLE_INSTRUCTIONS_PREFERENCE_KEY = "session_title_instructions"
 # UTF-8 needs at most four bytes per character.
 _MAX_DECODED_BYTES = SESSION_TITLE_INSTRUCTIONS_MAX_CHARS * 4
 GLOBALHUB_PLACEMENT_PREFERENCE_KEY = "globalhub_placement"
-# JSON-escaping can grow a character to six bytes; the keys add a little more.
-_MAX_PLACEMENT_BYTES = (GLOBALHUB_WORKSPACE_MAX_CHARS + GLOBALHUB_HOST_ID_MAX_CHARS) * 6 + 64
+# json.dumps escapes a character outside the Basic Multilingual Plane (an emoji,
+# say) as a 12-byte surrogate pair; the keys add a little more.
+_JSON_MAX_BYTES_PER_CHAR = 12
+_MAX_PLACEMENT_BYTES = (
+    GLOBALHUB_WORKSPACE_MAX_CHARS + GLOBALHUB_HOST_ID_MAX_CHARS
+) * _JSON_MAX_BYTES_PER_CHAR + 64
+GLOBALHUB_ROLE_PREFERENCE_PREFIX = "globalhub_role:"
+_MAX_ROLE_OVERRIDE_BYTES = (
+    GLOBALHUB_ROLE_DESCRIPTION_MAX_CHARS
+    + GLOBALHUB_ROLE_MODEL_MAX_CHARS
+    + GLOBALHUB_ROLE_MANUAL_MAX_CHARS
+) * _JSON_MAX_BYTES_PER_CHAR + 256
 
 
 @dataclass(frozen=True)
@@ -131,6 +144,51 @@ class UserSettingsStore:
             "save_globalhub_placement",
             GLOBALHUB_PLACEMENT_PREFERENCE_KEY,
             value,
+            user_id=user_id,
+        )
+
+    def get_globalhub_role_overrides(
+        self, role_key: str, *, user_id: str | None
+    ) -> dict[str, str]:
+        """Return the user's saved overrides for one GlobalHub role.
+
+        :param role_key: The role's API key, e.g. ``"manager:default"``.
+        :param user_id: The user, or ``None`` in single-user mode.
+        :returns: Saved values by field name, e.g. ``{"manual": "..."}``; empty
+            when the user saved none or the row is unreadable.
+        """
+        value = self._read(
+            "read_globalhub_role_overrides",
+            GLOBALHUB_ROLE_PREFERENCE_PREFIX + role_key,
+            user_id=user_id,
+            max_decoded_bytes=_MAX_ROLE_OVERRIDE_BYTES,
+        )
+        if value is None:
+            return {}
+        try:
+            stored = json.loads(value)
+        except ValueError:
+            stored = None
+        if not isinstance(stored, dict) or not all(
+            isinstance(field, str) and isinstance(text, str) for field, text in stored.items()
+        ):
+            _logger.warning("stored overrides for GlobalHub role %r are malformed", role_key)
+            return {}
+        return stored
+
+    def save_globalhub_role_overrides(
+        self, role_key: str, overrides: Mapping[str, str], *, user_id: str | None
+    ) -> None:
+        """Replace the user's overrides for one GlobalHub role; empty clears them.
+
+        :param role_key: The role's API key, e.g. ``"manager:default"``.
+        :param overrides: Values by field name, e.g. ``{"model": "..."}``.
+        :param user_id: The user, or ``None`` in single-user mode.
+        """
+        self._write(
+            "save_globalhub_role_overrides",
+            GLOBALHUB_ROLE_PREFERENCE_PREFIX + role_key,
+            json.dumps(dict(overrides)) if overrides else None,
             user_id=user_id,
         )
 

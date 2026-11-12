@@ -1,4 +1,4 @@
-"""Manuals for the GlobalHub background roles.
+"""Per-turn instructions for GlobalHub role sessions.
 
 The server attaches a role session's manual to every turn as per-request
 instructions, so the manual is never stored in the session's history.
@@ -6,54 +6,41 @@ instructions, so the manual is never stored in the session's history.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from functools import cache
-from importlib.resources import files
+from typing import Any
 
-from omnigent.agent_tasks.session_labels import (
-    BROKER_ROLE_VALUE,
-    CUSTODIAN_ROLE_VALUE,
-    MANAGER_ROLE_VALUE,
-    ROLE_LABEL,
-)
-
-_DEFAULT_MANUAL_FILES = {
-    BROKER_ROLE_VALUE: "task_broker.md",
-    MANAGER_ROLE_VALUE: "task_manager.md",
-    CUSTODIAN_ROLE_VALUE: "task_custodian.md",
-}
-
-
-def default_role_manual(role: str) -> str | None:
-    """Return the packaged manual for ``role``.
-
-    :param role: A role label value, e.g. ``"task_manager"``.
-    :returns: The manual's Markdown text, or ``None`` for an unknown role.
-    """
-    file_name = _DEFAULT_MANUAL_FILES.get(role)
-    return _read_packaged_manual(file_name) if file_name is not None else None
+from omnigent.agent_tasks.roles import BuiltinRole, role_definition
+from omnigent.stores.user_settings_store import open_user_settings_store
 
 
 def role_turn_instructions(
-    labels: Mapping[str, str] | None, request_instructions: object
-) -> str | None:
-    """Return the per-turn instructions for a role session.
+    role: BuiltinRole,
+    session_id: str,
+    conversation_store: Any,
+    request_instructions: object,
+) -> str:
+    """Return a role session's instructions for one turn. Blocking.
 
-    :param labels: The session's labels; its role comes from ``ROLE_LABEL``.
+    :param role: The session's role, from
+        :func:`omnigent.agent_tasks.roles.session_role`.
+    :param session_id: The role session, e.g. ``"conv_abc123"``.
+    :param conversation_store: The server's conversation store. It answers the
+        session's owner and locates the owner's settings.
     :param request_instructions: Instructions the forwarded request already
         carries, e.g. ``None``; kept after the manual when non-blank.
-    :returns: The role's manual, followed by any request instructions, or
-        ``None`` when the session has no known role.
+    :returns: The owner's manual for the role (their override, else the
+        packaged default), followed by any request instructions.
     """
-    role = labels.get(ROLE_LABEL) if labels else None
-    manual = default_role_manual(role) if role is not None else None
-    if manual is None:
-        return None
+    manual = _owner_manual(role, session_id, conversation_store)
     if isinstance(request_instructions, str) and request_instructions.strip():
         return f"{manual}\n\n{request_instructions}"
     return manual
 
 
-@cache
-def _read_packaged_manual(file_name: str) -> str:
-    return files("omnigent.resources.role_manuals").joinpath(file_name).read_text(encoding="utf-8")
+def _owner_manual(role: BuiltinRole, session_id: str, conversation_store: Any) -> str:
+    store = open_user_settings_store(conversation_store)
+    if store is None:
+        return role.default_manual()
+    # Without an owner grant (single-user mode) the local user's settings apply.
+    owner = conversation_store.get_session_owner(session_id, owner_only=True)
+    overrides = store.get_globalhub_role_overrides(role.key, user_id=owner)
+    return role_definition(role, overrides).manual

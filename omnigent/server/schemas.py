@@ -46,6 +46,9 @@ from omnigent.inner.native_attachments import reject_authored_framework_notices
 from omnigent.onboarding.sandboxes.profiles import SandboxProfileSummary
 from omnigent.server.server_config import (
     GLOBALHUB_HOST_ID_MAX_CHARS,
+    GLOBALHUB_ROLE_DESCRIPTION_MAX_CHARS,
+    GLOBALHUB_ROLE_MANUAL_MAX_CHARS,
+    GLOBALHUB_ROLE_MODEL_MAX_CHARS,
     GLOBALHUB_WORKSPACE_MAX_CHARS,
 )
 
@@ -5854,6 +5857,48 @@ class GlobalHubSettingsResponse(BaseModel):
 
     host_id: str | None
     workspace: str | None
+
+
+class GlobalHubRoleProfile(BaseModel):
+    """One of the caller's GlobalHub role definitions, without its manual.
+
+    ``model`` is null when the role's sessions use the role agent's own model.
+    ``customized`` names the fields the caller overrode, e.g. ``["manual"]``.
+    """
+
+    object: Literal["agent.task.role_profile"] = "agent.task.role_profile"
+    role: str
+    kind: str
+    title: str
+    description: str
+    model: str | None
+    customized: list[str]
+
+
+class GlobalHubRoleProfileDetail(GlobalHubRoleProfile):
+    """A role definition with the manual attached to every turn of its sessions."""
+
+    manual: str
+
+
+class GlobalHubRoleProfileList(BaseModel):
+    """The caller's GlobalHub role definitions."""
+
+    object: Literal["list"] = "list"
+    data: list[GlobalHubRoleProfile]
+
+
+class UpdateGlobalHubRoleProfileRequest(BaseModel):
+    """Override fields of the caller's role definition.
+
+    Omitted fields keep their value; null or blank restores the field's default.
+    """
+
+    description: str | None = Field(default=None, max_length=GLOBALHUB_ROLE_DESCRIPTION_MAX_CHARS)
+    model: str | None = Field(default=None, max_length=GLOBALHUB_ROLE_MODEL_MAX_CHARS)
+    manual: str | None = Field(default=None, max_length=GLOBALHUB_ROLE_MANUAL_MAX_CHARS)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 # ── Projects ──────────────────────────────────────────────────────

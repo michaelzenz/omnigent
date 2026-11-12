@@ -7,11 +7,20 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import column, insert, table
 
+from omnigent.agent_tasks.roles import BROKER_ROLE_KEY, MANAGER_ROLE_KEY
 from omnigent.db.db_models import workspace_scope
 from omnigent.db.utils import get_or_create_engine
-from omnigent.server.server_config import SESSION_TITLE_INSTRUCTIONS_MAX_CHARS
+from omnigent.server.server_config import (
+    GLOBALHUB_HOST_ID_MAX_CHARS,
+    GLOBALHUB_ROLE_DESCRIPTION_MAX_CHARS,
+    GLOBALHUB_ROLE_MANUAL_MAX_CHARS,
+    GLOBALHUB_ROLE_MODEL_MAX_CHARS,
+    GLOBALHUB_WORKSPACE_MAX_CHARS,
+    SESSION_TITLE_INSTRUCTIONS_MAX_CHARS,
+)
 from omnigent.stores.user_settings_store import (
     GLOBALHUB_PLACEMENT_PREFERENCE_KEY,
+    GLOBALHUB_ROLE_PREFERENCE_PREFIX,
     SESSION_TITLE_INSTRUCTIONS_PREFERENCE_KEY,
     GlobalHubPlacement,
     UserSettingsStore,
@@ -163,6 +172,56 @@ def test_invalid_stored_globalhub_placement_is_ignored(
     _write_raw_value(db_uri, ALICE, stored, key=GLOBALHUB_PLACEMENT_PREFERENCE_KEY)
 
     assert store.get_globalhub_placement(user_id=ALICE) is None
+
+
+def test_globalhub_role_overrides_are_kept_per_user_and_role(store: UserSettingsStore) -> None:
+    overrides = {"manual": "Alice manual.", "model": "example-model"}
+
+    store.save_globalhub_role_overrides(MANAGER_ROLE_KEY, overrides, user_id=ALICE)
+
+    assert store.get_globalhub_role_overrides(MANAGER_ROLE_KEY, user_id=ALICE) == overrides
+    assert store.get_globalhub_role_overrides(MANAGER_ROLE_KEY, user_id=BOB) == {}
+    assert store.get_globalhub_role_overrides(BROKER_ROLE_KEY, user_id=ALICE) == {}
+
+    store.save_globalhub_role_overrides(MANAGER_ROLE_KEY, {}, user_id=ALICE)
+
+    assert store.get_globalhub_role_overrides(MANAGER_ROLE_KEY, user_id=ALICE) == {}
+
+
+def test_globalhub_settings_at_their_limits_read_back_as_emoji(store: UserSettingsStore) -> None:
+    emoji = "\N{ROCKET}"
+    overrides = {
+        "description": emoji * GLOBALHUB_ROLE_DESCRIPTION_MAX_CHARS,
+        "model": emoji * GLOBALHUB_ROLE_MODEL_MAX_CHARS,
+        "manual": emoji * GLOBALHUB_ROLE_MANUAL_MAX_CHARS,
+    }
+    placement = GlobalHubPlacement(
+        host_id=emoji * GLOBALHUB_HOST_ID_MAX_CHARS,
+        workspace="/" + emoji * (GLOBALHUB_WORKSPACE_MAX_CHARS - 1),
+    )
+
+    store.save_globalhub_role_overrides(MANAGER_ROLE_KEY, overrides, user_id=ALICE)
+    store.save_globalhub_placement(placement, user_id=ALICE)
+
+    assert store.get_globalhub_role_overrides(MANAGER_ROLE_KEY, user_id=ALICE) == overrides
+    assert store.get_globalhub_placement(user_id=ALICE) == placement
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        pytest.param(b"not json", id="not-json"),
+        pytest.param(b'["manual"]', id="not-object"),
+        pytest.param(b'{"manual": 7}', id="non-string-value"),
+    ],
+)
+def test_invalid_stored_role_overrides_are_ignored(
+    store: UserSettingsStore, db_uri: str, stored: bytes
+) -> None:
+    key = GLOBALHUB_ROLE_PREFERENCE_PREFIX + MANAGER_ROLE_KEY
+    _write_raw_value(db_uri, ALICE, stored, key=key)
+
+    assert store.get_globalhub_role_overrides(MANAGER_ROLE_KEY, user_id=ALICE) == {}
 
 
 def test_open_store_requires_sql_storage(db_uri: str) -> None:

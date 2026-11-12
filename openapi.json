@@ -3327,6 +3327,144 @@
         "title": "FunctionCallOutputData",
         "type": "object"
       },
+      "GlobalHubRoleProfile": {
+        "description": "One of the caller's GlobalHub role definitions, without its manual.\n\n`model` is null when the role's sessions use the role agent's own model.\n`customized` names the fields the caller overrode, e.g. `[\"manual\"]`.",
+        "properties": {
+          "customized": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Customized",
+            "type": "array"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "object": {
+            "const": "agent.task.role_profile",
+            "default": "agent.task.role_profile",
+            "title": "Object",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "kind",
+          "title",
+          "description",
+          "model",
+          "customized"
+        ],
+        "title": "GlobalHubRoleProfile",
+        "type": "object"
+      },
+      "GlobalHubRoleProfileDetail": {
+        "description": "A role definition with the manual attached to every turn of its sessions.",
+        "properties": {
+          "customized": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Customized",
+            "type": "array"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "manual": {
+            "title": "Manual",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "object": {
+            "const": "agent.task.role_profile",
+            "default": "agent.task.role_profile",
+            "title": "Object",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "kind",
+          "title",
+          "description",
+          "model",
+          "customized",
+          "manual"
+        ],
+        "title": "GlobalHubRoleProfileDetail",
+        "type": "object"
+      },
+      "GlobalHubRoleProfileList": {
+        "description": "The caller's GlobalHub role definitions.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/GlobalHubRoleProfile"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "object": {
+            "const": "list",
+            "default": "list",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "GlobalHubRoleProfileList",
+        "type": "object"
+      },
       "GlobalHubSettingsRequest": {
         "additionalProperties": false,
         "description": "Set where the caller's GlobalHub role sessions run; null for both clears it.\n\nThe host must be one of the caller's own hosts and online, and the workspace\nan existing directory on it; the server stores the canonical path.",
@@ -12751,6 +12889,50 @@
         "title": "UpdateDefaultPolicyRequest",
         "type": "object"
       },
+      "UpdateGlobalHubRoleProfileRequest": {
+        "additionalProperties": false,
+        "description": "Override fields of the caller's role definition.\n\nOmitted fields keep their value; null or blank restores the field's default.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "manual": {
+            "anyOf": [
+              {
+                "maxLength": 64000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manual"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          }
+        },
+        "title": "UpdateGlobalHubRoleProfileRequest",
+        "type": "object"
+      },
       "UpdateProjectRequest": {
         "additionalProperties": false,
         "description": "Request body for `PATCH /v1/projects/{project_id}`.\n\nAll fields optional; `None` leaves a field unchanged.",
@@ -13672,6 +13854,150 @@
         "summary": "Health",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/v1/agent-tasks/roles/profiles": {
+      "get": {
+        "description": "List the caller's role definitions, optionally of one kind, e.g. `manager`.",
+        "operationId": "list_role_profiles_v1_agent_tasks_roles_profiles_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalHubRoleProfileList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Role Profiles",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/roles/{role}/profile": {
+      "get": {
+        "description": "Read one of the caller's role definitions, including its manual.",
+        "operationId": "get_role_profile_v1_agent_tasks_roles__role__profile_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "title": "Role",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalHubRoleProfileDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Role Profile",
+        "tags": [
+          "agent-tasks"
+        ]
+      },
+      "put": {
+        "description": "Override fields of the caller's role definition.\n\nOmitted fields keep their value; null or blank restores the field's default.",
+        "operationId": "update_role_profile_v1_agent_tasks_roles__role__profile_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "title": "Role",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGlobalHubRoleProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalHubRoleProfileDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Role Profile",
+        "tags": [
+          "agent-tasks"
         ]
       }
     },

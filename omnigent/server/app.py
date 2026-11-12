@@ -118,6 +118,7 @@ from omnigent.server.performance_metrics import (
     set_request_user_agent_for_access_log,
 )
 from omnigent.server.preference_requests import DEFAULT_PREFERENCE_POLICY, PreferencePolicy
+from omnigent.server.routes.agent_task_roles import create_agent_task_roles_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
 from omnigent.server.routes.default_policies import create_default_policies_router
@@ -4143,6 +4144,11 @@ def create_app(
             create_user_settings_router(user_settings_store, auth_provider),
             prefix="/v1",
             tags=["settings"],
+        )
+        app.include_router(
+            create_agent_task_roles_router(user_settings_store, auth_provider),
+            prefix="/v1",
+            tags=["agent-tasks"],
         )
 
     if preference_store is not None:

@@ -1,4 +1,4 @@
-"""Tests for the caller-scoped settings routes (``/v1/settings``)."""
+"""Tests for the caller-scoped settings routes (``/v1/settings``) and role definitions."""
 
 from __future__ import annotations
 
@@ -24,6 +24,8 @@ from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissi
 ROUTE = "/v1/settings/session-title-instructions"
 GLOBALHUB_ROUTE = "/v1/settings/globalhub"
 GLOBALHUB_UNSET = {"host_id": None, "workspace": None}
+ROLE_PROFILES_ROUTE = "/v1/agent-tasks/roles/profiles"
+MANAGER_PROFILE_ROUTE = "/v1/agent-tasks/roles/manager:default/profile"
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
 
@@ -97,6 +99,9 @@ async def test_accepts_limit_after_stripping(client: httpx.AsyncClient) -> None:
         (GLOBALHUB_ROUTE, {"host_id": None, "workspace": "/Users/alice"}),
         (GLOBALHUB_ROUTE, {"host_id": "", "workspace": "/Users/alice"}),
         (GLOBALHUB_ROUTE, {"host_id": "host_alice", "workspace": "/Users/alice", "extra": True}),
+        (MANAGER_PROFILE_ROUTE, {"manual": 7}),
+        (MANAGER_PROFILE_ROUTE, {"manual": "x" * 64_001}),
+        (MANAGER_PROFILE_ROUTE, {"title": "Renamed"}),
     ],
 )
 async def test_rejects_malformed_body(
@@ -140,17 +145,71 @@ async def test_globalhub_round_trip_stores_canonical_workspace(
 async def test_globalhub_rejects_another_users_host(
     multi_user_app: FastAPI, multi_user_client: httpx.AsyncClient
 ) -> None:
-    multi_user_app.state.host_store.upsert_on_connect("host_bob", "bob-laptop", BOB)
+    bob_host_id = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+    multi_user_app.state.host_store.upsert_on_connect(bob_host_id, "bob-laptop", BOB)
 
     response = await multi_user_client.put(
         GLOBALHUB_ROUTE,
-        json={"host_id": "host_bob", "workspace": "/Users/bob"},
+        json={"host_id": bob_host_id, "workspace": "/Users/bob"},
         headers=_as_user(ALICE),
     )
 
     assert response.status_code == 403
     alice = await multi_user_client.get(GLOBALHUB_ROUTE, headers=_as_user(ALICE))
     assert alice.json() == GLOBALHUB_UNSET
+
+
+async def test_role_profiles_list_defaults_without_manuals(client: httpx.AsyncClient) -> None:
+    listed = (await client.get(ROLE_PROFILES_ROUTE)).json()["data"]
+    managers = (await client.get(ROLE_PROFILES_ROUTE, params={"kind": "manager"})).json()["data"]
+
+    assert [profile["role"] for profile in listed] == ["broker", "manager:default", "custodian"]
+    assert all(profile["customized"] == [] and profile["model"] is None for profile in listed)
+    assert all("manual" not in profile for profile in listed)
+    assert [profile["role"] for profile in managers] == ["manager:default"]
+
+
+async def test_role_profile_override_and_reset(client: httpx.AsyncClient) -> None:
+    default = (await client.get(MANAGER_PROFILE_ROUTE)).json()
+    assert default["manual"].startswith("# Task manager manual")
+
+    saved = await client.put(
+        MANAGER_PROFILE_ROUTE, json={"manual": "  Route nothing.\n", "model": "example-model"}
+    )
+
+    assert saved.status_code == 200, saved.text
+    assert (saved.json()["manual"], saved.json()["model"], saved.json()["customized"]) == (
+        "Route nothing.",
+        "example-model",
+        ["model", "manual"],
+    )
+
+    reset = await client.put(MANAGER_PROFILE_ROUTE, json={"manual": None})
+
+    assert reset.json()["manual"] == default["manual"]
+    assert (reset.json()["model"], reset.json()["customized"]) == ("example-model", ["model"])
+    assert (await client.get(MANAGER_PROFILE_ROUTE)).json() == reset.json()
+
+
+async def test_unknown_role_profile_is_not_found(client: httpx.AsyncClient) -> None:
+    route = "/v1/agent-tasks/roles/secretary/profile"
+
+    assert (await client.get(route)).status_code == 404
+    assert (await client.put(route, json={"manual": "x"})).status_code == 404
+
+
+async def test_role_profiles_are_private_to_each_user(
+    multi_user_client: httpx.AsyncClient,
+) -> None:
+    await multi_user_client.put(
+        MANAGER_PROFILE_ROUTE, json={"manual": "Alice manual."}, headers=_as_user(ALICE)
+    )
+
+    alice = await multi_user_client.get(MANAGER_PROFILE_ROUTE, headers=_as_user(ALICE))
+    bob = await multi_user_client.get(MANAGER_PROFILE_ROUTE, headers=_as_user(BOB))
+
+    assert alice.json()["manual"] == "Alice manual."
+    assert bob.json()["customized"] == []
 
 
 async def test_info_advertises_capability(client: httpx.AsyncClient) -> None:
@@ -177,3 +236,6 @@ async def test_requires_authenticated_user(multi_user_client: httpx.AsyncClient)
     assert (await multi_user_client.get(GLOBALHUB_ROUTE)).status_code == 401
     unset = await multi_user_client.put(GLOBALHUB_ROUTE, json=GLOBALHUB_UNSET)
     assert unset.status_code == 401
+    assert (await multi_user_client.get(ROLE_PROFILES_ROUTE)).status_code == 401
+    manual = await multi_user_client.put(MANAGER_PROFILE_ROUTE, json={"manual": "x"})
+    assert manual.status_code == 401

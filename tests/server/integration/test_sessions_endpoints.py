@@ -29,7 +29,7 @@ import pytest
 from fastapi import FastAPI
 from starlette.datastructures import Headers
 
-from omnigent.agent_tasks.role_manuals import default_role_manual
+from omnigent.agent_tasks.roles import MANAGER_ROLE_KEY, builtin_role
 from omnigent.agent_tasks.session_labels import MANAGER_ROLE_VALUE, ROLE_LABEL
 from omnigent.entities import (
     USER_SESSION_TITLE_MAX_CHARS,
@@ -345,6 +345,19 @@ async def test_role_session_message_carries_role_manual_outside_history(
             forwarded.append(json.loads(request.content))
         return httpx.Response(202, json={"queued": True})
 
+    async def send(session_id: str) -> None:
+        response = await client.post(
+            f"/v1/sessions/{session_id}/events",
+            json={
+                "type": "message",
+                "data": {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "route these events"}],
+                },
+            },
+        )
+        assert response.status_code == 202, response.text
+
     agent = await create_test_agent(client)
     role_session = await _create_session(client, agent["id"])
     plain_session = await _create_session(client, agent["id"])
@@ -355,23 +368,24 @@ async def test_role_session_message_carries_role_manual_outside_history(
         transport=httpx.MockTransport(_handler), base_url="http://runner"
     ) as fake_runner:
         _route_to_runner(monkeypatch, fake_runner)
-        for session in (role_session, plain_session):
-            response = await client.post(
-                f"/v1/sessions/{session['id']}/events",
-                json={
-                    "type": "message",
-                    "data": {
-                        "role": "user",
-                        "content": [{"type": "input_text", "text": "route these events"}],
-                    },
-                },
-            )
-            assert response.status_code == 202, response.text
+        await send(role_session["id"])
+        await send(plain_session["id"])
+        override = await client.put(
+            f"/v1/agent-tasks/roles/{MANAGER_ROLE_KEY}/profile",
+            json={"manual": "Custom manager manual."},
+        )
+        assert override.status_code == 200, override.text
+        await send(role_session["id"])
 
-    assert forwarded[0]["instructions"] == default_role_manual(MANAGER_ROLE_VALUE)
+    manager = builtin_role(MANAGER_ROLE_KEY)
+    assert manager is not None
+    assert forwarded[0]["instructions"] == manager.default_manual()
     assert "instructions" not in forwarded[1]
+    assert forwarded[2]["instructions"] == "Custom manager manual."
     items = await client.get(f"/v1/sessions/{role_session['id']}/items")
-    assert "Task manager manual" not in json.dumps(items.json()["data"])
+    persisted = json.dumps(items.json()["data"])
+    assert "Task manager manual" not in persisted
+    assert "Custom manager manual." not in persisted
 
 
 async def test_create_titled_session_keeps_title_after_first_message(
