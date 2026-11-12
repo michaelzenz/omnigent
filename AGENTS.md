@@ -105,6 +105,15 @@ Use `just` for common tasks; run `just --list` for grouped recipes.
   resolved database URI before reporting that the development servers are ready.
 - Automated tests retain their isolated databases.
 
+### omnigent-michaelz data folder
+
+This checkout is the omnigent-michaelz version and keeps its data out of the
+default `~/.omnigent`. Wherever the rules above say `~/.omnigent`, use
+`~/.omnigent-michaelz`: start its server and host with
+`OMNIGENT_DATA_DIR="$HOME/.omnigent-michaelz"` (database, state and logs) and
+`OMNIGENT_CONFIG_HOME="$HOME/.omnigent-michaelz"` (`config.yaml`), and use
+`sqlite:///$HOME/.omnigent-michaelz/chat.db` as the database URI.
+
 ### No proactive browser-based verification
 
 - Do not run browser-based verification: no manual browser interaction,
