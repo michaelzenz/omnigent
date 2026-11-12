@@ -906,6 +906,58 @@ class SqlTask(OmnigentBase):
     )
 
 
+class SqlManager(OmnigentBase):
+    """
+    SQLAlchemy model for the ``managers`` table: GlobalHub task managers.
+
+    A manager is the durable identity behind one manager session. Tasks and
+    events refer to the manager, never to its session, so the session can be
+    recreated without losing the manager's portfolio. Ownership is stamped on
+    the row; there are no foreign keys (Rule R032).
+
+    :param id: Uuid16 primary key (bare 32-char hex in Python).
+    :param conversation_id: The manager's current session, or ``None`` while
+        it has none.
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param title: Title of the manager's session.
+    :param description: The scope the manager owns, written by the manager
+        itself; empty until it writes one.
+    :param host_id: Host the manager's session runs on, or ``None`` for the
+        owner's GlobalHub host.
+    :param workspace: Workspace on that host, or ``None`` for the owner's
+        GlobalHub workspace.
+    :param created_at: Unix epoch seconds at row creation.
+    :param updated_at: Unix epoch seconds of the last change.
+    """
+
+    __tablename__ = "managers"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    host_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    workspace: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        # One owner's managers in creation order.
+        Index("ix_managers_owner", "workspace_id", "owner_user_id", "created_at", "id"),
+        # The manager behind a session, for calls a manager makes about itself.
+        Index("ix_managers_conversation", "workspace_id", "conversation_id"),
+    )
+
+
 class SqlConversation(ConversationBase):
     """
     SQLAlchemy model for the ``conversations`` table.

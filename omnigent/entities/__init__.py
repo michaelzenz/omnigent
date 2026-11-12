@@ -42,7 +42,7 @@ from omnigent.entities.session_resources import (
     get_resource_by_id,
     resolve_terminal_entry_by_resource_id,
 )
-from omnigent.entities.task import Task
+from omnigent.entities.task import Manager, Task
 
 __all__ = [
     "DEFAULT_ENVIRONMENT_ID",
@@ -65,6 +65,7 @@ __all__ = [
     "GithubConnection",
     "ItemData",
     "LoadedAgent",
+    "Manager",
     "MessageData",
     "NativeToolData",
     "NewConversationItem",
