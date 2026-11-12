@@ -206,6 +206,12 @@ describe("computeUnreadBadgeIds", () => {
     expect([...next]).toEqual(["a"]);
   });
 
+  it("excludes GlobalHub role sessions even when unseen", () => {
+    const broker = { ...convB("a"), labels: { "omnigent.role": "task_broker" } };
+    const next = computeUnreadBadgeIds([broker, convB("b")], undefined, true, unseenIds("a", "b"));
+    expect([...next]).toEqual(["b"]);
+  });
+
   it("excludes a seen session with no pending elicitations", () => {
     // Neither unseen nor awaiting -> contributes nothing. A failure here
     // means the badge would count every listed session.

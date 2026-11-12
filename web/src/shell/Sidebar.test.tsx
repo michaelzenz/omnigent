@@ -3495,6 +3495,31 @@ describe("Sidebar collapsed project marker", () => {
     expect(within(header).queryByText("Needs response")).toBeNull();
   });
 
+  it.each<{ session: string; roleLabels: Record<string, string>; marker: string | null }>([
+    { session: "a regular session", roleLabels: {}, marker: "unseen" },
+    {
+      session: "a GlobalHub role session",
+      roleLabels: { "omnigent.role": "task_broker" },
+      marker: null,
+    },
+  ])("gives unread activity in $session the header marker $marker", ({ roleLabels, marker }) => {
+    projectsMock.push("GlobalHub");
+    seedReadState([{ id: "conv_unread", viewer_last_seen: 199 }]);
+    mockConversations([
+      conv("conv_unread", "Codex", {
+        labels: { omni_project: "GlobalHub", ...roleLabels },
+        status: "idle",
+        updated_at: 200,
+      }),
+    ]);
+    renderSidebar();
+
+    const header = screen.getByRole("button", { name: /^GlobalHub/ });
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    const badge = within(header).queryByTestId("session-state-badge");
+    expect(badge?.getAttribute("data-state") ?? null).toBe(marker);
+  });
+
   // A dot/spinner marker on a collapsed project must sit in the same size-6
   // centered slot as a row's badge (pulled to the right-1 edge, offsetting the
   // folder button's px-2), so the dots line up vertically down the sidebar

@@ -196,6 +196,7 @@ import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { isFeatureEnabled, isSingleUserMode, sandboxOptionLabel } from "@/lib/capabilities";
 import { useBranding } from "@/lib/branding";
 import { relativeTime } from "@/lib/relativeTime";
+import { isBackgroundRoleSession } from "@/lib/roleSessions";
 import { showToast } from "@/components/ui/toast";
 import { showArchiveUndoToast } from "./archiveUndoToast";
 import { unpinWithUndo } from "./unpinUndoToast";
@@ -3640,7 +3641,10 @@ function projectMarkerState(
       error = true;
     } else if (state?.kind === "disconnected") {
       disconnected = true;
-    } else if (isConversationUnseen(c.id, c.updated_at, c.status)) {
+    } else if (
+      !isBackgroundRoleSession(c.labels) &&
+      isConversationUnseen(c.id, c.updated_at, c.status)
+    ) {
       unseen = true;
     }
   }
@@ -5621,7 +5625,11 @@ function ConversationRowImpl({
   // invisible until the turn finishes (then the dot lights like any unseen
   // row). The explicit override only lifts the active-row suppression, so
   // flagging the thread you're currently viewing surfaces the dot at once.
-  const hasUnseenMessages = readState.unseen && (!isActive || readState.explicitlyUnread);
+  // GlobalHub role sessions never show it: their output lands on the board.
+  const hasUnseenMessages =
+    !isBackgroundRoleSession(conversation.labels) &&
+    readState.unseen &&
+    (!isActive || readState.explicitlyUnread);
   // "Mark as unread" is offered on any row not already showing the dot.
   const canMarkUnread = !hasUnseenMessages;
   // Approvals and failures outrank the unread dot without clearing read state.

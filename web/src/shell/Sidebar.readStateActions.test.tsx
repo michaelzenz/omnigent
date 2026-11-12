@@ -112,6 +112,22 @@ describe("row kebab read-state action", () => {
   });
 });
 
+describe("GlobalHub role sessions", () => {
+  it("never show the unread dot", () => {
+    const broker = {
+      ...conv("conv_broker", "Task broker"),
+      labels: { "omnigent.role": "task_broker" },
+    };
+    mockConversations([broker, CONV_A]);
+    markConversationUnread(broker.id, broker.updated_at);
+    markConversationUnread(CONV_A.id, CONV_A.updated_at);
+    renderSidebar();
+
+    expect(unreadDot(rowFor("Task broker"))).toBeNull();
+    expect(unreadDot(rowFor("Session Alpha"))).not.toBeNull();
+  });
+});
+
 describe("bulk-selection read-state action", () => {
   it("marks a selection containing unread rows as read and exits selection mode", () => {
     // Mixed selection (one unread, one read) → the bar offers Mark as read.

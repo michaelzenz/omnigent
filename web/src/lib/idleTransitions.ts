@@ -11,6 +11,7 @@
 // unarchiving diffs against real prior state, not a phantom transition.
 
 import type { Conversation } from "@/hooks/useConversations";
+import { isBackgroundRoleSession } from "@/lib/roleSessions";
 
 // Statuses that mean "the agent stopped working and is waiting on the
 // user" — the moment worth surfacing. "running" is excluded (still
@@ -115,6 +116,8 @@ export function computeUnreadBadgeIds(
   const unread = new Set<string>();
   for (const conversation of conversations) {
     if (conversation.archived) continue;
+    // GlobalHub role sessions report to the board, so they never count as unread.
+    if (isBackgroundRoleSession(conversation.labels)) continue;
     if (windowFocused && conversation.id === activeId) continue;
     const awaiting = (conversation.pending_elicitations_count ?? 0) > 0;
     if (awaiting || isUnseen(conversation.id, conversation.updated_at, conversation.status)) {
