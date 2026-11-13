@@ -140,6 +140,7 @@ class SqlAlchemyTaskStore(TaskStore):
         owner_user_id: str | None,
         states: Collection[str] | None = None,
         manager_id: str | None = None,
+        limit: int | None = None,
     ) -> builtins.list[Task]:
         """List the owner's tasks in board order (highest rank first)."""
         stmt = select(SqlTask).where(_owned(owner_user_id))
@@ -148,6 +149,8 @@ class SqlAlchemyTaskStore(TaskStore):
         if manager_id is not None:
             stmt = stmt.where(SqlTask.manager_id == manager_id)
         stmt = stmt.order_by(desc(SqlTask.queue_rank), desc(SqlTask.id))
+        if limit is not None:
+            stmt = stmt.limit(limit)
         with self._session("list_tasks") as session:
             return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
 

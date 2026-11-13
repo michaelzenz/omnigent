@@ -67,6 +67,7 @@ class TaskStore(ABC):
         owner_user_id: str | None,
         states: Collection[str] | None = None,
         manager_id: str | None = None,
+        limit: int | None = None,
     ) -> builtins.list[Task]:
         """
         List the owner's tasks in board order (highest rank first).
@@ -74,6 +75,7 @@ class TaskStore(ABC):
         :param owner_user_id: The owner whose board to read.
         :param states: Only tasks in these states, or every state when ``None``.
         :param manager_id: Only this manager's tasks, when set.
+        :param limit: At most this many tasks, or all when ``None``.
         :returns: The matching tasks.
         """
 

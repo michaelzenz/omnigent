@@ -15,6 +15,7 @@ import re
 from typing import Annotated, Any, Literal, Self, get_args
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
@@ -5897,6 +5898,100 @@ class GlobalHubRoleSessionResponse(BaseModel):
     role: str
     session_id: str
     created: bool
+
+
+AgentTaskState = Literal["active", "idle", "agent-resolved", "archived"]
+
+
+def _strip_required_text(value: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("must not be blank")
+    return stripped
+
+
+_AgentTaskTitle = Annotated[str, Field(max_length=256), AfterValidator(_strip_required_text)]
+_AgentTaskGoal = Annotated[str, Field(max_length=4_000), AfterValidator(_strip_required_text)]
+
+
+class AgentTaskResponse(BaseModel):
+    """A task on the caller's GlobalHub board.
+
+    ``queue_rank`` orders the board: higher ranks list first.
+    """
+
+    object: Literal["agent.task"] = "agent.task"
+    id: str
+    manager_id: str | None
+    owner_user_id: str | None
+    title: str
+    goal: str
+    description: str | None
+    internal_note: str | None
+    state: AgentTaskState
+    priority: int
+    queue_rank: int
+    created_at: int
+    updated_at: int | None
+
+
+class AgentTaskList(BaseModel):
+    """Tasks from the caller's GlobalHub board, in board order."""
+
+    object: Literal["list"] = "list"
+    data: list[AgentTaskResponse]
+
+
+class CreateAgentTaskRequest(BaseModel):
+    """Create a task on the caller's board, owned by one of their managers.
+
+    Tasks are born active, so ``state`` accepts only ``"active"``.
+    """
+
+    manager_id: str
+    title: _AgentTaskTitle
+    goal: _AgentTaskGoal
+    description: str | None = Field(default=None, max_length=16_000)
+    internal_note: str | None = Field(default=None, max_length=32_000)
+    priority: int = Field(default=2, ge=0, le=3)
+    state: Literal["active"] = "active"
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class UpdateAgentTaskRequest(BaseModel):
+    """Change fields of one of the caller's tasks; omitted fields keep their value.
+
+    ``manager_id: null`` unassigns the task. Setting ``state`` also moves the
+    task on the board: ``agent-resolved`` to the end, any other state to the top.
+    """
+
+    title: _AgentTaskTitle | None = None
+    goal: _AgentTaskGoal | None = None
+    description: str | None = Field(default=None, max_length=16_000)
+    internal_note: str | None = Field(default=None, max_length=32_000)
+    manager_id: str | None = None
+    state: AgentTaskState | None = None
+    priority: int | None = Field(default=None, ge=0, le=3)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class BatchGetAgentTasksRequest(BaseModel):
+    """Fetch up to 100 of the caller's tasks by id; unknown ids are skipped."""
+
+    task_ids: list[str] = Field(..., min_length=1, max_length=100)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentTaskDeletedResponse(BaseModel):
+    """A task archived (``permanent`` false) or permanently deleted."""
+
+    object: Literal["agent.task"] = "agent.task"
+    id: str
+    deleted: Literal[True] = True
+    permanent: bool
 
 
 class UpdateGlobalHubRoleProfileRequest(BaseModel):

@@ -84,14 +84,11 @@ check every task — 10 is the cap (`MANAGER_CANDIDATE_INSPECT_LIMIT`).
 `POST /v1/agent-tasks/batch` with `{"task_ids": [...]}` — goal,
 description, and internal_note come back per task.
 - **Decide**: pick the best-fit task, or conclude nothing fits.
-- (Legacy) `GET /v1/agent-tasks/search?q=<keywords>` still works for
-free-text search when the roster titles are not enough; its tag-match
-list is deprecated and always empty.
 
 **Step 1b — create new task.**
 
 When a routed event belongs to none of your tasks (and no other manager's
-task fits better — check via the same search), open a new one:
+task fits better), open a new one:
 
 ```
 pmv2_api(

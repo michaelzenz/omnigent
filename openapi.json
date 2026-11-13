@@ -591,6 +591,180 @@
         "title": "AgentObject",
         "type": "object"
       },
+      "AgentTaskDeletedResponse": {
+        "description": "A task archived (`permanent` false) or permanently deleted.",
+        "properties": {
+          "deleted": {
+            "const": true,
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.task",
+            "default": "agent.task",
+            "title": "Object",
+            "type": "string"
+          },
+          "permanent": {
+            "title": "Permanent",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "permanent"
+        ],
+        "title": "AgentTaskDeletedResponse",
+        "type": "object"
+      },
+      "AgentTaskList": {
+        "description": "Tasks from the caller's GlobalHub board, in board order.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTaskResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "object": {
+            "const": "list",
+            "default": "list",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "AgentTaskList",
+        "type": "object"
+      },
+      "AgentTaskResponse": {
+        "description": "A task on the caller's GlobalHub board.\n\n`queue_rank` orders the board: higher ranks list first.",
+        "properties": {
+          "created_at": {
+            "format": "int64",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "goal": {
+            "title": "Goal",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "internal_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Internal Note"
+          },
+          "manager_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manager Id"
+          },
+          "object": {
+            "const": "agent.task",
+            "default": "agent.task",
+            "title": "Object",
+            "type": "string"
+          },
+          "owner_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner User Id"
+          },
+          "priority": {
+            "format": "int64",
+            "title": "Priority",
+            "type": "integer"
+          },
+          "queue_rank": {
+            "format": "int64",
+            "title": "Queue Rank",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "active",
+              "idle",
+              "agent-resolved",
+              "archived"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "manager_id",
+          "owner_user_id",
+          "title",
+          "goal",
+          "description",
+          "internal_note",
+          "state",
+          "priority",
+          "queue_rank",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AgentTaskResponse",
+        "type": "object"
+      },
       "AutomaticSessionRenameRequest": {
         "additionalProperties": false,
         "description": "Proposed title for a framework or agent-initiated rename.",
@@ -799,6 +973,26 @@
           }
         },
         "title": "BackgroundTaskInfo",
+        "type": "object"
+      },
+      "BatchGetAgentTasksRequest": {
+        "additionalProperties": false,
+        "description": "Fetch up to 100 of the caller's tasks by id; unknown ids are skipped.",
+        "properties": {
+          "task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Task Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "task_ids"
+        ],
+        "title": "BatchGetAgentTasksRequest",
         "type": "object"
       },
       "Body_update_session_agent_v1_sessions__session_id__agent_put": {
@@ -1877,6 +2071,71 @@
           "file_ids"
         ],
         "title": "CopyFilesRequest",
+        "type": "object"
+      },
+      "CreateAgentTaskRequest": {
+        "additionalProperties": false,
+        "description": "Create a task on the caller's board, owned by one of their managers.\n\nTasks are born active, so `state` accepts only `\"active\"`.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 16000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "goal": {
+            "maxLength": 4000,
+            "title": "Goal",
+            "type": "string"
+          },
+          "internal_note": {
+            "anyOf": [
+              {
+                "maxLength": 32000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Internal Note"
+          },
+          "manager_id": {
+            "title": "Manager Id",
+            "type": "string"
+          },
+          "priority": {
+            "default": 2,
+            "format": "int64",
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Priority",
+            "type": "integer"
+          },
+          "state": {
+            "const": "active",
+            "default": "active",
+            "title": "State",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 256,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "manager_id",
+          "title",
+          "goal"
+        ],
+        "title": "CreateAgentTaskRequest",
         "type": "object"
       },
       "CreateDefaultPolicyRequest": {
@@ -12818,6 +13077,104 @@
         "title": "UiOpenFileEvent",
         "type": "object"
       },
+      "UpdateAgentTaskRequest": {
+        "additionalProperties": false,
+        "description": "Change fields of one of the caller's tasks; omitted fields keep their value.\n\n`manager_id: null` unassigns the task. Setting `state` also moves the\ntask on the board: `agent-resolved` to the end, any other state to the top.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 16000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "goal": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal"
+          },
+          "internal_note": {
+            "anyOf": [
+              {
+                "maxLength": 32000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Internal Note"
+          },
+          "manager_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manager Id"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "maximum": 3.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "idle",
+                  "agent-resolved",
+                  "archived"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "UpdateAgentTaskRequest",
+        "type": "object"
+      },
       "UpdateCodexGoalStatusRequest": {
         "additionalProperties": false,
         "description": "Request body for `PATCH /v1/sessions/{id}/codex_goal/status`.\n\nCodex app-server represents pause/resume as `thread/goal/set` status\nupdates. Omnigent exposes the two user-driven transitions explicitly:\n`\"paused\"` pauses an active goal, and `\"active\"` resumes a paused,\nblocked, or usage-limited goal.",
@@ -13881,6 +14238,188 @@
         ]
       }
     },
+    "/v1/agent-tasks": {
+      "get": {
+        "description": "List the caller's tasks in board order.\n\n`manager_conversation_id` selects the tasks of the manager whose\nsession it is, so a manager can list its own tasks.",
+        "operationId": "list_tasks_v1_agent_tasks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "active",
+                    "idle",
+                    "agent-resolved",
+                    "archived"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "manager_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Manager Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "manager_conversation_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Manager Conversation Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tasks",
+        "tags": [
+          "agent-tasks"
+        ]
+      },
+      "post": {
+        "description": "Create a task at the top of the caller's board, owned by one of their managers.",
+        "operationId": "create_task_v1_agent_tasks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAgentTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Task",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/batch": {
+      "post": {
+        "description": "Fetch several of the caller's tasks by id, in request order; unknown ids are skipped.",
+        "operationId": "batch_get_tasks_v1_agent_tasks_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchGetAgentTasksRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Batch Get Tasks",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
     "/v1/agent-tasks/roles/profiles": {
       "get": {
         "description": "List the caller's role definitions, optionally of one kind, e.g. `manager`.",
@@ -14027,7 +14566,7 @@
     },
     "/v1/agent-tasks/roles/{role}/session": {
       "post": {
-        "description": "Return the caller's broker or custodian session, creating it when needed.\n\nThe session runs on the caller's GlobalHub host and workspace. Managers\nhave no per-user session; the broker creates one per manager.",
+        "description": "Return the caller's broker or custodian session, creating it when needed.\n\nThe session runs on the caller's GlobalHub host and workspace. Each user\nhas one broker and one custodian session, but may have several managers,\neach with its own session that the user's broker creates.",
         "operationId": "ensure_caller_role_session_v1_agent_tasks_roles__role__session_post",
         "parameters": [
           {
@@ -14063,6 +14602,227 @@
           }
         },
         "summary": "Ensure Caller Role Session",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/{task_id}": {
+      "delete": {
+        "description": "Archive one of the caller's tasks: it leaves the board but stays readable.",
+        "operationId": "archive_task_v1_agent_tasks__task_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskDeletedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Archive Task",
+        "tags": [
+          "agent-tasks"
+        ]
+      },
+      "get": {
+        "description": "Read one of the caller's tasks.",
+        "operationId": "get_task_v1_agent_tasks__task_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Task",
+        "tags": [
+          "agent-tasks"
+        ]
+      },
+      "patch": {
+        "description": "Change fields of one of the caller's tasks.\n\nSetting `state` also moves the task on the board: `agent-resolved`\nto the end, any other state to the top so revived work surfaces.",
+        "operationId": "update_task_v1_agent_tasks__task_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAgentTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Task",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/{task_id}/move-to-queue-end": {
+      "post": {
+        "description": "Move one of the caller's tasks toward the end of their board.\n\nA live task goes just above the first `agent-resolved` task; an\n`agent-resolved` task goes to the very end.",
+        "operationId": "move_task_to_board_end_v1_agent_tasks__task_id__move_to_queue_end_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Move Task To Board End",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/{task_id}/permanent": {
+      "delete": {
+        "description": "Permanently delete one of the caller's tasks and its workers.\n\nThe manager's and workers' sessions keep running as ordinary sessions.",
+        "operationId": "delete_task_permanently_v1_agent_tasks__task_id__permanent_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskDeletedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Task Permanently",
         "tags": [
           "agent-tasks"
         ]

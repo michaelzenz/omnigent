@@ -33,6 +33,7 @@ from starlette.routing import Match, Mount, Route
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from omnigent._platform import resolve_repo_symlink
+from omnigent.agent_tasks.board_stores import open_board_stores
 from omnigent.agent_tasks.role_sessions import RoleSessionStores
 from omnigent.db.db_models import InvalidUuidError
 from omnigent.debug_logging import (
@@ -120,6 +121,7 @@ from omnigent.server.performance_metrics import (
 )
 from omnigent.server.preference_requests import DEFAULT_PREFERENCE_POLICY, PreferencePolicy
 from omnigent.server.routes.agent_task_roles import create_agent_task_roles_router
+from omnigent.server.routes.agent_tasks import create_agent_tasks_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
 from omnigent.server.routes.default_policies import create_default_policies_router
@@ -4157,6 +4159,13 @@ def create_app(
                 ),
                 auth_provider,
             ),
+            prefix="/v1",
+            tags=["agent-tasks"],
+        )
+    board_stores = open_board_stores(conversation_store)
+    if board_stores is not None:
+        app.include_router(
+            create_agent_tasks_router(board_stores, auth_provider),
             prefix="/v1",
             tags=["agent-tasks"],
         )
