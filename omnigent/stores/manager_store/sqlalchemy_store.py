@@ -5,11 +5,11 @@ from __future__ import annotations
 import builtins
 from typing import Any
 
-from sqlalchemy import ColumnElement, and_, asc, select
+from sqlalchemy import ColumnElement, and_, asc, select, update
 from sqlalchemy.orm import Session
 
 from omnigent.db.account_authority import require_active_account
-from omnigent.db.db_models import SqlManager, current_workspace_id
+from omnigent.db.db_models import SqlManager, SqlTask, current_workspace_id
 from omnigent.db.utils import (
     get_or_create_engine,
     make_named_managed_session_maker,
@@ -173,13 +173,21 @@ class SqlAlchemyManagerStore(ManagerStore):
         return run_write_transaction(self._session_immediate, "update_manager", write)
 
     def delete(self, manager_id: str, *, owner_user_id: str | None) -> bool:
-        """Delete the owner's manager; return whether it existed."""
+        """Delete the owner's manager and unassign its tasks; return whether it existed."""
 
         def write(session: Session) -> bool:
             require_active_account(session, owner_user_id)
             row = _owned_row(session, manager_id, owner_user_id)
             if row is None:
                 return False
+            session.execute(
+                update(SqlTask)
+                .where(
+                    SqlTask.workspace_id == current_workspace_id(),
+                    SqlTask.manager_id == manager_id,
+                )
+                .values(manager_id=None)
+            )
             session.delete(row)
             return True
 

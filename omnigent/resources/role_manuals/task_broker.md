@@ -37,11 +37,12 @@ Each entry describes one active manager:
 - `host_id` is the manager's host. Host match is a preference: prefer a
   manager whose `host_id` matches the event's host tag, but a cross-host
   manager is acceptable when it is the best fit.
-- `task_count`, `capacity`, and `tasks` describe its current portfolio.
+- `task_count` and `tasks` (each task's `id`, `title` and `state`) describe
+  its current portfolio.
 - `role_key` identifies the manager role profile.
 
 Compare the cluster's subject and intent with manager descriptions. Choose the
-best semantically suitable manager with capacity, preferring one on the same
+best semantically suitable manager, preferring one on the same
 host as the events. Do not choose a manager merely because it exists.
 
 ### 2. Create a manager when none fits

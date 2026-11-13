@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
@@ -90,3 +91,19 @@ def test_delete_is_owner_scoped(store: SqlAlchemyManagerStore) -> None:
     assert store.delete(manager_id, owner_user_id=BOB) is False
     assert store.delete(manager_id, owner_user_id=ALICE) is True
     assert store.list(owner_user_id=ALICE) == []
+
+
+def test_deleting_a_manager_unassigns_its_tasks(
+    db_uri: str, store: SqlAlchemyManagerStore
+) -> None:
+    tasks = SqlAlchemyTaskStore(db_uri)
+    manager_id = _create(store, "Storage")
+    task_id = uuid.uuid4().hex
+    tasks.create(
+        task_id, owner_user_id=ALICE, title="Task", goal="Finish the task", manager_id=manager_id
+    )
+
+    assert store.delete(manager_id, owner_user_id=ALICE) is True
+
+    task = tasks.get(task_id, owner_user_id=ALICE)
+    assert task is not None and task.manager_id is None

@@ -457,6 +457,183 @@
         "title": "AgentMCPConfig",
         "type": "object"
       },
+      "AgentManagerDeletedResponse": {
+        "description": "A deleted manager; its tasks are unassigned.\n\n`conversation_id` is the manager's session, left running as an ordinary\nsession; `DELETE /v1/sessions/{id}` deletes it.",
+        "properties": {
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "deleted": {
+            "const": true,
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.manager",
+            "default": "agent.manager",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id"
+        ],
+        "title": "AgentManagerDeletedResponse",
+        "type": "object"
+      },
+      "AgentManagerList": {
+        "description": "The caller's GlobalHub managers, in creation order.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AgentManagerResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "object": {
+            "const": "list",
+            "default": "list",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "AgentManagerList",
+        "type": "object"
+      },
+      "AgentManagerResponse": {
+        "description": "A manager on the caller's GlobalHub board.\n\n`conversation_id` is the manager's session. `tasks` lists its live\ntasks (active, idle or agent-resolved); archived tasks are left out.\n`host_id` and `workspace` are null when the manager runs on the\ncaller's GlobalHub host and workspace.",
+        "properties": {
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "host_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.manager",
+            "default": "agent.manager",
+            "title": "Object",
+            "type": "string"
+          },
+          "role_key": {
+            "const": "manager:default",
+            "default": "manager:default",
+            "title": "Role Key",
+            "type": "string"
+          },
+          "task_count": {
+            "format": "int64",
+            "title": "Task Count",
+            "type": "integer"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/AgentManagerTask"
+            },
+            "title": "Tasks",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "title",
+          "description",
+          "host_id",
+          "workspace",
+          "task_count",
+          "tasks"
+        ],
+        "title": "AgentManagerResponse",
+        "type": "object"
+      },
+      "AgentManagerTask": {
+        "description": "One live task in a manager's portfolio.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "active",
+              "idle",
+              "agent-resolved",
+              "archived"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "state"
+        ],
+        "title": "AgentManagerTask",
+        "type": "object"
+      },
       "AgentObject": {
         "description": "API representation of a registered agent.",
         "properties": {
@@ -2071,6 +2248,40 @@
           "file_ids"
         ],
         "title": "CopyFilesRequest",
+        "type": "object"
+      },
+      "CreateAgentManagerRequest": {
+        "additionalProperties": false,
+        "description": "Create a manager on the caller's board, with its own session.\n\n`role_key` accepts only `\"manager:default\"`.",
+        "properties": {
+          "description": {
+            "maxLength": 512,
+            "title": "Description",
+            "type": "string"
+          },
+          "role_key": {
+            "const": "manager:default",
+            "default": "manager:default",
+            "title": "Role Key",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "title": "CreateAgentManagerRequest",
         "type": "object"
       },
       "CreateAgentTaskRequest": {
@@ -14415,6 +14626,111 @@
           }
         },
         "summary": "Batch Get Tasks",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/managers": {
+      "get": {
+        "description": "List the caller's managers in creation order, each with its live tasks.",
+        "operationId": "list_managers_v1_agent_tasks_managers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentManagerList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Managers",
+        "tags": [
+          "agent-tasks"
+        ]
+      },
+      "post": {
+        "description": "Create a manager with its own session on the caller's GlobalHub host.",
+        "operationId": "create_manager_v1_agent_tasks_managers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAgentManagerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentManagerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Manager",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/managers/{manager_id}": {
+      "delete": {
+        "description": "Delete one of the caller's managers and unassign its tasks.\n\nThe manager's session is left as an ordinary session.",
+        "operationId": "delete_manager_v1_agent_tasks_managers__manager_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "manager_id",
+            "required": true,
+            "schema": {
+              "title": "Manager Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentManagerDeletedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Manager",
         "tags": [
           "agent-tasks"
         ]

@@ -120,6 +120,7 @@ from omnigent.server.performance_metrics import (
     set_request_user_agent_for_access_log,
 )
 from omnigent.server.preference_requests import DEFAULT_PREFERENCE_POLICY, PreferencePolicy
+from omnigent.server.routes.agent_task_managers import create_agent_task_managers_router
 from omnigent.server.routes.agent_task_roles import create_agent_task_roles_router
 from omnigent.server.routes.agent_tasks import create_agent_tasks_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
@@ -4142,28 +4143,36 @@ def create_app(
             tags=["projects"],
         )
 
+    role_session_stores: RoleSessionStores | None = None
     if user_settings_store is not None:
         app.include_router(
             create_user_settings_router(user_settings_store, auth_provider),
             prefix="/v1",
             tags=["settings"],
         )
+        role_session_stores = RoleSessionStores(
+            conversation_store=conversation_store,
+            agent_store=agent_store,
+            user_settings_store=user_settings_store,
+            project_store=project_store,
+            permission_store=permission_store,
+        )
         app.include_router(
-            create_agent_task_roles_router(
-                RoleSessionStores(
-                    conversation_store=conversation_store,
-                    agent_store=agent_store,
-                    user_settings_store=user_settings_store,
-                    project_store=project_store,
-                    permission_store=permission_store,
-                ),
-                auth_provider,
-            ),
+            create_agent_task_roles_router(role_session_stores, auth_provider),
             prefix="/v1",
             tags=["agent-tasks"],
         )
     board_stores = open_board_stores(conversation_store)
     if board_stores is not None:
+        # Before the tasks router, whose /agent-tasks/{task_id} matches /agent-tasks/managers.
+        if role_session_stores is not None:
+            app.include_router(
+                create_agent_task_managers_router(
+                    board_stores, role_session_stores, auth_provider
+                ),
+                prefix="/v1",
+                tags=["agent-tasks"],
+            )
         app.include_router(
             create_agent_tasks_router(board_stores, auth_provider),
             prefix="/v1",

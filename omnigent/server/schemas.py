@@ -5912,6 +5912,10 @@ def _strip_required_text(value: str) -> str:
 
 _AgentTaskTitle = Annotated[str, Field(max_length=256), AfterValidator(_strip_required_text)]
 _AgentTaskGoal = Annotated[str, Field(max_length=4_000), AfterValidator(_strip_required_text)]
+_AgentManagerTitle = Annotated[str, Field(max_length=200), AfterValidator(_strip_required_text)]
+_AgentManagerDescription = Annotated[
+    str, Field(max_length=512), AfterValidator(_strip_required_text)
+]
 
 
 class AgentTaskResponse(BaseModel):
@@ -5992,6 +5996,68 @@ class AgentTaskDeletedResponse(BaseModel):
     id: str
     deleted: Literal[True] = True
     permanent: bool
+
+
+class AgentManagerTask(BaseModel):
+    """One live task in a manager's portfolio."""
+
+    id: str
+    title: str
+    state: AgentTaskState
+
+
+class AgentManagerResponse(BaseModel):
+    """A manager on the caller's GlobalHub board.
+
+    ``conversation_id`` is the manager's session. ``tasks`` lists its live
+    tasks (active, idle or agent-resolved); archived tasks are left out.
+    ``host_id`` and ``workspace`` are null when the manager runs on the
+    caller's GlobalHub host and workspace.
+    """
+
+    object: Literal["agent.manager"] = "agent.manager"
+    id: str
+    conversation_id: str | None
+    title: str
+    description: str
+    host_id: str | None
+    workspace: str | None
+    role_key: Literal["manager:default"] = "manager:default"
+    task_count: int
+    tasks: list[AgentManagerTask]
+
+
+class AgentManagerList(BaseModel):
+    """The caller's GlobalHub managers, in creation order."""
+
+    object: Literal["list"] = "list"
+    data: list[AgentManagerResponse]
+
+
+class CreateAgentManagerRequest(BaseModel):
+    """Create a manager on the caller's board, with its own session.
+
+    ``role_key`` accepts only ``"manager:default"``.
+    """
+
+    description: _AgentManagerDescription
+    title: _AgentManagerTitle | None = None
+    role_key: Literal["manager:default"] = "manager:default"
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentManagerDeletedResponse(BaseModel):
+    """A deleted manager; its tasks are unassigned.
+
+    ``conversation_id`` is the manager's session, left running as an ordinary
+    session; ``DELETE /v1/sessions/{id}`` deletes it.
+    """
+
+    object: Literal["agent.manager"] = "agent.manager"
+    id: str
+    deleted: Literal[True] = True
+    conversation_id: str | None
 
 
 class UpdateGlobalHubRoleProfileRequest(BaseModel):
