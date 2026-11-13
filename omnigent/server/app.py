@@ -122,6 +122,7 @@ from omnigent.server.performance_metrics import (
 from omnigent.server.preference_requests import DEFAULT_PREFERENCE_POLICY, PreferencePolicy
 from omnigent.server.routes.agent_task_managers import create_agent_task_managers_router
 from omnigent.server.routes.agent_task_roles import create_agent_task_roles_router
+from omnigent.server.routes.agent_task_workers import create_agent_task_workers_router
 from omnigent.server.routes.agent_tasks import create_agent_tasks_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
@@ -4175,6 +4176,13 @@ def create_app(
             )
         app.include_router(
             create_agent_tasks_router(board_stores, auth_provider),
+            prefix="/v1",
+            tags=["agent-tasks"],
+        )
+        app.include_router(
+            create_agent_task_workers_router(
+                board_stores, conversation_store, permission_store, auth_provider
+            ),
             prefix="/v1",
             tags=["agent-tasks"],
         )

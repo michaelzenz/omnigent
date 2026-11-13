@@ -52,6 +52,33 @@
         "title": "AddCommentRequest",
         "type": "object"
       },
+      "AdoptAgentTaskSessionRequest": {
+        "additionalProperties": false,
+        "description": "Attach one of the caller's sessions to one of their tasks as a worker.\n\n`title` names the session's recent work on the task; omit it to keep the\nworker's current title.",
+        "properties": {
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "title": "AdoptAgentTaskSessionRequest",
+        "type": "object"
+      },
       "AgentConfigObject": {
         "description": "Owner-only configuration read and PATCH result.",
         "properties": {
@@ -940,6 +967,125 @@
           "updated_at"
         ],
         "title": "AgentTaskResponse",
+        "type": "object"
+      },
+      "AgentTaskSessionAdoption": {
+        "description": "The worker that adopting a session found or created.\n\n`already_bound` is true when the session already worked on the task.",
+        "properties": {
+          "already_bound": {
+            "title": "Already Bound",
+            "type": "boolean"
+          },
+          "object": {
+            "const": "agent.task.session_adoption",
+            "default": "agent.task.session_adoption",
+            "title": "Object",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "worker_id": {
+            "title": "Worker Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "task_id",
+          "worker_id",
+          "already_bound"
+        ],
+        "title": "AgentTaskSessionAdoption",
+        "type": "object"
+      },
+      "AgentTaskWorkerList": {
+        "description": "The workers on one of the caller's tasks, in the order they were attached.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTaskWorkerResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "object": {
+            "const": "list",
+            "default": "list",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "AgentTaskWorkerList",
+        "type": "object"
+      },
+      "AgentTaskWorkerResponse": {
+        "description": "A session working on one of the caller's tasks.\n\nThe session's own status is read from the session, not from the worker.",
+        "properties": {
+          "created_at": {
+            "format": "int64",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.task.worker",
+            "default": "agent.task.worker",
+            "title": "Object",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "session_id",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AgentTaskWorkerResponse",
         "type": "object"
       },
       "AutomaticSessionRenameRequest": {
@@ -14936,6 +15082,59 @@
         ]
       }
     },
+    "/v1/agent-tasks/sessions/{session_id}/adopt": {
+      "post": {
+        "description": "Attach one of the caller's sessions to one of their tasks.\n\nA session has one worker per task: adopting it again only retitles that\nworker.",
+        "operationId": "adopt_session_v1_agent_tasks_sessions__session_id__adopt_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdoptAgentTaskSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskSessionAdoption"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Adopt Session",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
     "/v1/agent-tasks/{task_id}": {
       "delete": {
         "description": "Archive one of the caller's tasks: it leaves the board but stays readable.",
@@ -15152,6 +15351,49 @@
           }
         },
         "summary": "Delete Task Permanently",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/{task_id}/workers": {
+      "get": {
+        "description": "List the sessions working on one of the caller's tasks, in attach order.",
+        "operationId": "list_task_workers_v1_agent_tasks__task_id__workers_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskWorkerList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Task Workers",
         "tags": [
           "agent-tasks"
         ]

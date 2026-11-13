@@ -5916,6 +5916,7 @@ _AgentManagerTitle = Annotated[str, Field(max_length=200), AfterValidator(_strip
 _AgentManagerDescription = Annotated[
     str, Field(max_length=512), AfterValidator(_strip_required_text)
 ]
+_AgentTaskWorkerTitle = Annotated[str, Field(max_length=200), AfterValidator(_strip_required_text)]
 
 
 class AgentTaskResponse(BaseModel):
@@ -6062,6 +6063,54 @@ class AgentManagerDeletedResponse(BaseModel):
     id: str
     deleted: Literal[True] = True
     conversation_id: str | None
+
+
+class AdoptAgentTaskSessionRequest(BaseModel):
+    """Attach one of the caller's sessions to one of their tasks as a worker.
+
+    ``title`` names the session's recent work on the task; omit it to keep the
+    worker's current title.
+    """
+
+    task_id: str
+    title: _AgentTaskWorkerTitle | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentTaskSessionAdoption(BaseModel):
+    """The worker that adopting a session found or created.
+
+    ``already_bound`` is true when the session already worked on the task.
+    """
+
+    object: Literal["agent.task.session_adoption"] = "agent.task.session_adoption"
+    session_id: str
+    task_id: str
+    worker_id: str
+    already_bound: bool
+
+
+class AgentTaskWorkerResponse(BaseModel):
+    """A session working on one of the caller's tasks.
+
+    The session's own status is read from the session, not from the worker.
+    """
+
+    object: Literal["agent.task.worker"] = "agent.task.worker"
+    id: str
+    task_id: str
+    session_id: str
+    title: str | None
+    created_at: int
+    updated_at: int | None
+
+
+class AgentTaskWorkerList(BaseModel):
+    """The workers on one of the caller's tasks, in the order they were attached."""
+
+    object: Literal["list"] = "list"
+    data: list[AgentTaskWorkerResponse]
 
 
 class UpdateGlobalHubRoleProfileRequest(BaseModel):
