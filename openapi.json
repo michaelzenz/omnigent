@@ -1004,6 +1004,32 @@
         "title": "AgentTaskSessionAdoption",
         "type": "object"
       },
+      "AgentTaskWorkerDeletedResponse": {
+        "description": "A worker removed from its task; its session keeps running.",
+        "properties": {
+          "deleted": {
+            "const": true,
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.task.worker",
+            "default": "agent.task.worker",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "AgentTaskWorkerDeletedResponse",
+        "type": "object"
+      },
       "AgentTaskWorkerList": {
         "description": "The workers on one of the caller's tasks, in the order they were attached.",
         "properties": {
@@ -24929,6 +24955,49 @@
         "summary": "Get Skills",
         "tags": [
           "skills"
+        ]
+      }
+    },
+    "/v1/task-workers/{worker_id}/untrack": {
+      "post": {
+        "description": "Remove one of the caller's workers from its task; the session keeps running.",
+        "operationId": "untrack_worker_v1_task_workers__worker_id__untrack_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worker_id",
+            "required": true,
+            "schema": {
+              "title": "Worker Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskWorkerDeletedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Untrack Worker",
+        "tags": [
+          "agent-tasks"
         ]
       }
     },

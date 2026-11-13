@@ -64,12 +64,10 @@ def test_workers_wrap_sessions_for_their_owners_tasks(store: SqlAlchemyWorkerSto
 def test_a_session_has_one_worker_per_task(store: SqlAlchemyWorkerStore) -> None:
     session_id = uuid.uuid4().hex
     _attach(store, session_id=session_id)
-    other_task = _attach(store, task_id=OTHER_TASK, session_id=session_id)
+    _attach(store, task_id=OTHER_TASK, session_id=session_id)
 
     with pytest.raises(IntegrityError):
         _attach(store, session_id=session_id)
-    with pytest.raises(IntegrityError):
-        store.update(other_task, owner_user_id=ALICE, task_id=TASK)
 
 
 def test_rosters_list_by_task_in_attach_order(store: SqlAlchemyWorkerStore) -> None:
@@ -84,14 +82,16 @@ def test_rosters_list_by_task_in_attach_order(store: SqlAlchemyWorkerStore) -> N
     assert store.list_for_tasks([], owner_user_id=ALICE) == []
 
 
-def test_update_moves_and_retitles_only_as_asked(store: SqlAlchemyWorkerStore) -> None:
+def test_update_retitles_only_as_asked(store: SqlAlchemyWorkerStore) -> None:
     worker_id = _attach(store, title="Fixing retries")
 
-    moved = store.update(worker_id, owner_user_id=ALICE, task_id=OTHER_TASK)
+    unchanged = store.update(worker_id, owner_user_id=ALICE)
     retitled = store.update(worker_id, owner_user_id=ALICE, title=None)
 
-    assert moved is not None and (moved.task_id, moved.title) == (OTHER_TASK, "Fixing retries")
-    assert retitled is not None and (retitled.task_id, retitled.title) == (OTHER_TASK, None)
+    assert unchanged is not None
+    assert (unchanged.title, unchanged.updated_at) == ("Fixing retries", None)
+    assert retitled is not None
+    assert (retitled.title, retitled.updated_at is not None) == (None, True)
     assert store.update(worker_id, owner_user_id=BOB, title="Taken") is None
 
 

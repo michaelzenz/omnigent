@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import builtins
 from collections.abc import Collection
-from typing import Any
 
 from sqlalchemy import ColumnElement, and_, asc, select
 from sqlalchemy.orm import Session
@@ -135,27 +134,17 @@ class SqlAlchemyWorkerStore(WorkerStore):
         worker_id: str,
         *,
         owner_user_id: str | None,
-        task_id: str | None = None,
         title: str | None = UNSET,
     ) -> Worker | None:
-        """Move the owner's worker to another task or retitle it."""
-        changes: dict[str, Any] = {}
-        if task_id is not None:
-            changes["task_id"] = task_id
-        if title is not UNSET:
-            changes["title"] = title
+        """Retitle the owner's worker."""
 
         def write(session: Session) -> Worker | None:
             require_active_account(session, owner_user_id)
             row = _owned_row(session, worker_id, owner_user_id)
             if row is None:
                 return None
-            changed = False
-            for field, value in changes.items():
-                if getattr(row, field) != value:
-                    setattr(row, field, value)
-                    changed = True
-            if changed:
+            if title is not UNSET and row.title != title:
+                row.title = title
                 row.updated_at = now_epoch()
             return _to_entity(row)
 

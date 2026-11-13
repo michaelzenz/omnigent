@@ -6113,6 +6113,14 @@ class AgentTaskWorkerList(BaseModel):
     data: list[AgentTaskWorkerResponse]
 
 
+class AgentTaskWorkerDeletedResponse(BaseModel):
+    """A worker removed from its task; its session keeps running."""
+
+    object: Literal["agent.task.worker"] = "agent.task.worker"
+    id: str
+    deleted: Literal[True] = True
+
+
 class UpdateGlobalHubRoleProfileRequest(BaseModel):
     """Override fields of the caller's role definition.
 

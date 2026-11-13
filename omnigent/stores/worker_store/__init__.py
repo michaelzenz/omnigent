@@ -71,18 +71,15 @@ class WorkerStore(ABC):
         worker_id: str,
         *,
         owner_user_id: str | None,
-        task_id: str | None = None,
         title: str | None = UNSET,
     ) -> Worker | None:
         """
-        Move the owner's worker to another task or retitle it.
+        Retitle the owner's worker.
 
-        ``None`` leaves ``task_id`` as it is; ``title`` takes ``None`` as a
-        value and uses :data:`UNSET` to stay as it is. A change stamps
-        ``updated_at``.
+        ``title`` takes ``None`` as a value and uses :data:`UNSET` to stay as it
+        is. A change stamps ``updated_at``.
 
         :returns: The updated worker, or ``None`` when missing or someone else's.
-        :raises IntegrityError: When the session already has a worker on ``task_id``.
         """
 
     @abstractmethod

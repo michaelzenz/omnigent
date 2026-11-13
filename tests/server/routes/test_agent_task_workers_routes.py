@@ -1,4 +1,4 @@
-"""Tests for the GlobalHub worker routes: session adoption and task rosters."""
+"""Tests for the GlobalHub worker routes: adoption, task rosters and untrack."""
 
 from __future__ import annotations
 
@@ -93,3 +93,23 @@ async def test_adoption_and_rosters_need_the_callers_own_task_and_session(
     assert statuses == [404, 404, 404, 422, 404]
     roster = await auth_client.get(f"/v1/agent-tasks/{task_id}/workers", headers=ALICE)
     assert roster.json()["data"] == []
+
+
+async def test_untrack_removes_the_worker_and_leaves_the_session(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    task_id, session_id = _task(db_uri, "S3 retries"), _session(db_uri)
+    worker_id = (await _adopt(auth_client, session_id, task_id)).json()["worker_id"]
+    untrack = f"/v1/task-workers/{worker_id}/untrack"
+
+    by_bob = await auth_client.post(untrack, headers=BOB)
+    untracked = await auth_client.post(untrack, headers=ALICE)
+    again = await auth_client.post(untrack, headers=ALICE)
+    roster = await auth_client.get(f"/v1/agent-tasks/{task_id}/workers", headers=ALICE)
+    readopted = (await _adopt(auth_client, session_id, task_id)).json()
+
+    assert (by_bob.status_code, again.status_code) == (404, 404)
+    assert untracked.json() == {"object": "agent.task.worker", "id": worker_id, "deleted": True}
+    assert roster.json()["data"] == []
+    assert SqlAlchemyConversationStore(db_uri).get_conversation(session_id) is not None
+    assert (readopted["already_bound"], readopted["worker_id"] == worker_id) == (False, False)
