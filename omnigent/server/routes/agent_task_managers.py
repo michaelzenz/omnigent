@@ -20,10 +20,11 @@ from omnigent.agent_tasks.role_sessions import (
     require_globalhub_placement,
 )
 from omnigent.agent_tasks.roles import MANAGER_ROLE_KEY, builtin_role
-from omnigent.entities import Manager, Task
+from omnigent.entities import Conversation, Manager, Task
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
+from omnigent.server.routes._session_create_validation import resolve_host_home_workspace
 from omnigent.server.routes._sessions.helpers import _announce_session_added
 from omnigent.server.schemas import (
     AgentManagerDeletedResponse,
@@ -33,6 +34,7 @@ from omnigent.server.schemas import (
     AgentTaskState,
     CreateAgentManagerRequest,
 )
+from omnigent.stores.user_settings_store import GlobalHubPlacement
 
 # Archived tasks no longer count toward a manager's portfolio.
 _LIVE_TASK_STATES = ("active", "idle", "agent-resolved")
@@ -59,42 +61,74 @@ def create_agent_task_managers_router(
         """List the caller's managers in creation order, each with its live tasks."""
         user_id = require_user(request, auth_provider)
 
-        def load() -> list[tuple[Manager, list[Task]]]:
+        def load() -> list[tuple[Manager, list[Task], Conversation | None]]:
             managers = board.managers.list(owner_user_id=user_id)
             portfolios: defaultdict[str, list[Task]] = defaultdict(list)
             for task in board.tasks.list(owner_user_id=user_id, states=_LIVE_TASK_STATES):
                 if task.manager_id is not None:
                     portfolios[task.manager_id].append(task)
-            return [(manager, portfolios[manager.id]) for manager in managers]
+            manager_sessions = sessions.conversation_store.get_conversations(
+                [manager.conversation_id for manager in managers if manager.conversation_id]
+            )
+            return [
+                (
+                    manager,
+                    portfolios[manager.id],
+                    manager_sessions.get(manager.conversation_id)
+                    if manager.conversation_id
+                    else None,
+                )
+                for manager in managers
+            ]
 
         listed = await asyncio.to_thread(load)
-        return AgentManagerList(data=[_manager_response(m, tasks) for m, tasks in listed])
+        return AgentManagerList(
+            data=[_manager_response(manager, tasks, session) for manager, tasks, session in listed]
+        )
 
     @router.post("/agent-tasks/managers", response_model=AgentManagerResponse)
     async def create_manager(
         request: Request, body: CreateAgentManagerRequest
     ) -> AgentManagerResponse:
-        """Create a manager with its own session on the caller's GlobalHub host."""
+        """Create a manager with its own session, on the GlobalHub host unless pinned."""
         user_id = require_user(request, auth_provider)
         title = body.title or manager_role.title
-
-        def create() -> Manager:
-            placement = require_globalhub_placement(sessions.user_settings_store, user_id)
-            session = create_role_session(
-                manager_role, user_id=user_id, placement=placement, title=title, stores=sessions
+        globalhub = await asyncio.to_thread(
+            require_globalhub_placement, sessions.user_settings_store, user_id
+        )
+        # Pinning to the GlobalHub host is the same as not pinning.
+        pin: GlobalHubPlacement | None = None
+        if body.host_id is not None and body.host_id != globalhub.host_id:
+            home = await resolve_host_home_workspace(
+                user_id=user_id,
+                host_id=body.host_id,
+                host_store=getattr(request.app.state, "host_store", None),
+                host_registry=getattr(request.app.state, "host_registry", None),
             )
-            return board.managers.create(
+            pin = GlobalHubPlacement(host_id=body.host_id, workspace=home)
+
+        def create() -> tuple[Manager, Conversation]:
+            session = create_role_session(
+                manager_role,
+                user_id=user_id,
+                placement=pin or globalhub,
+                title=title,
+                stores=sessions,
+            )
+            manager = board.managers.create(
                 uuid.uuid4().hex,
                 owner_user_id=user_id,
                 title=title,
                 description=body.description,
                 conversation_id=session.id,
+                host_id=pin.host_id if pin else None,
+                workspace=pin.workspace if pin else None,
             )
+            return manager, session
 
-        manager = await asyncio.to_thread(create)
-        if manager.conversation_id is not None:
-            _announce_session_added(user_id, manager.conversation_id)
-        return _manager_response(manager, [])
+        manager, session = await asyncio.to_thread(create)
+        _announce_session_added(user_id, session.id)
+        return _manager_response(manager, [], session)
 
     @router.delete(
         "/agent-tasks/managers/{manager_id}", response_model=AgentManagerDeletedResponse
@@ -120,14 +154,16 @@ def create_agent_task_managers_router(
     return router
 
 
-def _manager_response(manager: Manager, tasks: list[Task]) -> AgentManagerResponse:
+def _manager_response(
+    manager: Manager, tasks: list[Task], session: Conversation | None
+) -> AgentManagerResponse:
     return AgentManagerResponse(
         id=manager.id,
         conversation_id=manager.conversation_id,
         title=manager.title,
         description=manager.description,
-        host_id=manager.host_id,
-        workspace=manager.workspace,
+        host_id=session.host_id if session else None,
+        workspace=session.workspace if session else None,
         task_count=len(tasks),
         tasks=[
             AgentManagerTask(id=task.id, title=task.title, state=cast(AgentTaskState, task.state))

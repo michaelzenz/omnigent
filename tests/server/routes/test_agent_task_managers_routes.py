@@ -6,15 +6,20 @@ import uuid
 from typing import Any
 
 import httpx
+import pytest
 
 from omnigent.agent_tasks.session_labels import MANAGER_ROLE_VALUE, ROLE_LABEL
+from omnigent.server.routes import agent_task_managers
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
 
-ALICE = {"X-Forwarded-Email": "alice@example.com"}
+ALICE_ID = "alice@example.com"
+ALICE = {"X-Forwarded-Email": ALICE_ID}
 BOB = {"X-Forwarded-Email": "bob@example.com"}
 HOST_ID = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+PINNED_HOST_ID = "1e2d3c4b5a69788796a5b4c3d2e1f00f"
 ROUTE = "/v1/agent-tasks/managers"
 
 
@@ -22,10 +27,10 @@ def _install_manager_agent(db_uri: str) -> None:
     SqlAlchemyAgentStore(db_uri).create(uuid.uuid4().hex, "onih-pmv2", "bundles/onih-pmv2.tar.gz")
 
 
-def _place_globalhub(db_uri: str) -> None:
+def _place_globalhub(db_uri: str, host_id: str = HOST_ID) -> None:
     UserSettingsStore(db_uri).save_globalhub_placement(
-        GlobalHubPlacement(host_id=HOST_ID, workspace="/Users/alice/globalhub"),
-        user_id="alice@example.com",
+        GlobalHubPlacement(host_id=host_id, workspace="/Users/alice/globalhub"),
+        user_id=ALICE_ID,
     )
 
 
@@ -76,6 +81,49 @@ async def test_create_needs_a_placement_and_starts_a_labeled_session(
     )
     assert untitled.json()["title"] == "Task manager"
     assert (blank.status_code, templated.status_code) == (422, 422)
+
+
+async def test_pinned_managers_run_in_the_hosts_home_and_list_their_session_placement(
+    auth_client: httpx.AsyncClient, db_uri: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_manager_agent(db_uri)
+    _place_globalhub(db_uri)
+    offline = await auth_client.post(
+        ROUTE, json={"description": "x", "host_id": PINNED_HOST_ID}, headers=ALICE
+    )
+    resolutions: list[dict[str, object]] = []
+
+    async def home_directory(**kwargs: object) -> str:
+        resolutions.append(kwargs)
+        return "/home/alice"
+
+    monkeypatch.setattr(agent_task_managers, "resolve_host_home_workspace", home_directory)
+    pinned = await _create_manager(auth_client, "Storage", host_id=PINNED_HOST_ID)
+    on_globalhub_host = await _create_manager(auth_client, "Dashboards", host_id=HOST_ID)
+    _place_globalhub(db_uri, host_id="2d3c4b5a69788796a5b4c3d2e1f00f1e")
+    listed = (await auth_client.get(ROUTE, headers=ALICE)).json()["data"]
+
+    assert (offline.status_code, "offline" in offline.text) == (400, True)
+    assert [(call["user_id"], call["host_id"]) for call in resolutions] == [
+        (ALICE_ID, PINNED_HOST_ID)
+    ]
+    assert (pinned["host_id"], pinned["workspace"]) == (PINNED_HOST_ID, "/home/alice")
+    # Existing sessions stay where they were created when GlobalHub moves.
+    assert {
+        manager["title"]: (manager["host_id"], manager["workspace"]) for manager in listed
+    } == {
+        "Storage": (PINNED_HOST_ID, "/home/alice"),
+        "Dashboards": (HOST_ID, "/Users/alice/globalhub"),
+    }
+    managers = SqlAlchemyManagerStore(db_uri)
+    stored_pins = [
+        managers.get(manager["id"], owner_user_id=ALICE_ID)
+        for manager in (pinned, on_globalhub_host)
+    ]
+    assert [(row.host_id, row.workspace) for row in stored_pins if row is not None] == [
+        (PINNED_HOST_ID, "/home/alice"),
+        (None, None),
+    ]
 
 
 async def test_list_shows_live_portfolios_and_only_the_callers_managers(

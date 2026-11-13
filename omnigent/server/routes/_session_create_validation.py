@@ -449,3 +449,48 @@ async def validate_uploaded_bundle_host_workspace(
         spec_cwd=spec_cwd,
         host_name=host_name,
     )
+
+
+async def resolve_host_home_workspace(
+    *,
+    user_id: str | None,
+    host_id: str,
+    host_store: Any | None,
+    host_registry: Any | None,
+) -> str:
+    """
+    Resolve the caller's connected host's home directory as a workspace.
+
+    Ownership and wrong-replica checks run before the host is contacted, as
+    in :func:`validate_uploaded_bundle_host_workspace`.
+
+    :param user_id: Authenticated caller, or ``None`` when auth is off.
+    :param host_id: Caller-supplied external host id.
+    :param host_store: Persistent host registrations.
+    :param host_registry: Live host tunnels on this replica.
+    :returns: The home directory's canonical path, e.g. ``"/Users/alice"``.
+    :raises OmnigentError: On any validation failure; ``INTERNAL_ERROR``
+        when the server has no host registry.
+    """
+    if host_registry is None:
+        raise OmnigentError(
+            "host registry is not configured on this server",
+            code=ErrorCode.INTERNAL_ERROR,
+        )
+    host_name = await _authorize_host_for_workspace(
+        user_id=user_id,
+        host_id=host_id,
+        host_store=host_store,
+        host_registry=host_registry,
+    )
+    from omnigent.server.routes._workspace_validation import (
+        WorkspaceValidationError,
+        resolve_host_home,
+    )
+
+    try:
+        return await resolve_host_home(
+            host_registry=host_registry, host_id=host_id, host_name_for_errors=host_name
+        )
+    except WorkspaceValidationError as exc:
+        raise OmnigentError(exc.message, code=ErrorCode.INVALID_INPUT) from exc

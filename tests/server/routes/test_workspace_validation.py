@@ -24,6 +24,7 @@ from omnigent.host.frames import (
 from omnigent.server.host_registry import HostRegistry
 from omnigent.server.routes._workspace_validation import (
     WorkspaceValidationError,
+    resolve_host_home,
     validate_workspace,
 )
 
@@ -606,3 +607,37 @@ async def test_tilde_boundary_passed_through_to_host(
         spec_cwd="~/universe",
     )
     assert canonical == "/Users/corey/universe/src/foo"
+
+
+# ── Host home directory ──────────────────────────────────
+
+
+async def test_host_home_is_the_hosts_expansion_of_tilde(
+    host_setup: tuple[HostRegistry, _FakeWebSocket, asyncio.Task[None]],
+) -> None:
+    """
+    Verify the home directory is the canonical path the host returns for ``~``.
+
+    The fixture answers only the exact path registered, so this also
+    pins that ``~`` is sent unexpanded.
+    """
+    registry, _, _ = host_setup
+    _set_stat(registry, "~", canonical="/Users/corey")
+
+    assert await resolve_host_home(host_registry=registry, host_id=_HOST_ID) == "/Users/corey"
+
+
+async def test_unresolved_host_home_rejected(
+    host_setup: tuple[HostRegistry, _FakeWebSocket, asyncio.Task[None]],
+) -> None:
+    """
+    Verify a host that does not resolve ``~`` to a directory is an error.
+
+    Otherwise a session would be stored with a workspace that does not
+    exist.
+    """
+    registry, _, _ = host_setup
+    # No stat reply registered → fixture's default returns exists:false.
+    with pytest.raises(WorkspaceValidationError) as exc_info:
+        await resolve_host_home(host_registry=registry, host_id=_HOST_ID)
+    assert "did not resolve its home directory" in exc_info.value.message

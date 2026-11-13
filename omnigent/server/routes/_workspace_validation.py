@@ -351,3 +351,36 @@ async def validate_workspace(
             )
 
     return canonical_workspace
+
+
+async def resolve_host_home(
+    *,
+    host_registry: HostRegistry,
+    host_id: str,
+    host_name_for_errors: str | None = None,
+) -> str:
+    """
+    Return the host's home directory as a canonical absolute path.
+
+    The host expands ``~`` against its own ``HOME``.
+
+    :param host_registry: Server-side host registry; used to find the
+        live connection and send the stat frame.
+    :param host_id: Target host's stable id.
+    :param host_name_for_errors: Optional human-readable host name for
+        error messages. ``None`` falls back to ``host_id``.
+    :returns: The home directory, e.g. ``"/Users/corey"``.
+    :raises WorkspaceValidationError: When the host is offline or does
+        not resolve a home directory.
+    """
+    display_host = host_name_for_errors or host_id
+    host_conn = host_registry.get(host_id)
+    if host_conn is None:
+        raise WorkspaceValidationError(
+            f"host '{display_host}' is offline; reconnect the host and try again"
+        )
+    home_stat = await _ask_host_stat(host_registry=host_registry, host_conn=host_conn, path="~")
+    canonical_home = home_stat.get("canonical_path")
+    if home_stat.get("type") != "directory" or not isinstance(canonical_home, str):
+        raise WorkspaceValidationError(f"host '{display_host}' did not resolve its home directory")
+    return canonical_home

@@ -519,7 +519,7 @@
         "type": "object"
       },
       "AgentManagerResponse": {
-        "description": "A manager on the caller's GlobalHub board.\n\n`conversation_id` is the manager's session. `tasks` lists its live\ntasks (active, idle or agent-resolved); archived tasks are left out.\n`host_id` and `workspace` are null when the manager runs on the\ncaller's GlobalHub host and workspace.",
+        "description": "A manager on the caller's GlobalHub board.\n\n`conversation_id` is the manager's session. `tasks` lists its live\ntasks (active, idle or agent-resolved); archived tasks are left out.\n`host_id` and `workspace` are where that session runs, null when it\nis gone.",
         "properties": {
           "conversation_id": {
             "anyOf": [
@@ -2252,12 +2252,25 @@
       },
       "CreateAgentManagerRequest": {
         "additionalProperties": false,
-        "description": "Create a manager on the caller's board, with its own session.\n\n`role_key` accepts only `\"manager:default\"`.",
+        "description": "Create a manager on the caller's board, with its own session.\n\n`role_key` accepts only `\"manager:default\"`. The session runs on the\ncaller's GlobalHub host and workspace unless `host_id` pins it to\nanother of the caller's hosts, which must be online; there it works in\nthe host's home directory.",
         "properties": {
           "description": {
             "maxLength": 512,
             "title": "Description",
             "type": "string"
+          },
+          "host_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Id"
           },
           "role_key": {
             "const": "manager:default",
@@ -14653,7 +14666,7 @@
         ]
       },
       "post": {
-        "description": "Create a manager with its own session on the caller's GlobalHub host.",
+        "description": "Create a manager with its own session, on the GlobalHub host unless pinned.",
         "operationId": "create_manager_v1_agent_tasks_managers_post",
         "requestBody": {
           "content": {

@@ -76,10 +76,11 @@ pmv2_api(
 
 Manager should manage broad scope, and not specific work like CI fix, bug fix, code dev. It should manage broad project level scope, like IAM/Observability/Storage/Dashboard service or project.
 
-`host_id` is optional placement overrides: it pin the
-manager to a specific host and working directory instead of the role profile's
-defaults. Use `host_id` when the events come from a known other host and a
-same-host manager is worth having; `host_id` must be a registered host. See below for how to get eligible hosts.
+`host_id` is optional: it pins the manager to another of the user's hosts,
+working in that host's home directory, instead of the GlobalHub host. Use
+`host_id` when the events come from a known other host and a same-host manager
+is worth having. The host must be one of the user's hosts and online; see below
+for how to list them. If it is offline, create the manager without `host_id`.
 Host matching stays a preference even after pinning — cross-host routing is
 always allowed.
 

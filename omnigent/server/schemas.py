@@ -6011,8 +6011,8 @@ class AgentManagerResponse(BaseModel):
 
     ``conversation_id`` is the manager's session. ``tasks`` lists its live
     tasks (active, idle or agent-resolved); archived tasks are left out.
-    ``host_id`` and ``workspace`` are null when the manager runs on the
-    caller's GlobalHub host and workspace.
+    ``host_id`` and ``workspace`` are where that session runs, null when it
+    is gone.
     """
 
     object: Literal["agent.manager"] = "agent.manager"
@@ -6037,12 +6037,16 @@ class AgentManagerList(BaseModel):
 class CreateAgentManagerRequest(BaseModel):
     """Create a manager on the caller's board, with its own session.
 
-    ``role_key`` accepts only ``"manager:default"``.
+    ``role_key`` accepts only ``"manager:default"``. The session runs on the
+    caller's GlobalHub host and workspace unless ``host_id`` pins it to
+    another of the caller's hosts, which must be online; there it works in
+    the host's home directory.
     """
 
     description: _AgentManagerDescription
     title: _AgentManagerTitle | None = None
     role_key: Literal["manager:default"] = "manager:default"
+    host_id: str | None = Field(default=None, min_length=1, max_length=GLOBALHUB_HOST_ID_MAX_CHARS)
 
     model_config = ConfigDict(extra="forbid")
 
