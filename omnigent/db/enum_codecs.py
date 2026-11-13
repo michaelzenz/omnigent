@@ -145,6 +145,18 @@ TASK_STATE: dict[str, int] = {
     "agent-resolved": 5,
 }
 
+# GlobalHub task events. The gaps are retired states; keep them so a stored
+# code never changes meaning.
+TASK_EVENT_STATE: dict[str, int] = {
+    # Waiting for the broker to route it to a manager.
+    "unrouted": 4,
+    "routed": 6,
+    # Handled by its manager, or noise.
+    "dismissed": 8,
+    # Filed into an FYI cluster for the user.
+    "fyi": 12,
+}
+
 
 def _assert_item_type_codes_cover_data_classes() -> None:
     """
@@ -346,6 +358,16 @@ def encode_task_state(name: str) -> int:
 def decode_task_state(code: int) -> str:
     """Decode a ``tasks.state`` int code to its name."""
     return _decode(TASK_STATE, code, field="tasks.state")
+
+
+def encode_task_event_state(name: str) -> int:
+    """Encode a ``task_events.state`` name to its int code."""
+    return _encode(TASK_EVENT_STATE, name, field="task_events.state")
+
+
+def decode_task_event_state(code: int) -> str:
+    """Decode a ``task_events.state`` int code to its name."""
+    return _decode(TASK_EVENT_STATE, code, field="task_events.state")
 
 
 def encode_scheduled_task_execution_target(name: str) -> int:

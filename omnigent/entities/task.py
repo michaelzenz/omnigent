@@ -1,13 +1,16 @@
-"""GlobalHub board entities, persisted in the ``tasks``, ``managers`` and ``workers`` tables.
+"""GlobalHub board entities, persisted in the ``tasks``, ``managers``, ``workers`` and
+``task_events`` tables.
 
 A :class:`Task` is a long-lived unit of work on one user's GlobalHub board,
 owned by one :class:`Manager`. Each :class:`Worker` attaches a session that
-works on the task.
+works on the task. A :class:`TaskEvent` is a signal the broker routes to a
+manager.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -110,3 +113,64 @@ class Worker:
     created_at: int
     title: str | None = None
     updated_at: int | None = None
+
+
+@dataclass(frozen=True)
+class EventTag:
+    """
+    A routing hint on a task event.
+
+    :param tag_type: What the hint names, e.g. ``"repo"``.
+    :param tag: The hint, e.g. ``"example-org/storage"``.
+    """
+
+    tag_type: str
+    tag: str
+
+
+@dataclass
+class TaskEvent:
+    """
+    A signal on a user's GlobalHub board, e.g. a session finishing a turn.
+
+    The broker routes an ``unrouted`` event to one of the owner's managers. The
+    manager handles a ``routed`` event and dismisses it, or files it into an
+    FYI cluster.
+
+    :param id: UUID primary key (bare 32-char hex string, no dashes).
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param event_type: What happened, e.g. ``"session.turn.finished"``.
+    :param title: One-line summary for the broker and the manager.
+    :param state: ``"unrouted"``, ``"routed"``, ``"dismissed"`` or ``"fyi"``.
+    :param created_at: Unix epoch seconds at row creation.
+    :param payload: Details of the event.
+    :param source: The system that reported it, e.g. ``"github"``.
+    :param source_key: What the source reported on, e.g. a pull request URL.
+    :param source_offset: Which report this is, e.g. a comment id. With the
+        source, key and event type it identifies a repeated report.
+    :param source_session_id: The session the event came from.
+    :param tags: Routing hints.
+    :param task_id: The task the event concerns.
+    :param manager_id: The manager the event was routed to.
+    :param updated_at: Unix epoch seconds of the last change.
+    :param routed_at: When the event was routed to a manager.
+    :param processed_at: When the event was dismissed or filed.
+    """
+
+    id: str
+    owner_user_id: str | None
+    event_type: str
+    title: str
+    state: str
+    created_at: int
+    payload: dict[str, Any] = field(default_factory=dict)
+    source: str | None = None
+    source_key: str | None = None
+    source_offset: str | None = None
+    source_session_id: str | None = None
+    tags: list[EventTag] = field(default_factory=list)
+    task_id: str | None = None
+    manager_id: str | None = None
+    updated_at: int | None = None
+    routed_at: int | None = None
+    processed_at: int | None = None

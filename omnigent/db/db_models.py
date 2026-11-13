@@ -1004,6 +1004,87 @@ class SqlWorker(OmnigentBase):
     )
 
 
+class SqlTaskEvent(OmnigentBase):
+    """
+    SQLAlchemy model for the ``task_events`` table: signals on a GlobalHub board.
+
+    The broker routes an unrouted event to one of the owner's managers, which
+    handles and dismisses it or files it into an FYI cluster. Ownership is
+    stamped on the row; there are no foreign keys (Rule R032).
+
+    :param id: Uuid16 primary key (bare 32-char hex in Python).
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param event_type: What happened, e.g. ``"session.turn.finished"``.
+    :param title: One-line summary for the broker and the manager.
+    :param payload: JSON details of the event, or ``None``.
+    :param source: The system that reported it, e.g. ``"github"``.
+    :param source_key: What the source reported on, e.g. a pull request URL.
+    :param source_offset: Which report this is, e.g. a comment id.
+    :param source_session_id: The session the event came from.
+    :param tags: JSON list of ``{"tag_type": ..., "tag": ...}`` routing hints.
+    :param state: A ``TASK_EVENT_STATE`` code.
+    :param task_id: The task the event concerns, or ``None``.
+    :param manager_id: The manager it was routed to, or ``None``.
+    :param created_at: Unix epoch seconds at row creation.
+    :param updated_at: Unix epoch seconds of the last change, or ``None``.
+    :param routed_at: When it was routed to a manager, or ``None``.
+    :param processed_at: When it was dismissed or filed, or ``None``.
+    """
+
+    __tablename__ = "task_events"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    payload: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    source: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    source_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    source_offset: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    source_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    # MySQL rejects a server default on TEXT, so the store always writes it.
+    tags: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="4")
+    task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    manager_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    routed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    processed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("state IN (4, 6, 8, 12)", name="ck_task_events_state"),
+        # One owner's events in a state, oldest first, e.g. the broker's inbox.
+        Index(
+            "ix_task_events_owner_state",
+            "workspace_id",
+            "owner_user_id",
+            "state",
+            "created_at",
+            "id",
+        ),
+        # A manager's events in a state, oldest first.
+        Index(
+            "ix_task_events_manager_state",
+            "workspace_id",
+            "manager_id",
+            "state",
+            "created_at",
+            "id",
+        ),
+        # Earlier reports of the same thing from a source.
+        Index("ix_task_events_source_key", "workspace_id", "owner_user_id", "source_key"),
+    )
+
+
 class SqlConversation(ConversationBase):
     """
     SQLAlchemy model for the ``conversations`` table.

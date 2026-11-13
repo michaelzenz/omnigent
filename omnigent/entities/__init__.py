@@ -42,7 +42,7 @@ from omnigent.entities.session_resources import (
     get_resource_by_id,
     resolve_terminal_entry_by_resource_id,
 )
-from omnigent.entities.task import Manager, Task, Worker
+from omnigent.entities.task import EventTag, Manager, Task, TaskEvent, Worker
 
 __all__ = [
     "DEFAULT_ENVIRONMENT_ID",
@@ -60,6 +60,7 @@ __all__ = [
     "DatabricksConnection",
     "DeviceGrant",
     "ErrorData",
+    "EventTag",
     "FunctionCallData",
     "FunctionCallOutputData",
     "GithubConnection",
@@ -84,6 +85,7 @@ __all__ = [
     "SlashCommandData",
     "StoredFile",
     "Task",
+    "TaskEvent",
     "TerminalCommandData",
     "Worker",
     "filter_resources_by_type",

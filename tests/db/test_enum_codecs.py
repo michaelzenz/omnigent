@@ -46,6 +46,8 @@ _CODECS = [
         ec.encode_scheduled_task_session_mode,
         ec.decode_scheduled_task_session_mode,
     ),
+    (ec.TASK_STATE, ec.encode_task_state, ec.decode_task_state),
+    (ec.TASK_EVENT_STATE, ec.encode_task_event_state, ec.decode_task_event_state),
 ]
 
 
@@ -136,3 +138,5 @@ def test_shipped_codes_are_stable() -> None:
         "skipped": 5,
         "starting": 6,
     }
+    assert ec.TASK_STATE == {"active": 1, "idle": 3, "archived": 4, "agent-resolved": 5}
+    assert ec.TASK_EVENT_STATE == {"unrouted": 4, "routed": 6, "dismissed": 8, "fyi": 12}
