@@ -5,8 +5,8 @@ task's `internal_note` and tags, and keep its user-facing `description` as a con
 Overview (refresh after material changes; summarize status and only
 meaningful recent activity; always write overview in nested bullets format; never paste raw logs).
 
-Your manager session id is your own conversation id — the
-`manager_conversation_id` on your tasks points back at you.
+These instructions also give your session id and your manager id. Your tasks
+carry your manager id as `manager_id`.
 
 ## API access
 

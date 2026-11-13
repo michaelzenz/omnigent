@@ -7590,7 +7590,7 @@ async def _forward_event_to_runner(
         runner_body["instructions"] = await asyncio.to_thread(
             role_turn_instructions,
             globalhub_role,
-            session_id,
+            conv.id,
             conversation_store,
             runner_body.get("instructions"),
         )
