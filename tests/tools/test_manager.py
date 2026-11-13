@@ -1796,14 +1796,15 @@ def test_allowed_builtin_tools_drops_unnamed_builtins_but_not_client_tools(
     assert set(mgr.get_tool_names()) == {*allowed, "get_weather"}
 
 
-def test_sys_session_delete_registers_only_when_declared() -> None:
-    """Deleting sessions is destructive, so no agent gets it without declaring it."""
+@pytest.mark.parametrize("tool_name", ["sys_session_delete", "pmv2_api"])
+def test_opt_in_builtins_register_only_when_declared(tool_name: str) -> None:
+    """Deleting sessions and changing the GlobalHub board need an explicit declaration."""
     declared = AgentSpec(
         spec_version=1,
         skills_filter="none",
-        tools=ToolsConfig(builtins=[BuiltinToolConfig(name="sys_session_delete")]),
+        tools=ToolsConfig(builtins=[BuiltinToolConfig(name=tool_name)]),
     )
     undeclared = AgentSpec(spec_version=1, skills_filter="none")
 
-    assert "sys_session_delete" in ToolManager(declared).get_tool_names()
-    assert "sys_session_delete" not in ToolManager(undeclared).get_tool_names()
+    assert tool_name in ToolManager(declared).get_tool_names()
+    assert tool_name not in ToolManager(undeclared).get_tool_names()

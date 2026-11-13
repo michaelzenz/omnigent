@@ -170,6 +170,18 @@ def _create_session_delete(config: dict[str, str]) -> Tool:
     return SysSessionDeleteTool()
 
 
+def _create_pmv2_api(config: dict[str, str]) -> Tool:
+    """
+    Lazy factory for Pmv2ApiTool.
+
+    :param config: Tool config (unused).
+    :returns: A Pmv2ApiTool instance.
+    """
+    from omnigent.tools.builtins.pmv2_api import Pmv2ApiTool
+
+    return Pmv2ApiTool()
+
+
 def _create_list_files(config: dict[str, str]) -> Tool:
     """
     Lazy factory for ListFilesTool.
@@ -280,6 +292,7 @@ _BUILTIN_REGISTRY: dict[str, _BuiltinFactory | None] = {
     "download_file": _create_download_file,
     "search_conversations": _create_search_conversations,
     "sys_session_delete": _create_session_delete,
+    "pmv2_api": _create_pmv2_api,
     "export_agent": _create_export_agent,
     # Framework-owned: need runtime context. ``web_fetch`` is
     # constructed by ToolManager before reaching this registry.

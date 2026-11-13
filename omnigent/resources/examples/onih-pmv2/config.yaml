@@ -18,6 +18,7 @@ skills: none
 tools:
   builtins:
     - search_conversations
+    - pmv2_api
 
 # No Pi shell or file-edit tools. `mcp` reaches the host's MCP servers through
 # the pi-mcp-adapter extension, and some of those can run code, so the

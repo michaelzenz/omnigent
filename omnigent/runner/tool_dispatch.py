@@ -87,6 +87,7 @@ from omnigent.tools.builtins.os_env import (
     SysOsShellTool,
     SysOsWriteTool,
 )
+from omnigent.tools.builtins.pmv2_api import Pmv2ApiTool
 from omnigent.tools.builtins.search_conversations import SearchConversationsTool
 from omnigent.tools.builtins.session_delete import SysSessionDeleteTool
 from omnigent.tools.builtins.session_message import (
@@ -349,6 +350,8 @@ _PROJECT_TOOLS = frozenset(
 _CONVERSATION_SEARCH_TOOLS = frozenset({SearchConversationsTool.name()})
 # Opt-in owner-gated delete; only specs that declare it register it.
 _SESSION_DELETE_TOOLS = frozenset({SysSessionDeleteTool.name()})
+# Opt-in GlobalHub board API, called as the calling session.
+_PMV2_API_TOOLS = frozenset({Pmv2ApiTool.name()})
 _UI_TOOLS = frozenset({UiOpenFileTool.name()})
 
 # The title bound the rename tool advertises to the LLM — read once from the
@@ -936,6 +939,7 @@ _ALL_LOCAL_TOOLS = (
     | _PROJECT_TOOLS
     | _CONVERSATION_SEARCH_TOOLS
     | _SESSION_DELETE_TOOLS
+    | _PMV2_API_TOOLS
     | _UI_TOOLS
     | _WEB_FETCH_TOOLS
     | _WEB_SEARCH_TOOLS
@@ -7412,6 +7416,10 @@ async def execute_tool(
             from omnigent.runner.session_projects import execute_session_delete
 
             output = await execute_session_delete(args, server_client, conversation_id)
+        elif tool_name in _PMV2_API_TOOLS:
+            from omnigent.runner.pmv2_api import execute_pmv2_api
+
+            output = await execute_pmv2_api(args, server_client, conversation_id)
         elif tool_name in _SESSION_CREATE_TOOLS:
             output = await _execute_session_create(
                 args,
