@@ -6052,6 +6052,14 @@ class CreateAgentManagerRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class UpdateAgentManagerSelfRequest(BaseModel):
+    """Replace the calling manager's description of the scope it owns."""
+
+    description: _AgentManagerDescription
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class AgentManagerDeletedResponse(BaseModel):
     """A deleted manager; its tasks are unassigned.
 

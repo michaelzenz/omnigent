@@ -13473,6 +13473,22 @@
         "title": "UiOpenFileEvent",
         "type": "object"
       },
+      "UpdateAgentManagerSelfRequest": {
+        "additionalProperties": false,
+        "description": "Replace the calling manager's description of the scope it owns.",
+        "properties": {
+          "description": {
+            "maxLength": 512,
+            "title": "Description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "title": "UpdateAgentManagerSelfRequest",
+        "type": "object"
+      },
       "UpdateAgentTaskRequest": {
         "additionalProperties": false,
         "description": "Change fields of one of the caller's tasks; omitted fields keep their value.\n\n`manager_id: null` unassigns the task. Setting `state` also moves the\ntask on the board: `agent-resolved` to the end, any other state to the top.",
@@ -14873,6 +14889,48 @@
           }
         },
         "summary": "Create Manager",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/managers/self": {
+      "patch": {
+        "description": "Let a manager's session replace its own manager's description.\n\nOnly the manager's runner can name its session, so the board UI cannot\ncall this.",
+        "operationId": "update_own_manager_v1_agent_tasks_managers_self_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAgentManagerSelfRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentManagerResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Own Manager",
         "tags": [
           "agent-tasks"
         ]

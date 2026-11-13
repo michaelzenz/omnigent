@@ -9,6 +9,11 @@ import httpx
 import pytest
 
 from omnigent.agent_tasks.session_labels import MANAGER_ROLE_VALUE, ROLE_LABEL
+from omnigent.runner.identity import (
+    ORCHESTRATION_SOURCE_HEADER,
+    RUNNER_TUNNEL_TOKEN_HEADER,
+    token_bound_runner_id,
+)
 from omnigent.server.routes import agent_task_managers
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -124,6 +129,46 @@ async def test_pinned_managers_run_in_the_hosts_home_and_list_their_session_plac
         (PINNED_HOST_ID, "/home/alice"),
         (None, None),
     ]
+
+
+async def test_only_the_managers_own_session_updates_its_description(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    _install_manager_agent(db_uri)
+    _place_globalhub(db_uri)
+    manager = await _create_manager(auth_client, "Storage")
+    runner_token = "storage-manager-runner"
+    SqlAlchemyConversationStore(db_uri).set_runner_id(
+        manager["conversation_id"], token_bound_runner_id(runner_token)
+    )
+    own_runner = {
+        ORCHESTRATION_SOURCE_HEADER: manager["conversation_id"],
+        RUNNER_TUNNEL_TOKEN_HEADER: runner_token,
+    }
+    body = {"description": "Storage service and its S3 clients"}
+
+    refused = [
+        await auth_client.patch(f"{ROUTE}/self", json=body, headers=ALICE),
+        await auth_client.patch(
+            f"{ROUTE}/self",
+            json=body,
+            headers={**ALICE, **own_runner, RUNNER_TUNNEL_TOKEN_HEADER: "another-runner"},
+        ),
+        await auth_client.patch(f"{ROUTE}/self", json=body, headers={**BOB, **own_runner}),
+    ]
+    blank = await auth_client.patch(
+        f"{ROUTE}/self", json={"description": " "}, headers={**ALICE, **own_runner}
+    )
+    updated = await auth_client.patch(f"{ROUTE}/self", json=body, headers={**ALICE, **own_runner})
+    listed = (await auth_client.get(ROUTE, headers=ALICE)).json()["data"]
+
+    assert [response.status_code for response in refused] == [403, 403, 403]
+    assert blank.status_code == 422
+    assert (updated.json()["id"], updated.json()["description"]) == (
+        manager["id"],
+        body["description"],
+    )
+    assert [entry["description"] for entry in listed] == [body["description"]]
 
 
 async def test_list_shows_live_portfolios_and_only_the_callers_managers(

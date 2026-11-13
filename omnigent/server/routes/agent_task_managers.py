@@ -22,6 +22,11 @@ from omnigent.agent_tasks.role_sessions import (
 from omnigent.agent_tasks.roles import MANAGER_ROLE_KEY, builtin_role
 from omnigent.entities import Conversation, Manager, Task
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.runner.identity import (
+    ORCHESTRATION_SOURCE_HEADER,
+    RUNNER_TUNNEL_TOKEN_HEADER,
+    token_bound_runner_id,
+)
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.server.routes._session_create_validation import resolve_host_home_workspace
@@ -33,8 +38,11 @@ from omnigent.server.schemas import (
     AgentManagerTask,
     AgentTaskState,
     CreateAgentManagerRequest,
+    UpdateAgentManagerSelfRequest,
 )
+from omnigent.stores import ConversationStore
 from omnigent.stores.user_settings_store import GlobalHubPlacement
+from omnigent.util.uuid import InvalidUuidError, uuid_to_bytes
 
 # Archived tasks no longer count toward a manager's portfolio.
 _LIVE_TASK_STATES = ("active", "idle", "agent-resolved")
@@ -130,6 +138,41 @@ def create_agent_task_managers_router(
         _announce_session_added(user_id, session.id)
         return _manager_response(manager, [], session)
 
+    @router.patch("/agent-tasks/managers/self", response_model=AgentManagerResponse)
+    async def update_own_manager(
+        request: Request, body: UpdateAgentManagerSelfRequest
+    ) -> AgentManagerResponse:
+        """Let a manager's session replace its own manager's description.
+
+        Only the manager's runner can name its session, so the board UI cannot
+        call this.
+        """
+        user_id = require_user(request, auth_provider)
+        source_id = request.headers.get(ORCHESTRATION_SOURCE_HEADER, "")
+        token = (request.headers.get(RUNNER_TUNNEL_TOKEN_HEADER) or "").strip()
+
+        def update() -> tuple[Manager, list[Task], Conversation]:
+            session = _runner_bound_session(source_id, token, sessions.conversation_store)
+            if session is None:
+                raise OmnigentError(
+                    "only a manager's own session can update it", code=ErrorCode.FORBIDDEN
+                )
+            manager = board.managers.get_by_conversation_id(session.id, owner_user_id=user_id)
+            if manager is None:
+                raise OmnigentError(
+                    "the calling session is not one of your managers", code=ErrorCode.FORBIDDEN
+                )
+            updated = board.managers.update(
+                manager.id, owner_user_id=user_id, description=body.description
+            )
+            tasks = board.tasks.list(
+                owner_user_id=user_id, states=_LIVE_TASK_STATES, manager_id=manager.id
+            )
+            return updated or manager, tasks, session
+
+        manager, tasks, session = await asyncio.to_thread(update)
+        return _manager_response(manager, tasks, session)
+
     @router.delete(
         "/agent-tasks/managers/{manager_id}", response_model=AgentManagerDeletedResponse
     )
@@ -152,6 +195,22 @@ def create_agent_task_managers_router(
         return AgentManagerDeletedResponse(id=manager.id, conversation_id=manager.conversation_id)
 
     return router
+
+
+def _runner_bound_session(
+    session_id: str, token: str, conversations: ConversationStore
+) -> Conversation | None:
+    """Return the named session when ``token`` is its runner's tunnel token. Blocking."""
+    if not token:
+        return None
+    try:
+        canonical_id = uuid_to_bytes(session_id).hex()
+    except InvalidUuidError:
+        return None
+    session = conversations.get_conversation(canonical_id)
+    if session is None or session.runner_id != token_bound_runner_id(token):
+        return None
+    return session
 
 
 def _manager_response(
