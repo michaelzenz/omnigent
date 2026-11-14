@@ -32,14 +32,15 @@ class TaskAssetStore(ABC):
         task_id: str,
         url: str,
         title: str,
-        category: str = "other",
+        category: str | None = None,
         add_related_session_ids: Collection[str] = (),
     ) -> TaskAsset:
         """
         Attach a URL to the owner's task, or update the asset the task has for it.
 
-        An update keeps the asset's id, replaces its title and category, and
-        adds ``add_related_session_ids`` to its related sessions.
+        An update keeps the asset's id, replaces its title, replaces its category
+        unless ``category`` is ``None``, and adds ``add_related_session_ids`` to
+        its related sessions. A new asset without a category is ``"other"``.
 
         :param asset_id: Pre-generated id (bare 32-char hex), used for a new asset.
         :param owner_user_id: The task's owner, or ``None`` in single-user mode.

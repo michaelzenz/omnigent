@@ -5920,6 +5920,11 @@ _AgentTaskWorkerTitle = Annotated[str, Field(max_length=200), AfterValidator(_st
 _AgentTaskEventType = Annotated[str, Field(max_length=128), AfterValidator(_strip_required_text)]
 _AgentTaskEventTitle = Annotated[str, Field(max_length=512), AfterValidator(_strip_required_text)]
 _AgentFyiHeadline = Annotated[str, Field(max_length=512), AfterValidator(_strip_required_text)]
+_AgentTaskAssetTitle = Annotated[str, Field(max_length=256), AfterValidator(_strip_required_text)]
+_AgentTaskAssetCategory = Annotated[
+    str, Field(max_length=64), AfterValidator(_strip_required_text)
+]
+_AgentTaskAssetUrl = Annotated[str, Field(max_length=8_192), AfterValidator(_strip_required_text)]
 
 
 class AgentTaskResponse(BaseModel):
@@ -6252,6 +6257,50 @@ class FileAgentTaskEventsRequest(BaseModel):
     rationale: str | None = Field(default=None, min_length=1, max_length=4_000)
 
     model_config = ConfigDict(extra="forbid")
+
+
+class AgentTaskAssetResponse(BaseModel):
+    """A link one of the caller's tasks carries.
+
+    ``category`` groups assets on the task card. ``related_session_ids`` are
+    the sessions that produced or used the artifact.
+    """
+
+    object: Literal["agent.task.asset"] = "agent.task.asset"
+    id: str
+    task_id: str
+    category: str
+    title: str
+    url: str
+    related_session_ids: list[str]
+    created_at: int
+    updated_at: int | None
+
+
+class CreateAgentTaskAssetRequest(BaseModel):
+    """Attach a link to one of the caller's tasks; a task has one asset per URL.
+
+    Posting a URL the task already has updates that asset: ``title`` replaces
+    its title, ``category`` replaces its category when given, and
+    ``add_related_session_ids`` join its related sessions. ``category`` is any
+    short label; a new asset without one is ``"other"``.
+    """
+
+    url: _AgentTaskAssetUrl
+    title: _AgentTaskAssetTitle
+    category: _AgentTaskAssetCategory | None = None
+    add_related_session_ids: list[str] = Field(default_factory=list, max_length=100)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentTaskAssetDeletedResponse(BaseModel):
+    """An asset removed from one of the caller's tasks."""
+
+    object: Literal["agent.task.asset"] = "agent.task.asset"
+    id: str
+    task_id: str
+    deleted: Literal[True] = True
 
 
 class UpdateGlobalHubRoleProfileRequest(BaseModel):

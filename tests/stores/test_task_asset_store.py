@@ -51,7 +51,7 @@ def test_a_task_has_one_asset_per_url_and_a_repeat_updates_it(
     updated = _attach(
         store, category="runbooks", add_related_session_ids=[second_session, first_session]
     )
-    repeated = _attach(store, category="runbooks")
+    repeated = _attach(store)
     on_other_task = _attach(store, task_id=OTHER_TASK)
 
     assert first.id == updated.id == repeated.id
@@ -60,7 +60,9 @@ def test_a_task_has_one_asset_per_url_and_a_repeat_updates_it(
         "runbooks",
         [first_session, second_session],
     )
-    assert (repeated.related_session_ids, repeated.updated_at) == (
+    # A repeat without a category keeps the asset's category.
+    assert (repeated.category, repeated.related_session_ids, repeated.updated_at) == (
+        "runbooks",
         [first_session, second_session],
         updated.updated_at,
     )

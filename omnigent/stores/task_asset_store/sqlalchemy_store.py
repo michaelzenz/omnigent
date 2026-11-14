@@ -21,6 +21,8 @@ from omnigent.entities import TaskAsset
 from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.util.uuid import normalize_uuid
 
+_DEFAULT_CATEGORY = "other"
+
 
 def _to_entity(row: SqlTaskAsset) -> TaskAsset:
     return TaskAsset(
@@ -75,7 +77,7 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
         task_id: str,
         url: str,
         title: str,
-        category: str = "other",
+        category: str | None = None,
         add_related_session_ids: Collection[str] = (),
     ) -> TaskAsset:
         """Attach a URL to the owner's task, or update the asset the task has for it."""
@@ -95,7 +97,7 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
                     id=asset_id,
                     owner_user_id=owner_user_id,
                     task_id=task_id,
-                    category=category,
+                    category=category or _DEFAULT_CATEGORY,
                     title=title,
                     url=url,
                     related_session_ids=json.dumps(list(dict.fromkeys(added))),
@@ -106,9 +108,10 @@ class SqlAlchemyTaskAssetStore(TaskAssetStore):
                 return _to_entity(row)
             related = json.loads(row.related_session_ids)
             merged = list(dict.fromkeys([*related, *added]))
-            if (row.title, row.category, related) != (title, category, merged):
+            new_category = category or row.category
+            if (row.title, row.category, related) != (title, new_category, merged):
                 row.title = title
-                row.category = category
+                row.category = new_category
                 row.related_session_ids = json.dumps(merged)
                 row.updated_at = now
             return _to_entity(row)

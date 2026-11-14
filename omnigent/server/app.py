@@ -120,6 +120,7 @@ from omnigent.server.performance_metrics import (
     set_request_user_agent_for_access_log,
 )
 from omnigent.server.preference_requests import DEFAULT_PREFERENCE_POLICY, PreferencePolicy
+from omnigent.server.routes.agent_task_assets import create_agent_task_assets_router
 from omnigent.server.routes.agent_task_events import create_agent_task_events_router
 from omnigent.server.routes.agent_task_fyi import create_agent_task_fyi_router
 from omnigent.server.routes.agent_task_managers import create_agent_task_managers_router
@@ -4195,6 +4196,11 @@ def create_app(
         )
         app.include_router(
             create_agent_task_fyi_router(board_stores, auth_provider),
+            prefix="/v1",
+            tags=["agent-tasks"],
+        )
+        app.include_router(
+            create_agent_task_assets_router(board_stores, auth_provider),
             prefix="/v1",
             tags=["agent-tasks"],
         )

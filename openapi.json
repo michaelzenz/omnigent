@@ -868,6 +868,104 @@
         "title": "AgentObject",
         "type": "object"
       },
+      "AgentTaskAssetDeletedResponse": {
+        "description": "An asset removed from one of the caller's tasks.",
+        "properties": {
+          "deleted": {
+            "const": true,
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.task.asset",
+            "default": "agent.task.asset",
+            "title": "Object",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "task_id"
+        ],
+        "title": "AgentTaskAssetDeletedResponse",
+        "type": "object"
+      },
+      "AgentTaskAssetResponse": {
+        "description": "A link one of the caller's tasks carries.\n\n`category` groups assets on the task card. `related_session_ids` are\nthe sessions that produced or used the artifact.",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "int64",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.task.asset",
+            "default": "agent.task.asset",
+            "title": "Object",
+            "type": "string"
+          },
+          "related_session_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Related Session Ids",
+            "type": "array"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "category",
+          "title",
+          "url",
+          "related_session_ids",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AgentTaskAssetResponse",
+        "type": "object"
+      },
       "AgentTaskBoardPending": {
         "description": "What waits for the caller on their GlobalHub board.\n\n`fyi` lists the pending FYI clusters, oldest first.",
         "properties": {
@@ -2794,6 +2892,48 @@
           "description"
         ],
         "title": "CreateAgentManagerRequest",
+        "type": "object"
+      },
+      "CreateAgentTaskAssetRequest": {
+        "additionalProperties": false,
+        "description": "Attach a link to one of the caller's tasks; a task has one asset per URL.\n\nPosting a URL the task already has updates that asset: `title` replaces\nits title, `category` replaces its category when given, and\n`add_related_session_ids` join its related sessions. `category` is any\nshort label; a new asset without one is `\"other\"`.",
+        "properties": {
+          "add_related_session_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Add Related Session Ids",
+            "type": "array"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "title": {
+            "maxLength": 256,
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "maxLength": 8192,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "title"
+        ],
+        "title": "CreateAgentTaskAssetRequest",
         "type": "object"
       },
       "CreateAgentTaskEventRequest": {
@@ -15858,6 +15998,111 @@
           }
         },
         "summary": "Update Task",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/{task_id}/assets": {
+      "post": {
+        "description": "Attach a link to one of the caller's tasks, or update the one it has for the URL.",
+        "operationId": "attach_asset_v1_agent_tasks__task_id__assets_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAgentTaskAssetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskAssetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Attach Asset",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/{task_id}/assets/{asset_id}": {
+      "delete": {
+        "description": "Remove an asset from one of the caller's tasks.",
+        "operationId": "detach_asset_v1_agent_tasks__task_id__assets__asset_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "title": "Asset Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskAssetDeletedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Detach Asset",
         "tags": [
           "agent-tasks"
         ]

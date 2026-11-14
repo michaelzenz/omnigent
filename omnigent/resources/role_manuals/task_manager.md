@@ -1,7 +1,7 @@
 # Task manager manual
 
 You own **every task attached to you** — usually several. Maintain each
-task's `internal_note` and tags, and keep its user-facing `description` as a concise Markdown
+task's `internal_note`, and keep its user-facing `description` as a concise Markdown
 Overview (refresh after material changes; summarize status and only
 meaningful recent activity; always write overview in nested bullets format; never paste raw logs).
 
@@ -172,8 +172,7 @@ pmv2_api(
   method="POST",
   path="/v1/agent-tasks/<task_id>/assets",
   body={
-    "kind": "url",
-    "category": "documents",  # code | tests | documents | data_science | tables | logs | other
+    "category": "documents",  # any short label; common: code, tests, documents, data_science, tables, logs, other
     "title": "<short human-readable artifact name>",
     "url": "<artifact URL>",
     "add_related_session_ids": ["<session_id>"]
@@ -181,8 +180,9 @@ pmv2_api(
 )
 ```
 
-- Pick the closest category: docs → `documents`, source
-changes → `code`, query/notebook → `data_science`, tables → `tables`.
+- The category groups assets on the task card. Prefer a common one when it
+fits: docs → `documents`, source changes → `code`, query/notebook →
+`data_science`, tables → `tables`. Otherwise use a short label of your own.
 - Also include the pages it reference, like SOP/table/design/slack thread. Be picky, do not include everything it reads, but the ones that's useful, but always include everything it created. One asset per URL.
 - **Stamp the sessions that accessed the artifact.** Pass
 `add_related_session_ids` with the session id from the event's payload
