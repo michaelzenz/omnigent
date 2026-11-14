@@ -14,6 +14,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+# The task states in a manager's portfolio; an archived task is no longer in it.
+LIVE_TASK_STATES = ("active", "idle", "agent-resolved")
+
 
 @dataclass
 class Task:

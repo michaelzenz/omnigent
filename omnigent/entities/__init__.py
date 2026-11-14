@@ -43,6 +43,7 @@ from omnigent.entities.session_resources import (
     resolve_terminal_entry_by_resource_id,
 )
 from omnigent.entities.task import (
+    LIVE_TASK_STATES,
     AgentQueueItem,
     EventTag,
     FyiCluster,
@@ -57,6 +58,7 @@ from omnigent.entities.task import (
 __all__ = [
     "DEFAULT_ENVIRONMENT_ID",
     "DEFAULT_GENERATED_TITLE_MAX_CHARS",
+    "LIVE_TASK_STATES",
     "NON_CONTENT_ITEM_TYPES",
     "USER_SESSION_TITLE_MAX_CHARS",
     "Account",

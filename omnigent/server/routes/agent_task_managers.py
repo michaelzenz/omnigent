@@ -20,7 +20,7 @@ from omnigent.agent_tasks.role_sessions import (
     require_globalhub_placement,
 )
 from omnigent.agent_tasks.roles import MANAGER_ROLE_KEY, builtin_role
-from omnigent.entities import Conversation, Manager, Task
+from omnigent.entities import LIVE_TASK_STATES, Conversation, Manager, Task
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._agent_task_callers import runner_bound_caller
@@ -37,9 +37,6 @@ from omnigent.server.schemas import (
     UpdateAgentManagerSelfRequest,
 )
 from omnigent.stores.user_settings_store import GlobalHubPlacement
-
-# Archived tasks no longer count toward a manager's portfolio.
-_LIVE_TASK_STATES = ("active", "idle", "agent-resolved")
 
 
 def create_agent_task_managers_router(
@@ -66,7 +63,7 @@ def create_agent_task_managers_router(
         def load() -> list[tuple[Manager, list[Task], Conversation | None]]:
             managers = board.managers.list(owner_user_id=user_id)
             portfolios: defaultdict[str, list[Task]] = defaultdict(list)
-            for task in board.tasks.list(owner_user_id=user_id, states=_LIVE_TASK_STATES):
+            for task in board.tasks.list(owner_user_id=user_id, states=LIVE_TASK_STATES):
                 if task.manager_id is not None:
                     portfolios[task.manager_id].append(task)
             manager_sessions = sessions.conversation_store.get_conversations(
@@ -158,7 +155,7 @@ def create_agent_task_managers_router(
                 manager.id, owner_user_id=user_id, description=body.description
             )
             tasks = board.tasks.list(
-                owner_user_id=user_id, states=_LIVE_TASK_STATES, manager_id=manager.id
+                owner_user_id=user_id, states=LIVE_TASK_STATES, manager_id=manager.id
             )
             return updated or manager, tasks, session
 

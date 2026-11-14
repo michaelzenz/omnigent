@@ -13,11 +13,19 @@ from typing import Any
 import pytest
 
 from omnigent.agent_tasks.board_stores import BoardStores, open_board_stores
-from omnigent.agent_tasks.role_sessions import RoleSessionStores, ensure_role_session
-from omnigent.agent_tasks.roles import BROKER_ROLE_KEY, builtin_role
+from omnigent.agent_tasks.role_sessions import (
+    RoleSessionStores,
+    create_role_session,
+    ensure_role_session,
+)
+from omnigent.agent_tasks.roles import BROKER_ROLE_KEY, MANAGER_ROLE_KEY, builtin_role
 from omnigent.entities import EventTag
 from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher
-from omnigent.server.agent_queue_packagers import BrokerPackager, EventNoticeWriter
+from omnigent.server.agent_queue_packagers import (
+    BrokerPackager,
+    EventNoticeWriter,
+    ManagerPackager,
+)
 from omnigent.server.agent_task_delivery import SendResult, SessionSendDeps
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -64,7 +72,7 @@ def _event(board: BoardStores, owner: str = ALICE, *tags: str, **fields: Any) ->
         event_id,
         owner_user_id=owner,
         event_type=fields.pop("event_type", "github.pr.comment"),
-        title="Event",
+        title=fields.pop("title", "Event"),
         tags=[EventTag(*tag.split(":", 1)) for tag in tags],
         **fields,
     )
@@ -76,6 +84,26 @@ async def _broker(sessions: RoleSessionStores) -> str:
     assert role is not None
     session, _ = await ensure_role_session(role, user_id=ALICE, stores=sessions)
     return session.id
+
+
+def _manager(
+    board: BoardStores,
+    sessions: RoleSessionStores,
+    title: str = "Storage",
+    *,
+    archived: bool = False,
+) -> tuple[str, str]:
+    role = builtin_role(MANAGER_ROLE_KEY)
+    assert role is not None
+    session = create_role_session(
+        role, user_id=ALICE, placement=PLACEMENT, title=title, stores=sessions
+    )
+    if archived:
+        sessions.conversation_store.update_conversation(session.id, archived=True)
+    manager = board.managers.create(
+        uuid.uuid4().hex, owner_user_id=ALICE, title=title, conversation_id=session.id
+    )
+    return manager.id, session.id
 
 
 async def test_waiting_events_become_items_for_each_users_broker(
@@ -119,15 +147,17 @@ async def test_the_notice_carries_the_items_waiting_events_in_tag_clusters(
     storage_pr = _event(board, ALICE, "repo:storage", "pr:7")
     untagged = _event(board)
     routed = _event(board)
+    gone_session = uuid.uuid4().hex
     about_deleted_session = _event(
-        board, event_type="session.turn.finished", source_session_id=uuid.uuid4().hex
+        board, event_type="session.turn.finished", source_session_id=gone_session
     )
+    deletion_report = _event(board, event_type="session.deleted", source_session_id=gone_session)
     item = board.queue.enqueue(
         uuid.uuid4().hex,
         owner_user_id=ALICE,
         target_session_id=broker,
         kind="events",
-        event_ids=[storage, storage_pr, untagged, routed, about_deleted_session],
+        event_ids=[storage, storage_pr, untagged, routed, about_deleted_session, deletion_report],
     )
     assert item is not None
     board.events.route_to_manager([routed], owner_user_id=ALICE, manager_id=uuid.uuid4().hex)
@@ -141,13 +171,101 @@ async def test_the_notice_carries_the_items_waiting_events_in_tag_clusters(
         for cluster in notice["clusters"]
     ] == [
         ([{"tag_type": "repo", "tag": "storage"}], [storage, storage_pr]),
-        ([], [untagged]),
+        ([], [untagged, deletion_report]),
     ]
     dismissed = board.events.get(about_deleted_session, owner_user_id=ALICE)
     assert dismissed is not None and dismissed.state == "dismissed"
-    for event_id in (storage, storage_pr, untagged):
+    for event_id in (storage, storage_pr, untagged, deletion_report):
         board.events.route_to_manager([event_id], owner_user_id=ALICE, manager_id=uuid.uuid4().hex)
     assert writer.write(item) is None
+
+
+async def test_routed_events_become_items_for_their_managers_session(
+    board: BoardStores, sessions: RoleSessionStores
+) -> None:
+    manager_id, manager_session = _manager(board, sessions)
+    orphan_id, _ = _manager(board, sessions, "Former manager", archived=True)
+    routed = [_event(board, manager_id=manager_id) for _ in range(2)]
+    stranded = _event(board, manager_id=orphan_id)
+
+    await ManagerPackager(board=board, conversations=sessions.conversation_store).package(
+        int(time.time()) + 31
+    )
+
+    [item] = board.queue.list(owner_user_id=ALICE)
+    carried = board.events.list(owner_user_id=ALICE, queue_item_ids=[item.id])
+    assert (item.target_session_id, [event.id for event in carried]) == (manager_session, routed)
+    # The archived session cannot take the event, so it waits.
+    stranded_event = board.events.get(stranded, owner_user_id=ALICE)
+    assert stranded_event is not None and stranded_event.queue_item_id is None
+
+
+async def test_a_manager_notice_lists_its_events_by_id_and_ends_with_the_roster(
+    board: BoardStores, sessions: RoleSessionStores
+) -> None:
+    manager_id, manager_session = _manager(board, sessions)
+    task_id = next(_ids)
+    board.tasks.create(
+        task_id, owner_user_id=ALICE, title="S3 retries", goal="Fix them", manager_id=manager_id
+    )
+    board.tasks.create(
+        next(_ids),
+        owner_user_id=ALICE,
+        title="Old work",
+        goal="Done",
+        manager_id=manager_id,
+        state="archived",
+    )
+    live_session = sessions.conversation_store.create_conversation(title="Fix S3").id
+    gone_session = uuid.uuid4().hex
+
+    def session_event(event_type: str, session_id: str, title: str) -> str:
+        return _event(
+            board,
+            event_type=event_type,
+            manager_id=manager_id,
+            source_session_id=session_id,
+            payload={"session_title": title, "session_id": session_id},
+        )
+
+    comment = _event(board, manager_id=manager_id, task_id=task_id, title="Review comment")
+    loose = _event(board, manager_id=manager_id, title="Loose comment")
+    turn = session_event("session.turn.finished", live_session, "Fix S3")
+    stale_turn = session_event("session.turn.finished", gone_session, "Old work")
+    deleted = session_event("session.deleted", gone_session, "Old work")
+    item = board.queue.enqueue(
+        uuid.uuid4().hex,
+        owner_user_id=ALICE,
+        target_session_id=manager_session,
+        kind="events",
+        event_ids=[comment, loose, turn, stale_turn, deleted],
+    )
+    assert item is not None
+
+    notice = EventNoticeWriter(board=board, conversations=sessions.conversation_store).write(item)
+
+    assert notice == "\n".join(
+        [
+            f"[System: 4 event(s) routed to 1 tasks: {task_id} — triage or act]",
+            "[3 manager-routed event(s) have no task]",
+            f"- [task:{task_id}] [event:{comment}] github.pr.comment: 'Review comment' (routed)",
+            f"- [manager-routed; task unassigned] [event:{loose}] github.pr.comment: "
+            "'Loose comment' (routed)",
+            f"- [event:{turn}] session.turn.finished: Session 'Fix S3' finished a turn",
+            f"  Session ID: {live_session}",
+            "  Read the recent session transcript to see what was done. "
+            "Update the task overview and stamp all assets.",
+            f"- [event:{deleted}] session.deleted: Session 'Old work' was deleted",
+            f"  Session ID: {gone_session}",
+            "  The session no longer exists; the user deleted it. "
+            "Its task may already be finished.",
+            "",
+            "[Task roster]",
+            f"{task_id} — S3 retries (active)",
+        ]
+    )
+    dismissed = board.events.get(stale_turn, owner_user_id=ALICE)
+    assert dismissed is not None and dismissed.state == "dismissed"
 
 
 async def test_a_waiting_event_reaches_the_broker_as_a_notice(

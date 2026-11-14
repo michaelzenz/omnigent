@@ -89,7 +89,11 @@ from omnigent.server import (
     shutdown_state,
 )
 from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher
-from omnigent.server.agent_queue_packagers import BrokerPackager, EventNoticeWriter
+from omnigent.server.agent_queue_packagers import (
+    BrokerPackager,
+    EventNoticeWriter,
+    ManagerPackager,
+)
 from omnigent.server.auth import (
     RESERVED_USER_LOCAL,
     AuthProvider,
@@ -4245,7 +4249,10 @@ def create_app(
                         board=board_stores, conversations=conversation_store
                     ).write
                 },
-                packagers=[BrokerPackager(board=board_stores, sessions=role_session_stores)],
+                packagers=[
+                    BrokerPackager(board=board_stores, sessions=role_session_stores),
+                    ManagerPackager(board=board_stores, conversations=conversation_store),
+                ],
             )
 
     if preference_store is not None:

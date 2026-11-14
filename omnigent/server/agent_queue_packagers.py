@@ -1,4 +1,4 @@
-"""Queue the task events waiting for each user's broker, and write the notices that carry them."""
+"""Queue the task events waiting for each user's broker and managers, and write their notices."""
 
 from __future__ import annotations
 
@@ -7,20 +7,39 @@ import json
 import logging
 import uuid
 from collections import defaultdict
+from collections.abc import Sequence
 from typing import Any
 
 from omnigent.agent_tasks.board_stores import BoardStores
-from omnigent.agent_tasks.event_batches import broker_batches, cluster_by_tags, is_session_event
+from omnigent.agent_tasks.event_batches import (
+    broker_batches,
+    cluster_by_tags,
+    is_session_event,
+    manager_batches,
+)
 from omnigent.agent_tasks.role_sessions import RoleSessionStores, ensure_role_session
-from omnigent.agent_tasks.roles import BROKER_ROLE_KEY, builtin_role, session_role
-from omnigent.entities import AgentQueueItem, TaskEvent
+from omnigent.agent_tasks.roles import (
+    BROKER_ROLE_KEY,
+    MANAGER_ROLE_KEY,
+    builtin_role,
+    session_role,
+)
+from omnigent.entities import LIVE_TASK_STATES, AgentQueueItem, Conversation, Task, TaskEvent
 from omnigent.server.agent_task_delivery import session_mid_turn
 
 _logger = logging.getLogger(__name__)
 
-# How many notices may carry an event the broker did not route.
-BROKER_MAX_DELIVERIES = 3
+# How many notices may carry an event its role neither routed nor handled.
+MAX_DELIVERIES = 3
+SESSION_DELETED_EVENT_TYPE = "session.deleted"
+SESSION_TURN_FINISHED_EVENT_TYPE = "session.turn.finished"
 _BROKER_PROMPT = "[System: route these events to managers]\n"
+# About 20,000 tokens, v2's roster limit.
+_ROSTER_MAX_CHARS = 80_000
+_TURN_FINISHED_ADVICE = (
+    "Read the recent session transcript to see what was done. "
+    "Update the task overview and stamp all assets."
+)
 
 
 class BrokerPackager:
@@ -40,9 +59,7 @@ class BrokerPackager:
     async def package(self, now: int) -> None:
         """Queue the batches due at ``now``, user by user."""
         waiting = await asyncio.to_thread(
-            self._board.events.list_waiting,
-            state="unrouted",
-            max_deliveries=BROKER_MAX_DELIVERIES,
+            self._board.events.list_waiting, state="unrouted", max_deliveries=MAX_DELIVERIES
         )
         by_owner: defaultdict[str | None, list[TaskEvent]] = defaultdict(list)
         for event in waiting:
@@ -70,12 +87,63 @@ class BrokerPackager:
             )
 
 
+class ManagerPackager:
+    """Queues the events routed to each manager, in v2's batches."""
+
+    def __init__(self, *, board: BoardStores, conversations: Any) -> None:
+        """
+        :param board: Holds the events, the managers and the queue.
+        :param conversations: Finds each manager's session.
+        """
+        self._board = board
+        self._conversations = conversations
+
+    async def package(self, now: int) -> None:
+        """Queue the batches due at ``now``, manager by manager."""
+        waiting = await asyncio.to_thread(
+            self._board.events.list_waiting, state="routed", max_deliveries=MAX_DELIVERIES
+        )
+        by_manager: defaultdict[tuple[str | None, str], list[TaskEvent]] = defaultdict(list)
+        for event in waiting:
+            if event.manager_id is not None:
+                by_manager[(event.owner_user_id, event.manager_id)].append(event)
+        for (owner, manager_id), events in by_manager.items():
+            try:
+                await self._package_for(owner, manager_id, events, now)
+            except Exception:
+                _logger.exception("GlobalHub packaging failed for manager %s", manager_id)
+
+    async def _package_for(
+        self, owner: str | None, manager_id: str, events: list[TaskEvent], now: int
+    ) -> None:
+        session = await asyncio.to_thread(self._manager_session, owner, manager_id)
+        if session is None:
+            # The manager list shows the missing session; the events wait.
+            return
+        for batch in manager_batches(events, now=now, manager_idle=not session_mid_turn(session)):
+            await asyncio.to_thread(
+                self._board.queue.enqueue,
+                uuid.uuid4().hex,
+                owner_user_id=owner,
+                target_session_id=session.id,
+                kind="events",
+                event_ids=[event.id for event in batch],
+            )
+
+    def _manager_session(self, owner: str | None, manager_id: str) -> Conversation | None:
+        manager = self._board.managers.get(manager_id, owner_user_id=owner)
+        if manager is None or manager.conversation_id is None:
+            return None
+        session = self._conversations.get_conversation(manager.conversation_id)
+        return session if session is not None and not session.archived else None
+
+
 class EventNoticeWriter:
     """Writes the notice text for ``events`` queue items when they are sent."""
 
     def __init__(self, *, board: BoardStores, conversations: Any) -> None:
         """
-        :param board: Holds the events the items carry.
+        :param board: Holds the events the items carry, the managers and their tasks.
         :param conversations: Finds the target and source sessions.
         """
         self._board = board
@@ -86,34 +154,62 @@ class EventNoticeWriter:
         Return the notice text, or ``None`` when none of the item's events still waits. Blocking.
 
         Leaves out events that passed to another role since they were queued,
-        and dismisses events about sessions deleted before delivery.
+        and dismisses events about sessions deleted before delivery, except
+        the ``session.deleted`` events that report it.
         """
         target = self._conversations.get_conversation(item.target_session_id)
         role = session_role(target.labels) if target is not None else None
-        if role is None or role.key != BROKER_ROLE_KEY:
-            raise ValueError("an events notice goes only to a broker session")
-        owner = item.owner_user_id
-        waiting: list[TaskEvent] = []
-        for event in self._board.events.list(
-            owner_user_id=owner, states=["unrouted"], queue_item_ids=[item.id]
-        ):
-            if self._about_deleted_session(event):
-                self._board.events.dismiss(event.id, owner_user_id=owner)
-            else:
-                waiting.append(event)
+        if role is not None and role.key == BROKER_ROLE_KEY:
+            return self._broker_notice(item)
+        if role is not None and role.key == MANAGER_ROLE_KEY:
+            return self._manager_notice(item)
+        raise ValueError("an events notice goes only to a broker or a manager session")
+
+    def _broker_notice(self, item: AgentQueueItem) -> str | None:
+        waiting = self._waiting_events(item, "unrouted")
         if not waiting:
             return None
         clusters = [
-            {"tags": _tags(cluster[0]), "events": [_notice_entry(event) for event in cluster]}
+            {"tags": _tags(cluster[0]), "events": [_broker_entry(event) for event in cluster]}
             for cluster in cluster_by_tags(waiting)
         ]
         return json.dumps(
             {"prompt": _BROKER_PROMPT, "clusters": clusters}, ensure_ascii=False, indent=2
         )
 
+    def _manager_notice(self, item: AgentQueueItem) -> str | None:
+        waiting = self._waiting_events(item, "routed")
+        if not waiting:
+            return None
+        owner = item.owner_user_id
+        manager = self._board.managers.get_by_conversation_id(
+            item.target_session_id, owner_user_id=owner
+        )
+        roster = (
+            self._board.tasks.list(
+                owner_user_id=owner, states=LIVE_TASK_STATES, manager_id=manager.id
+            )
+            if manager is not None
+            else []
+        )
+        return f"{_manager_events_text(waiting)}\n\n{_roster_text(roster)}"
+
+    def _waiting_events(self, item: AgentQueueItem, state: str) -> list[TaskEvent]:
+        owner = item.owner_user_id
+        waiting: list[TaskEvent] = []
+        for event in self._board.events.list(
+            owner_user_id=owner, states=[state], queue_item_ids=[item.id]
+        ):
+            if self._about_deleted_session(event):
+                self._board.events.dismiss(event.id, owner_user_id=owner)
+            else:
+                waiting.append(event)
+        return waiting
+
     def _about_deleted_session(self, event: TaskEvent) -> bool:
         return (
             is_session_event(event)
+            and event.event_type != SESSION_DELETED_EVENT_TYPE
             and event.source_session_id is not None
             and self._conversations.get_conversation(event.source_session_id) is None
         )
@@ -123,7 +219,7 @@ def _tags(event: TaskEvent) -> list[dict[str, str]]:
     return [{"tag_type": tag.tag_type, "tag": tag.tag} for tag in event.tags]
 
 
-def _notice_entry(event: TaskEvent) -> dict[str, Any]:
+def _broker_entry(event: TaskEvent) -> dict[str, Any]:
     return {
         "id": event.id,
         "event_type": event.event_type,
@@ -135,3 +231,93 @@ def _notice_entry(event: TaskEvent) -> dict[str, Any]:
         "tags": _tags(event),
         "payload": event.payload,
     }
+
+
+def _manager_events_text(events: Sequence[TaskEvent]) -> str:
+    """Write v2's manager notice lines, each with its event id."""
+    task_ids = list(dict.fromkeys(event.task_id for event in events if event.task_id))
+    unassigned = sum(1 for event in events if event.task_id is None)
+    if len(task_ids) == 1 and not unassigned:
+        scope = f"task {task_ids[0]}"
+    elif task_ids:
+        scope = f"{len(task_ids)} tasks: " + ", ".join(task_ids)
+    else:
+        scope = "this manager"
+    lines = [f"[System: {len(events)} event(s) routed to {scope} — triage or act]"]
+    if unassigned:
+        lines.append(f"[{unassigned} manager-routed event(s) have no task]")
+    by_session: dict[str, list[TaskEvent]] = {}
+    for event in events:
+        if is_session_event(event) and event.source_session_id:
+            by_session.setdefault(event.source_session_id, []).append(event)
+        else:
+            lines.append(_event_line(event))
+    lines.extend(_session_entry(session_events) for session_events in by_session.values())
+    return "\n".join(lines)
+
+
+def _event_line(event: TaskEvent) -> str:
+    label = f"[task:{event.task_id}]" if event.task_id else "[manager-routed; task unassigned]"
+    return f"- {label} [event:{event.id}] {event.event_type}: {event.title!r} (routed)"
+
+
+def _session_entry(events: Sequence[TaskEvent]) -> str:
+    """Write one entry for a session's events; a deletion supersedes the rest."""
+    deleted = [event for event in events if event.event_type == SESSION_DELETED_EVENT_TYPE]
+    first = deleted[-1] if deleted else events[0]
+    ids = ", ".join(event.id for event in events)
+    ids_label = f"[event:{ids}]" if len(events) == 1 else f"[events:{ids}]"
+    title = first.payload.get("session_title", "?")
+    session_line = f"  Session ID: {first.payload.get('session_id') or first.source_session_id}"
+    project = first.payload.get("project_name")
+    project_lines = [f"  Project: {project}"] if project else []
+    if deleted:
+        return "\n".join(
+            [
+                f"- {ids_label} {SESSION_DELETED_EVENT_TYPE}: Session '{title}' was deleted",
+                *project_lines,
+                session_line,
+                "  The session no longer exists; the user deleted it. "
+                "Its task may already be finished.",
+            ]
+        )
+    if first.event_type == SESSION_TURN_FINISHED_EVENT_TYPE and len(events) == 1:
+        return "\n".join(
+            [
+                f"- {ids_label} {first.event_type}: Session '{title}' finished a turn",
+                *project_lines,
+                session_line,
+                f"  {_TURN_FINISHED_ADVICE}",
+            ]
+        )
+    if all(event.event_type == SESSION_TURN_FINISHED_EVENT_TYPE for event in events):
+        return "\n".join(
+            [
+                f"- {ids_label} {first.event_type}: Session '{title}' finished "
+                f"{len(events)} turns since last check",
+                session_line,
+                f"  {_TURN_FINISHED_ADVICE}",
+            ]
+        )
+    if len(events) == 1:
+        return _event_line(first)
+    return f"- {ids_label} {len(events)} events for session '{title}' (routed)"
+
+
+def _roster_text(tasks: Sequence[Task]) -> str:
+    """Write the ``[Task roster]`` section: the manager's live tasks in board order."""
+    lines = ["[Task roster]"]
+    used = 0
+    for index, task in enumerate(tasks):
+        line = f"{task.id} — {task.title} ({task.state})"
+        if index and used + len(line) > _ROSTER_MAX_CHARS:
+            lines.append(
+                f"… and {len(tasks) - index} more; list them with "
+                "GET /v1/agent-tasks?manager_conversation_id=<your session id>"
+            )
+            break
+        lines.append(line)
+        used += len(line) + 1
+    if not tasks:
+        lines.append("(no tasks yet)")
+    return "\n".join(lines)

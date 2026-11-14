@@ -5,7 +5,12 @@ from __future__ import annotations
 import itertools
 from collections.abc import Sequence
 
-from omnigent.agent_tasks.event_batches import BATCH_MAX_EVENTS, broker_batches, cluster_by_tags
+from omnigent.agent_tasks.event_batches import (
+    BATCH_MAX_EVENTS,
+    broker_batches,
+    cluster_by_tags,
+    manager_batches,
+)
 from omnigent.entities import EventTag, TaskEvent
 
 NOW = 1_800_000_000
@@ -71,3 +76,17 @@ def test_other_events_wait_for_a_full_batch_or_an_old_batch_and_an_idle_broker()
 
     assert _ids_of(idle) == _ids_of([old, many[:BATCH_MAX_EVENTS]])
     assert _ids_of(busy) == _ids_of([many[:BATCH_MAX_EVENTS]])
+
+
+def test_a_managers_other_events_share_one_uncapped_batch() -> None:
+    turn = _event(event_type="session.turn.finished", session=FIRST_SESSION, age=0)
+    many = [_event("repo:storage", age=1) for _ in range(BATCH_MAX_EVENTS + 2)]
+    few_old = [_event("repo:web", age=40), _event(age=35)]
+
+    full = manager_batches([*many, turn], now=NOW, manager_idle=False)
+    old_and_idle = manager_batches(few_old, now=NOW, manager_idle=True)
+    old_and_busy = manager_batches(few_old, now=NOW, manager_idle=False)
+
+    assert _ids_of(full) == _ids_of([[turn], many])
+    assert _ids_of(old_and_idle) == _ids_of([few_old])
+    assert old_and_busy == []

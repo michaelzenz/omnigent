@@ -65,26 +65,57 @@ def broker_batches(
     while the broker is idle and its oldest event is older than
     :data:`PARTIAL_BATCH_MIN_AGE_S`.
     """
-    by_session: dict[str, list[TaskEvent]] = {}
+    batches, others = _split_session_events(events)
     by_host: dict[str | None, list[TaskEvent]] = {}
-    for event in _oldest_first(events):
-        if is_session_event(event):
-            key = event.source_session_id or event.source_key or event.id
-            by_session.setdefault(key, []).append(event)
-        else:
-            by_host.setdefault(event_host(event), []).append(event)
-    batches = list(by_session.values())
+    for event in others:
+        by_host.setdefault(event_host(event), []).append(event)
     for host_events in by_host.values():
         batch: list[TaskEvent] = []
         clusters = sorted(cluster_by_tags(host_events), key=lambda cluster: cluster[0].created_at)
         for cluster in clusters:
             batch.extend(cluster[: BATCH_MAX_EVENTS - len(batch)])
-        oldest = min(event.created_at for event in batch)
-        if len(batch) >= BATCH_MAX_EVENTS or (
-            broker_idle and now - oldest > PARTIAL_BATCH_MIN_AGE_S
-        ):
+        if _due(batch, now=now, session_idle=broker_idle):
             batches.append(batch)
     return batches
+
+
+def manager_batches(
+    events: Sequence[TaskEvent], *, now: int, manager_idle: bool
+) -> list[list[TaskEvent]]:
+    """
+    Return the batches of one manager's waiting events to queue now.
+
+    Session events go out at once, one batch per session. All other events
+    share one batch, which goes out once it holds :data:`BATCH_MAX_EVENTS`, or
+    while the manager is idle and its oldest event is older than
+    :data:`PARTIAL_BATCH_MIN_AGE_S`.
+    """
+    batches, others = _split_session_events(events)
+    if others and _due(others, now=now, session_idle=manager_idle):
+        batches.append(others)
+    return batches
+
+
+def _split_session_events(
+    events: Sequence[TaskEvent],
+) -> tuple[list[list[TaskEvent]], list[TaskEvent]]:
+    """Return one batch per session for the session events, and the other events."""
+    by_session: dict[str, list[TaskEvent]] = {}
+    others: list[TaskEvent] = []
+    for event in _oldest_first(events):
+        if is_session_event(event):
+            key = event.source_session_id or event.source_key or event.id
+            by_session.setdefault(key, []).append(event)
+        else:
+            others.append(event)
+    return list(by_session.values()), others
+
+
+def _due(batch: Sequence[TaskEvent], *, now: int, session_idle: bool) -> bool:
+    oldest = min(event.created_at for event in batch)
+    return len(batch) >= BATCH_MAX_EVENTS or (
+        session_idle and now - oldest > PARTIAL_BATCH_MIN_AGE_S
+    )
 
 
 def _oldest_first(events: Sequence[TaskEvent]) -> list[TaskEvent]:

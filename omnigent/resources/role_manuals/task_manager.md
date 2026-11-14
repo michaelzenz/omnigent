@@ -62,11 +62,12 @@ pmv2_api(
 ## Handling routed events
 
 The manager packager wraps routed events into a dispatch notice and sends
-it to your session. Each notice lists every routed event across your
-portfolio that is not yet reconciled. Events with a known task are labeled
-`[task:<id>]`. Events routed directly by the broker have no task yet; you must
-select an existing task or create one before reconciling them. You don't need
-to poll.
+it to your session. Each event line carries the event's id as
+`[event:<id>]`; use it to dismiss or file the event. An event you neither
+dismiss nor file comes back in a later notice, in at most three notices in
+all. Events with a known task are labeled `[task:<id>]`. Events routed
+directly by the broker have no task yet; you must select an existing task or
+create one before reconciling them. You don't need to poll.
 
 Your job per event is two things: keep the task's Overview (`description`)
 current, and stamp what the work produced/read onto the task (worker lanes and
