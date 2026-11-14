@@ -3,6 +3,7 @@ import { SettingsIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { GlobalHubSettingsDialog } from "@/globalhub/GlobalHubSettingsDialog";
+import { TaskBoard } from "@/globalhub/TaskBoard";
 import { useGlobalHubSettings } from "@/hooks/useGlobalHubSettings";
 
 /** The Global Hub board, with its settings behind the gear in the header. */
@@ -35,17 +36,24 @@ export function GlobalHubPage() {
           <p role="alert" className="p-8 text-center text-sm text-destructive">
             Could not load the Global Hub settings: {settings.error.message}
           </p>
-        ) : settings.data.host_id === null ? (
-          <div
-            className="flex flex-col items-center gap-3 p-8 text-center"
-            data-testid="globalhub-setup-prompt"
-          >
-            <p className="text-sm text-muted-foreground">Choose a host and workspace to start.</p>
-            <Button onClick={openSettings} data-testid="globalhub-setup-button">
-              Choose host and workspace
-            </Button>
-          </div>
-        ) : null}
+        ) : (
+          <>
+            {settings.data.host_id === null && (
+              <div
+                className="flex flex-col items-center gap-3 p-8 text-center"
+                data-testid="globalhub-setup-prompt"
+              >
+                <p className="text-sm text-muted-foreground">
+                  Choose a host and workspace to start.
+                </p>
+                <Button onClick={openSettings} data-testid="globalhub-setup-button">
+                  Choose host and workspace
+                </Button>
+              </div>
+            )}
+            <TaskBoard />
+          </>
+        )}
       </div>
       <GlobalHubSettingsDialog
         open={settingsOpen}
