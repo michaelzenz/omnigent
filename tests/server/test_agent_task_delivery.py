@@ -173,7 +173,9 @@ def _running_session(deps: SessionSendDeps, *, fresh_heartbeat: bool) -> str:
     """Seed a session that the database reads as mid-turn, bound to a runner."""
     agent_id = uuid.uuid4().hex
     deps.agent_store.create(agent_id, f"agent-{agent_id}", "bundles/agent.tar.gz")
-    session = deps.conversation_store.create_conversation(agent_id=agent_id, host_id=HOST_ID)
+    session = deps.conversation_store.create_conversation(
+        agent_id=agent_id, host_id=HOST_ID, workspace="/Users/alice/s3-retries"
+    )
     runner_id = f"runner_{session.id}"
     assert deps.conversation_store.set_runner_id(session.id, runner_id)
     deps.conversation_store.set_session_live_status(session.id, "running")

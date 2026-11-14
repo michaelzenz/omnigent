@@ -50,7 +50,7 @@ class _Hub:
 
     def session(self, owner: str = ALICE, **fields: Any) -> str:
         session = self.conversations.create_conversation(
-            title="Fix S3 retries", host_id=HOST_ID, **fields
+            title="Fix S3 retries", host_id=HOST_ID, workspace="/Users/alice/s3-retries", **fields
         )
         self.permissions.ensure_user(owner)
         self.permissions.grant(owner, session.id, LEVEL_OWNER)
