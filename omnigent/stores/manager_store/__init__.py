@@ -93,5 +93,6 @@ class ManagerStore(ABC):
         """Delete the owner's manager; return whether it existed.
 
         Its tasks are unassigned, and its routed events that it did not handle
-        leave their queue item and wait for the broker again.
+        leave their queue item and wait for the broker again, with their
+        delivery count started again.
         """

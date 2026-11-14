@@ -204,6 +204,7 @@ class SqlAlchemyManagerStore(ManagerStore):
                     state=encode_task_event_state("unrouted"),
                     manager_id=None,
                     queue_item_id=None,
+                    delivery_count=0,
                     routed_at=None,
                     updated_at=now,
                 )

@@ -1028,6 +1028,8 @@ class SqlTaskEvent(OmnigentBase):
     :param fyi_cluster_id: The FYI cluster it was filed into, or ``None``.
     :param queue_item_id: The queue item that carries it to its role session,
         or ``None`` before it is packaged.
+    :param delivery_count: How many sent queue items carried it since it last
+        passed to another role.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last change, or ``None``.
     :param routed_at: When it was routed to a manager, or ``None``.
@@ -1060,6 +1062,7 @@ class SqlTaskEvent(OmnigentBase):
     manager_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     fyi_cluster_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     queue_item_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    delivery_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     routed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)

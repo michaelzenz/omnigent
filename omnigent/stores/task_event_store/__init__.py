@@ -83,6 +83,7 @@ class TaskEventStore(ABC):
         states: Collection[str] | None = None,
         manager_id: str | None = None,
         fyi_cluster_ids: Collection[str] | None = None,
+        queue_item_ids: Collection[str] | None = None,
         limit: int | None = None,
     ) -> builtins.list[TaskEvent]:
         """
@@ -92,7 +93,18 @@ class TaskEventStore(ABC):
         :param states: Only events in these states, or every state when ``None``.
         :param manager_id: Only events routed to this manager.
         :param fyi_cluster_ids: Only events filed into these FYI clusters.
+        :param queue_item_ids: Only events these queue items carry.
         :param limit: The most events to return, or ``None`` for all.
+        """
+
+    @abstractmethod
+    def list_waiting(self, *, state: str, max_deliveries: int) -> builtins.list[TaskEvent]:
+        """
+        List every owner's events in ``state`` that wait to be queued, oldest first.
+
+        For the background packagers. An event waits when no queue item holds
+        it, or its last item is done, and fewer than ``max_deliveries`` sent
+        items carried it since it last passed to another role.
         """
 
     @abstractmethod
@@ -103,7 +115,8 @@ class TaskEventStore(ABC):
         Route the owner's events to one manager, all or none.
 
         Events already routed to that manager stay as they are. A newly
-        routed event leaves its queue item, so the manager's item can carry it.
+        routed event leaves its queue item, so the manager's item can carry
+        it, and its delivery count starts again.
 
         :returns: The events in request order, or ``None``, changing nothing,
             when one is missing, someone else's, or neither unrouted nor

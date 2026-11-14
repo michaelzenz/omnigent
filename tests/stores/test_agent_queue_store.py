@@ -168,6 +168,47 @@ def test_crashed_claims_go_back_and_a_turn_end_settles_its_session(
     assert queue.list_sent() == []
 
 
+def test_an_event_left_waiting_is_offered_again_until_its_delivery_cap(
+    queue: SqlAlchemyAgentQueueStore, events: SqlAlchemyTaskEventStore
+) -> None:
+    left, routed = _event(events), _event(events)
+    bobs = _event(events, owner=BOB)
+
+    def waiting() -> list[str]:
+        return [event.id for event in events.list_waiting(state="unrouted", max_deliveries=2)]
+
+    def deliver(item_id: str, now: int) -> None:
+        queue.claim_due(now=now)
+        queue.mark_sent(item_id, owner_user_id=ALICE)
+        queue.mark_done(item_id, owner_user_id=ALICE)
+
+    offered = waiting()
+    first = _enqueue(queue, BROKER_SESSION, left, routed)
+    while_queued = waiting()
+    held = queue.enqueue(
+        next(_ids),
+        owner_user_id=ALICE,
+        target_session_id=BROKER_SESSION,
+        kind="events",
+        event_ids=[left],
+    )
+    deliver(first, NOW)
+    events.route_to_manager([routed], owner_user_id=ALICE, manager_id=f"{400:032x}")
+    offered_again = waiting()
+    second = _enqueue(queue, BROKER_SESSION, left)
+    carried = [event.id for event in events.list(owner_user_id=ALICE, queue_item_ids=[second])]
+    deliver(second, NOW + 1)
+
+    assert offered == [left, routed, bobs]
+    assert (while_queued, held) == ([bobs], None)
+    assert (offered_again, carried) == ([left, bobs], [left])
+    assert waiting() == [bobs]
+    left_event = events.get(left, owner_user_id=ALICE)
+    routed_event = events.get(routed, owner_user_id=ALICE)
+    assert left_event is not None and routed_event is not None
+    assert (left_event.delivery_count, routed_event.delivery_count) == (2, 0)
+
+
 def test_deleting_an_item_releases_its_events_to_be_queued_again(
     queue: SqlAlchemyAgentQueueStore, events: SqlAlchemyTaskEventStore
 ) -> None:

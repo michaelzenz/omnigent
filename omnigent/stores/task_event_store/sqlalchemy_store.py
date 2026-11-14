@@ -7,12 +7,16 @@ import json
 from collections.abc import Collection, Sequence
 from typing import Any
 
-from sqlalchemy import ColumnElement, and_, asc, select
+from sqlalchemy import ColumnElement, and_, asc, or_, select
 from sqlalchemy.orm import Session
 
 from omnigent.db.account_authority import require_active_account
-from omnigent.db.db_models import SqlTaskEvent, current_workspace_id
-from omnigent.db.enum_codecs import decode_task_event_state, encode_task_event_state
+from omnigent.db.db_models import SqlAgentQueueItem, SqlTaskEvent, current_workspace_id
+from omnigent.db.enum_codecs import (
+    decode_task_event_state,
+    encode_agent_queue_item_state,
+    encode_task_event_state,
+)
 from omnigent.db.utils import (
     get_or_create_engine,
     make_named_managed_session_maker,
@@ -26,6 +30,7 @@ from omnigent.util.uuid import normalize_uuid
 _UNROUTED = encode_task_event_state("unrouted")
 _ROUTED = encode_task_event_state("routed")
 _DISMISSED = encode_task_event_state("dismissed")
+_DONE_ITEM = encode_agent_queue_item_state("done")
 
 
 def _to_entity(row: SqlTaskEvent) -> TaskEvent:
@@ -46,6 +51,7 @@ def _to_entity(row: SqlTaskEvent) -> TaskEvent:
         manager_id=row.manager_id,
         fyi_cluster_id=row.fyi_cluster_id,
         queue_item_id=row.queue_item_id,
+        delivery_count=row.delivery_count,
         updated_at=row.updated_at,
         routed_at=row.routed_at,
         processed_at=row.processed_at,
@@ -127,6 +133,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 state=_ROUTED if routed else _UNROUTED,
                 task_id=task_id,
                 manager_id=manager_id,
+                delivery_count=0,
                 created_at=now,
                 updated_at=None,
                 routed_at=now if routed else None,
@@ -176,6 +183,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         states: Collection[str] | None = None,
         manager_id: str | None = None,
         fyi_cluster_ids: Collection[str] | None = None,
+        queue_item_ids: Collection[str] | None = None,
         limit: int | None = None,
     ) -> builtins.list[TaskEvent]:
         """List the owner's events, oldest first."""
@@ -188,10 +196,35 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             stmt = stmt.where(SqlTaskEvent.manager_id == manager_id)
         if fyi_cluster_ids is not None:
             stmt = stmt.where(SqlTaskEvent.fyi_cluster_id.in_(fyi_cluster_ids))
+        if queue_item_ids is not None:
+            stmt = stmt.where(SqlTaskEvent.queue_item_id.in_(queue_item_ids))
         stmt = stmt.order_by(asc(SqlTaskEvent.created_at), asc(SqlTaskEvent.id))
         if limit is not None:
             stmt = stmt.limit(limit)
         with self._session("list_task_events") as session:
+            return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
+
+    def list_waiting(self, *, state: str, max_deliveries: int) -> builtins.list[TaskEvent]:
+        """List every owner's events in ``state`` that wait to be queued, oldest first."""
+        workspace_id = current_workspace_id()
+        done_items = select(SqlAgentQueueItem.id).where(
+            SqlAgentQueueItem.workspace_id == workspace_id,
+            SqlAgentQueueItem.state == _DONE_ITEM,
+        )
+        stmt = (
+            select(SqlTaskEvent)
+            .where(
+                SqlTaskEvent.workspace_id == workspace_id,
+                SqlTaskEvent.state == encode_task_event_state(state),
+                SqlTaskEvent.delivery_count < max_deliveries,
+                or_(
+                    SqlTaskEvent.queue_item_id.is_(None),
+                    SqlTaskEvent.queue_item_id.in_(done_items),
+                ),
+            )
+            .order_by(asc(SqlTaskEvent.created_at), asc(SqlTaskEvent.id))
+        )
+        with self._session("list_task_events_waiting_for_queue") as session:
             return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
 
     def route_to_manager(
@@ -219,6 +252,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                     row.manager_id = manager_id
                     # The manager's own queue item carries it from here.
                     row.queue_item_id = None
+                    row.delivery_count = 0
                     row.routed_at = now
                     row.updated_at = now
             return [_to_entity(rows[event_id]) for event_id in wanted]

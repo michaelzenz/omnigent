@@ -46,7 +46,7 @@ class AgentQueueStore(ABC):
         :param payload: Inputs for the message text.
         :param event_ids: The owner's task events the item carries.
         :returns: The queued item, or ``None``, changing nothing, when an event
-            is missing, someone else's, or already in an item.
+            is missing, someone else's, or in an item that is not done.
         """
 
     @abstractmethod
@@ -115,7 +115,7 @@ class AgentQueueStore(ABC):
     @abstractmethod
     def mark_sent(self, item_id: str, *, owner_user_id: str | None) -> AgentQueueItem | None:
         """
-        Record that a claimed item's send succeeded.
+        Record that a claimed item's send succeeded; each event it carries counts one delivery.
 
         :returns: The ``sent`` item, or ``None`` when it is not the owner's
             item in ``sending``.

@@ -133,10 +133,19 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                     SqlTaskEvent.id.in_(wanted),
                 )
                 events = list(session.execute(stmt).scalars())
-                if len(events) != len(wanted) or any(
-                    event.queue_item_id is not None for event in events
-                ):
+                if len(events) != len(wanted):
                     return None
+                held_by = {event.queue_item_id for event in events} - {None}
+                if held_by:
+                    open_item = session.execute(
+                        select(SqlAgentQueueItem.id).where(
+                            SqlAgentQueueItem.workspace_id == current_workspace_id(),
+                            SqlAgentQueueItem.id.in_(held_by),
+                            SqlAgentQueueItem.state != _DONE,
+                        )
+                    ).first()
+                    if open_item is not None:
+                        return None
             row = SqlAgentQueueItem(
                 id=item_id,
                 owner_user_id=owner_user_id,
@@ -317,6 +326,16 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
             row.state = _SENT
             row.sent_at = now
             row.updated_at = now
+            session.execute(
+                update(SqlTaskEvent)
+                .where(
+                    SqlTaskEvent.workspace_id == current_workspace_id(),
+                    SqlTaskEvent.owner_user_id == owner_user_id,
+                    SqlTaskEvent.queue_item_id == row.id,
+                )
+                .values(delivery_count=SqlTaskEvent.delivery_count + 1)
+                .execution_options(synchronize_session=False)
+            )
             return _to_entity(row)
 
         return run_write_transaction(self._session_immediate, "mark_agent_queue_item_sent", write)

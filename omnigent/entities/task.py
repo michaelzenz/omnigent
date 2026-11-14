@@ -157,6 +157,8 @@ class TaskEvent:
     :param fyi_cluster_id: The FYI cluster the event was filed into.
     :param queue_item_id: The queue item that carries the event to its role
         session; cleared when the event passes to another role.
+    :param delivery_count: How many sent queue items carried the event since it
+        last passed to another role.
     :param updated_at: Unix epoch seconds of the last change.
     :param routed_at: When the event was routed to a manager.
     :param processed_at: When the event was dismissed or filed.
@@ -178,6 +180,7 @@ class TaskEvent:
     manager_id: str | None = None
     fyi_cluster_id: str | None = None
     queue_item_id: str | None = None
+    delivery_count: int = 0
     updated_at: int | None = None
     routed_at: int | None = None
     processed_at: int | None = None
