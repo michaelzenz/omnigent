@@ -90,4 +90,8 @@ class ManagerStore(ABC):
 
     @abstractmethod
     def delete(self, manager_id: str, *, owner_user_id: str | None) -> bool:
-        """Delete the owner's manager and unassign its tasks; return whether it existed."""
+        """Delete the owner's manager; return whether it existed.
+
+        Its tasks are unassigned, and its routed events that it did not handle
+        wait for the broker again.
+        """

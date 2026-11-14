@@ -5917,6 +5917,8 @@ _AgentManagerDescription = Annotated[
     str, Field(max_length=512), AfterValidator(_strip_required_text)
 ]
 _AgentTaskWorkerTitle = Annotated[str, Field(max_length=200), AfterValidator(_strip_required_text)]
+_AgentTaskEventType = Annotated[str, Field(max_length=128), AfterValidator(_strip_required_text)]
+_AgentTaskEventTitle = Annotated[str, Field(max_length=512), AfterValidator(_strip_required_text)]
 
 
 class AgentTaskResponse(BaseModel):
@@ -6061,7 +6063,8 @@ class UpdateAgentManagerSelfRequest(BaseModel):
 
 
 class AgentManagerDeletedResponse(BaseModel):
-    """A deleted manager; its tasks are unassigned.
+    """A deleted manager; its tasks are unassigned and its unhandled events
+    wait for the broker again.
 
     ``conversation_id`` is the manager's session, left running as an ordinary
     session; ``DELETE /v1/sessions/{id}`` deletes it.
@@ -6127,6 +6130,80 @@ class AgentTaskWorkerDeletedResponse(BaseModel):
     object: Literal["agent.task.worker"] = "agent.task.worker"
     id: str
     deleted: Literal[True] = True
+
+
+AgentTaskEventState = Literal["unrouted", "routed", "dismissed", "fyi"]
+
+
+class AgentTaskEventTag(BaseModel):
+    """A routing hint on an event, e.g. the repository it concerns."""
+
+    tag_type: str = Field(..., min_length=1, max_length=64)
+    tag: str = Field(..., min_length=1, max_length=256)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentTaskEventResponse(BaseModel):
+    """A signal on the caller's GlobalHub board.
+
+    The broker routes an ``unrouted`` event to a manager. The manager handles a
+    ``routed`` event and dismisses it, or files it into an FYI cluster.
+    """
+
+    object: Literal["agent.task.event"] = "agent.task.event"
+    id: str
+    event_type: str
+    title: str
+    state: AgentTaskEventState
+    payload: dict[str, Any]
+    source: str | None
+    source_key: str | None
+    source_offset: str | None
+    source_session_id: str | None
+    tags: list[AgentTaskEventTag]
+    task_id: str | None
+    manager_id: str | None
+    created_at: int
+    updated_at: int | None
+    routed_at: int | None
+    processed_at: int | None
+
+
+class AgentTaskEventList(BaseModel):
+    """Events from the caller's GlobalHub board."""
+
+    object: Literal["list"] = "list"
+    data: list[AgentTaskEventResponse]
+
+
+class CreateAgentTaskEventRequest(BaseModel):
+    """Record an event for the broker to route.
+
+    A report that names its ``source`` and ``source_key`` is recorded once:
+    sending it again returns the first event. ``session.*`` event types come
+    only from the server's session hooks.
+    """
+
+    event_type: _AgentTaskEventType
+    title: _AgentTaskEventTitle
+    payload: dict[str, Any] = Field(default_factory=dict)
+    source: str | None = Field(default=None, min_length=1, max_length=256)
+    source_key: str | None = Field(default=None, min_length=1, max_length=512)
+    source_offset: str | None = Field(default=None, min_length=1, max_length=512)
+    source_session_id: str | None = None
+    tags: list[AgentTaskEventTag] = Field(default_factory=list, max_length=50)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RouteAgentTaskEventsRequest(BaseModel):
+    """Route events that wait for the broker to one of the caller's managers."""
+
+    event_ids: list[str] = Field(..., min_length=1, max_length=100)
+    manager_id: str
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class UpdateGlobalHubRoleProfileRequest(BaseModel):

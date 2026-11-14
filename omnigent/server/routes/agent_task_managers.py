@@ -179,7 +179,8 @@ def create_agent_task_managers_router(
     async def delete_manager(request: Request, manager_id: str) -> AgentManagerDeletedResponse:
         """Delete one of the caller's managers and unassign its tasks.
 
-        The manager's session is left as an ordinary session.
+        Its unhandled events wait for the broker again. The manager's session is
+        left as an ordinary session.
         """
         user_id = require_user(request, auth_provider)
 

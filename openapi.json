@@ -485,7 +485,7 @@
         "type": "object"
       },
       "AgentManagerDeletedResponse": {
-        "description": "A deleted manager; its tasks are unassigned.\n\n`conversation_id` is the manager's session, left running as an ordinary\nsession; `DELETE /v1/sessions/{id}` deletes it.",
+        "description": "A deleted manager; its tasks are unassigned and its unhandled events\nwait for the broker again.\n\n`conversation_id` is the manager's session, left running as an ordinary\nsession; `DELETE /v1/sessions/{id}` deletes it.",
         "properties": {
           "conversation_id": {
             "anyOf": [
@@ -824,6 +824,225 @@
           "permanent"
         ],
         "title": "AgentTaskDeletedResponse",
+        "type": "object"
+      },
+      "AgentTaskEventList": {
+        "description": "Events from the caller's GlobalHub board.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTaskEventResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "object": {
+            "const": "list",
+            "default": "list",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "AgentTaskEventList",
+        "type": "object"
+      },
+      "AgentTaskEventResponse": {
+        "description": "A signal on the caller's GlobalHub board.\n\nThe broker routes an `unrouted` event to a manager. The manager handles a\n`routed` event and dismisses it, or files it into an FYI cluster.",
+        "properties": {
+          "created_at": {
+            "format": "int64",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "manager_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manager Id"
+          },
+          "object": {
+            "const": "agent.task.event",
+            "default": "agent.task.event",
+            "title": "Object",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "processed_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processed At"
+          },
+          "routed_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Routed At"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "source_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Key"
+          },
+          "source_offset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Offset"
+          },
+          "source_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Session Id"
+          },
+          "state": {
+            "enum": [
+              "unrouted",
+              "routed",
+              "dismissed",
+              "fyi"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTaskEventTag"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "event_type",
+          "title",
+          "state",
+          "payload",
+          "source",
+          "source_key",
+          "source_offset",
+          "source_session_id",
+          "tags",
+          "task_id",
+          "manager_id",
+          "created_at",
+          "updated_at",
+          "routed_at",
+          "processed_at"
+        ],
+        "title": "AgentTaskEventResponse",
+        "type": "object"
+      },
+      "AgentTaskEventTag": {
+        "additionalProperties": false,
+        "description": "A routing hint on an event, e.g. the repository it concerns.",
+        "properties": {
+          "tag": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Tag",
+            "type": "string"
+          },
+          "tag_type": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Tag Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag_type",
+          "tag"
+        ],
+        "title": "AgentTaskEventTag",
         "type": "object"
       },
       "AgentTaskList": {
@@ -2467,6 +2686,91 @@
           "description"
         ],
         "title": "CreateAgentManagerRequest",
+        "type": "object"
+      },
+      "CreateAgentTaskEventRequest": {
+        "additionalProperties": false,
+        "description": "Record an event for the broker to route.\n\nA report that names its `source` and `source_key` is recorded once:\nsending it again returns the first event. `session.*` event types come\nonly from the server's session hooks.",
+        "properties": {
+          "event_type": {
+            "maxLength": 128,
+            "title": "Event Type",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "source_key": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Key"
+          },
+          "source_offset": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Offset"
+          },
+          "source_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Session Id"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTaskEventTag"
+            },
+            "maxItems": 50,
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 512,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_type",
+          "title"
+        ],
+        "title": "CreateAgentTaskEventRequest",
         "type": "object"
       },
       "CreateAgentTaskRequest": {
@@ -7002,6 +7306,31 @@
           "error"
         ],
         "title": "RetryEvent",
+        "type": "object"
+      },
+      "RouteAgentTaskEventsRequest": {
+        "additionalProperties": false,
+        "description": "Route events that wait for the broker to one of the caller's managers.",
+        "properties": {
+          "event_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Event Ids",
+            "type": "array"
+          },
+          "manager_id": {
+            "title": "Manager Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_ids",
+          "manager_id"
+        ],
+        "title": "RouteAgentTaskEventsRequest",
         "type": "object"
       },
       "RoutingDecisionData": {
@@ -14938,7 +15267,7 @@
     },
     "/v1/agent-tasks/managers/{manager_id}": {
       "delete": {
-        "description": "Delete one of the caller's managers and unassign its tasks.\n\nThe manager's session is left as an ordinary session.",
+        "description": "Delete one of the caller's managers and unassign its tasks.\n\nIts unhandled events wait for the broker again. The manager's session is\nleft as an ordinary session.",
         "operationId": "delete_manager_v1_agent_tasks_managers__manager_id__delete",
         "parameters": [
           {
@@ -25013,6 +25342,133 @@
         "summary": "Get Skills",
         "tags": [
           "skills"
+        ]
+      }
+    },
+    "/v1/task-events": {
+      "post": {
+        "description": "Record an event for the broker to route.\n\nA report that names its source and source key is recorded once.",
+        "operationId": "create_event_v1_task_events_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAgentTaskEventRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskEventResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Event",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/task-events/batch-route-manager": {
+      "post": {
+        "description": "Route events that wait for the broker to one of the caller's managers.\n\nEither every event is routed or none is. Events already routed to that\nmanager are left as they are, so a retry is safe.",
+        "operationId": "route_events_to_manager_v1_task_events_batch_route_manager_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RouteAgentTaskEventsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskEventList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Route Events To Manager",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/task-events/{event_id}/dismiss": {
+      "post": {
+        "description": "Mark one of the caller's events handled, or noise.\n\nDismissing an event again changes nothing.",
+        "operationId": "dismiss_event_v1_task_events__event_id__dismiss_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskEventResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dismiss Event",
+        "tags": [
+          "agent-tasks"
         ]
       }
     },

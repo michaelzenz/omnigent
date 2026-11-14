@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 
 ALICE = "alice@example.com"
@@ -93,17 +94,33 @@ def test_delete_is_owner_scoped(store: SqlAlchemyManagerStore) -> None:
     assert store.list(owner_user_id=ALICE) == []
 
 
-def test_deleting_a_manager_unassigns_its_tasks(
+def test_deleting_a_manager_unassigns_its_tasks_and_returns_its_events(
     db_uri: str, store: SqlAlchemyManagerStore
 ) -> None:
     tasks = SqlAlchemyTaskStore(db_uri)
+    events = SqlAlchemyTaskEventStore(db_uri)
     manager_id = _create(store, "Storage")
     task_id = uuid.uuid4().hex
     tasks.create(
         task_id, owner_user_id=ALICE, title="Task", goal="Finish the task", manager_id=manager_id
     )
+    unhandled, handled = uuid.uuid4().hex, uuid.uuid4().hex
+    for event_id in (unhandled, handled):
+        events.create(
+            event_id,
+            owner_user_id=ALICE,
+            event_type="github.pr.comment",
+            title="Review comment",
+            manager_id=manager_id,
+        )
+    events.dismiss(handled, owner_user_id=ALICE)
 
     assert store.delete(manager_id, owner_user_id=ALICE) is True
 
     task = tasks.get(task_id, owner_user_id=ALICE)
     assert task is not None and task.manager_id is None
+    returned = events.get(unhandled, owner_user_id=ALICE)
+    kept = events.get(handled, owner_user_id=ALICE)
+    assert returned is not None and kept is not None
+    assert (returned.state, returned.manager_id, returned.routed_at) == ("unrouted", None, None)
+    assert (kept.state, kept.manager_id) == ("dismissed", manager_id)

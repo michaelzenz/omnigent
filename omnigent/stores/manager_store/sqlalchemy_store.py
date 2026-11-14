@@ -9,7 +9,8 @@ from sqlalchemy import ColumnElement, and_, asc, select, update
 from sqlalchemy.orm import Session
 
 from omnigent.db.account_authority import require_active_account
-from omnigent.db.db_models import SqlManager, SqlTask, current_workspace_id
+from omnigent.db.db_models import SqlManager, SqlTask, SqlTaskEvent, current_workspace_id
+from omnigent.db.enum_codecs import encode_task_event_state
 from omnigent.db.utils import (
     get_or_create_engine,
     make_named_managed_session_maker,
@@ -173,7 +174,11 @@ class SqlAlchemyManagerStore(ManagerStore):
         return run_write_transaction(self._session_immediate, "update_manager", write)
 
     def delete(self, manager_id: str, *, owner_user_id: str | None) -> bool:
-        """Delete the owner's manager and unassign its tasks; return whether it existed."""
+        """Delete the owner's manager; return whether it existed.
+
+        Its tasks are unassigned, and its unhandled events wait for the broker again.
+        """
+        now = now_epoch()
 
         def write(session: Session) -> bool:
             require_active_account(session, owner_user_id)
@@ -187,6 +192,20 @@ class SqlAlchemyManagerStore(ManagerStore):
                     SqlTask.manager_id == manager_id,
                 )
                 .values(manager_id=None)
+            )
+            session.execute(
+                update(SqlTaskEvent)
+                .where(
+                    SqlTaskEvent.workspace_id == current_workspace_id(),
+                    SqlTaskEvent.manager_id == manager_id,
+                    SqlTaskEvent.state == encode_task_event_state("routed"),
+                )
+                .values(
+                    state=encode_task_event_state("unrouted"),
+                    manager_id=None,
+                    routed_at=None,
+                    updated_at=now,
+                )
             )
             session.delete(row)
             return True

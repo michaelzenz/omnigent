@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+from omnigent.stores.task_event_store import TaskEventStore
+from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.worker_store import WorkerStore
@@ -20,11 +22,13 @@ class BoardStores:
     :param tasks: The board's tasks.
     :param managers: The managers that own the tasks.
     :param workers: The sessions working on the tasks.
+    :param events: The signals the broker routes to managers.
     """
 
     tasks: TaskStore
     managers: ManagerStore
     workers: WorkerStore
+    events: TaskEventStore
 
 
 def open_board_stores(conversation_store: object) -> BoardStores | None:
@@ -41,4 +45,5 @@ def open_board_stores(conversation_store: object) -> BoardStores | None:
         tasks=SqlAlchemyTaskStore(location),
         managers=SqlAlchemyManagerStore(location),
         workers=SqlAlchemyWorkerStore(location),
+        events=SqlAlchemyTaskEventStore(location),
     )
