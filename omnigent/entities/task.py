@@ -1,10 +1,10 @@
-"""GlobalHub board entities, persisted in the ``tasks``, ``managers``, ``workers`` and
-``task_events`` tables.
+"""GlobalHub board entities, persisted in the ``tasks``, ``managers``, ``workers``,
+``task_events`` and ``fyi_clusters`` tables.
 
 A :class:`Task` is a long-lived unit of work on one user's GlobalHub board,
 owned by one :class:`Manager`. Each :class:`Worker` attaches a session that
 works on the task. A :class:`TaskEvent` is a signal the broker routes to a
-manager.
+manager, which can file it into an :class:`FyiCluster` for the user.
 """
 
 from __future__ import annotations
@@ -152,6 +152,7 @@ class TaskEvent:
     :param tags: Routing hints.
     :param task_id: The task the event concerns.
     :param manager_id: The manager the event was routed to.
+    :param fyi_cluster_id: The FYI cluster the event was filed into.
     :param updated_at: Unix epoch seconds of the last change.
     :param routed_at: When the event was routed to a manager.
     :param processed_at: When the event was dismissed or filed.
@@ -171,6 +172,34 @@ class TaskEvent:
     tags: list[EventTag] = field(default_factory=list)
     task_id: str | None = None
     manager_id: str | None = None
+    fyi_cluster_id: str | None = None
     updated_at: int | None = None
     routed_at: int | None = None
     processed_at: int | None = None
+
+
+@dataclass
+class FyiCluster:
+    """
+    Related events that need no task, kept on the board for the user to read.
+
+    A manager files events that are not actionable for any task into a cluster
+    under one headline. The cluster stays ``pending`` until the user dismisses
+    it, which dismisses its events too.
+
+    :param id: UUID primary key (bare 32-char hex string, no dashes).
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param headline: One line that sums up the cluster's events.
+    :param state: ``"pending"`` or ``"dismissed"``.
+    :param created_at: Unix epoch seconds at row creation.
+    :param rationale: Why the events need no task.
+    :param resolved_at: When the user dismissed the cluster.
+    """
+
+    id: str
+    owner_user_id: str | None
+    headline: str
+    state: str
+    created_at: int
+    rationale: str | None = None
+    resolved_at: int | None = None

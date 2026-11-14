@@ -42,7 +42,7 @@ from omnigent.entities.session_resources import (
     get_resource_by_id,
     resolve_terminal_entry_by_resource_id,
 )
-from omnigent.entities.task import EventTag, Manager, Task, TaskEvent, Worker
+from omnigent.entities.task import EventTag, FyiCluster, Manager, Task, TaskEvent, Worker
 
 __all__ = [
     "DEFAULT_ENVIRONMENT_ID",
@@ -63,6 +63,7 @@ __all__ = [
     "EventTag",
     "FunctionCallData",
     "FunctionCallOutputData",
+    "FyiCluster",
     "GithubConnection",
     "ItemData",
     "LoadedAgent",

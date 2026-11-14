@@ -82,6 +82,7 @@ class TaskEventStore(ABC):
         owner_user_id: str | None,
         states: Collection[str] | None = None,
         manager_id: str | None = None,
+        fyi_cluster_ids: Collection[str] | None = None,
         limit: int | None = None,
     ) -> builtins.list[TaskEvent]:
         """
@@ -90,6 +91,7 @@ class TaskEventStore(ABC):
         :param owner_user_id: The owner whose events to read.
         :param states: Only events in these states, or every state when ``None``.
         :param manager_id: Only events routed to this manager.
+        :param fyi_cluster_ids: Only events filed into these FYI clusters.
         :param limit: The most events to return, or ``None`` for all.
         """
 

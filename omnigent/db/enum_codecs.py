@@ -157,6 +157,12 @@ TASK_EVENT_STATE: dict[str, int] = {
     "fyi": 12,
 }
 
+# GlobalHub FYI clusters: pending until the user dismisses them.
+FYI_CLUSTER_STATE: dict[str, int] = {
+    "pending": 1,
+    "dismissed": 2,
+}
+
 
 def _assert_item_type_codes_cover_data_classes() -> None:
     """
@@ -368,6 +374,16 @@ def encode_task_event_state(name: str) -> int:
 def decode_task_event_state(code: int) -> str:
     """Decode a ``task_events.state`` int code to its name."""
     return _decode(TASK_EVENT_STATE, code, field="task_events.state")
+
+
+def encode_fyi_cluster_state(name: str) -> int:
+    """Encode a ``fyi_clusters.state`` name to its int code."""
+    return _encode(FYI_CLUSTER_STATE, name, field="fyi_clusters.state")
+
+
+def decode_fyi_cluster_state(code: int) -> str:
+    """Decode a ``fyi_clusters.state`` int code to its name."""
+    return _decode(FYI_CLUSTER_STATE, code, field="fyi_clusters.state")
 
 
 def encode_scheduled_task_execution_target(name: str) -> int:

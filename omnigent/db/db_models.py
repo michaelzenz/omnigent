@@ -1025,6 +1025,7 @@ class SqlTaskEvent(OmnigentBase):
     :param state: A ``TASK_EVENT_STATE`` code.
     :param task_id: The task the event concerns, or ``None``.
     :param manager_id: The manager it was routed to, or ``None``.
+    :param fyi_cluster_id: The FYI cluster it was filed into, or ``None``.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last change, or ``None``.
     :param routed_at: When it was routed to a manager, or ``None``.
@@ -1055,6 +1056,7 @@ class SqlTaskEvent(OmnigentBase):
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="4")
     task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     manager_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    fyi_cluster_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     routed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -1082,6 +1084,50 @@ class SqlTaskEvent(OmnigentBase):
         ),
         # Earlier reports of the same thing from a source.
         Index("ix_task_events_source_key", "workspace_id", "owner_user_id", "source_key"),
+        # The events filed into an FYI cluster.
+        Index("ix_task_events_fyi_cluster", "workspace_id", "fyi_cluster_id"),
+    )
+
+
+class SqlFyiCluster(OmnigentBase):
+    """
+    SQLAlchemy model for the ``fyi_clusters`` table: GlobalHub FYI clusters.
+
+    A manager files events that need no task into a cluster under one
+    headline; the events point at it through ``task_events.fyi_cluster_id``.
+    Ownership is stamped on the row; there are no foreign keys (Rule R032).
+
+    :param id: Uuid16 primary key (bare 32-char hex in Python).
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param headline: One line that sums up the cluster's events.
+    :param rationale: Why the events need no task, or ``None``.
+    :param state: A ``FYI_CLUSTER_STATE`` code.
+    :param created_at: Unix epoch seconds at row creation.
+    :param resolved_at: When the user dismissed the cluster, or ``None``.
+    """
+
+    __tablename__ = "fyi_clusters"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    headline: Mapped[str] = mapped_column(String(512), nullable=False)
+    rationale: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    resolved_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 2)", name="ck_fyi_clusters_state"),
+        # One owner's clusters in a state, e.g. the board's pending ones.
+        Index("ix_fyi_clusters_owner_state", "workspace_id", "owner_user_id", "state", "id"),
     )
 
 

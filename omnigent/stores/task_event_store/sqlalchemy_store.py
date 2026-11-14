@@ -44,6 +44,7 @@ def _to_entity(row: SqlTaskEvent) -> TaskEvent:
         tags=[EventTag(tag_type=tag["tag_type"], tag=tag["tag"]) for tag in json.loads(row.tags)],
         task_id=row.task_id,
         manager_id=row.manager_id,
+        fyi_cluster_id=row.fyi_cluster_id,
         updated_at=row.updated_at,
         routed_at=row.routed_at,
         processed_at=row.processed_at,
@@ -173,6 +174,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         owner_user_id: str | None,
         states: Collection[str] | None = None,
         manager_id: str | None = None,
+        fyi_cluster_ids: Collection[str] | None = None,
         limit: int | None = None,
     ) -> builtins.list[TaskEvent]:
         """List the owner's events, oldest first."""
@@ -183,6 +185,8 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             )
         if manager_id is not None:
             stmt = stmt.where(SqlTaskEvent.manager_id == manager_id)
+        if fyi_cluster_ids is not None:
+            stmt = stmt.where(SqlTaskEvent.fyi_cluster_id.in_(fyi_cluster_ids))
         stmt = stmt.order_by(asc(SqlTaskEvent.created_at), asc(SqlTaskEvent.id))
         if limit is not None:
             stmt = stmt.limit(limit)
