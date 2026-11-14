@@ -95,7 +95,10 @@ from omnigent.server.agent_queue_packagers import (
     ManagerPackager,
     write_notice_click,
 )
-from omnigent.server.agent_task_session_events import SessionEventReporter
+from omnigent.server.agent_task_session_events import (
+    SessionEventReporter,
+    install_session_event_reporter,
+)
 from omnigent.server.auth import (
     RESERVED_USER_LOCAL,
     AuthProvider,
@@ -2354,10 +2357,12 @@ def create_app(
                 if listener is not None
             )
         )
+        install_session_event_reporter(session_event_reporter)
         try:
             with monitor_event_loop():
                 yield
         finally:
+            install_session_event_reporter(None)
             agent_task_delivery.install_turn_listeners()
             if session_event_reporter is not None:
                 await session_event_reporter.stop()

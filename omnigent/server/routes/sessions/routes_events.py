@@ -4244,6 +4244,10 @@ def register_events_routes(
                 )
         _interrupt_fenced_sessions.discard(session_id)
         _intentional_stop_sessions.pop(session_id, None)
+        from omnigent.server.agent_task_session_events import before_session_delete
+
+        # GlobalHub reads the session's owner, whose grant the delete removes.
+        await before_session_delete(conv)
         deleted = await conversation_store.delete_conversation(session_id)
         if not deleted:
             raise _session_not_found()

@@ -77,6 +77,14 @@ class _Hub:
     def reports(self) -> list[TaskEvent]:
         return self.board.events.list(owner_user_id=ALICE, event_type="session.turn.finished")
 
+    def deletions(self) -> list[TaskEvent]:
+        return self.board.events.list(owner_user_id=ALICE, event_type="session.deleted")
+
+    def conv(self, session_id: str) -> Conversation:
+        conv = self.conversations.get_conversation(session_id)
+        assert conv is not None
+        return conv
+
 
 @pytest.fixture()
 def hub(db_uri: str) -> _Hub:
@@ -170,3 +178,73 @@ async def test_only_a_finished_turn_is_reported_in_the_background(hub: _Hub) -> 
     await hub.reporter.stop()
 
     assert (after_a_failed_turn, len(hub.reports())) == ([], 1)
+
+
+def test_deleting_a_session_on_live_tasks_tells_their_managers_and_detaches_it(
+    hub: _Hub,
+) -> None:
+    session_id = hub.session()
+    storage, former = hub.manager(), hub.manager()
+    hub.attach(session_id, manager_id=storage)
+    hub.attach(session_id, manager_id=former, state="archived")
+
+    hub.reporter.report_session_deleted(hub.conv(session_id))
+    hub.reporter.report_session_deleted(hub.conv(session_id))
+
+    [event] = hub.deletions()
+    assert (event.state, event.manager_id, event.title) == (
+        "routed",
+        storage,
+        "Session deleted: Fix S3 retries",
+    )
+    assert event.payload == {
+        "session_id": session_id,
+        "session_title": "Fix S3 retries",
+        "project_name": None,
+    }
+    assert hub.board.workers.list_for_session(session_id, owner_user_id=ALICE) == []
+
+
+@pytest.mark.parametrize("holder", ["nobody", "broker", "manager"])
+def test_deleting_a_session_on_no_task_tells_whoever_holds_its_turn_report(
+    hub: _Hub, holder: str
+) -> None:
+    session_id = hub.session()
+    manager_id = hub.manager()
+    if holder != "nobody":
+        hub.reporter.report_turn_finished(session_id)
+    if holder == "manager":
+        [turn] = hub.reports()
+        hub.board.events.route_to_manager([turn.id], owner_user_id=ALICE, manager_id=manager_id)
+
+    hub.reporter.report_session_deleted(hub.conv(session_id))
+
+    expected = {
+        "nobody": [],
+        "broker": [("unrouted", None)],
+        "manager": [("routed", manager_id)],
+    }[holder]
+    assert [(event.state, event.manager_id) for event in hub.deletions()] == expected
+
+
+def test_deleting_a_role_session_drops_its_queue_items_and_frees_their_events(
+    hub: _Hub,
+) -> None:
+    session_id = hub.session(labels={ROLE_LABEL: "task_broker"})
+    comment = hub.board.events.create(
+        uuid.uuid4().hex, owner_user_id=ALICE, event_type="github.pr.comment", title="Comment"
+    )
+    hub.board.queue.enqueue(
+        uuid.uuid4().hex,
+        owner_user_id=ALICE,
+        target_session_id=session_id,
+        kind="events",
+        event_ids=[comment.id],
+    )
+
+    hub.reporter.report_session_deleted(hub.conv(session_id))
+
+    freed = hub.board.events.get(comment.id, owner_user_id=ALICE)
+    assert hub.board.queue.list(owner_user_id=ALICE) == []
+    assert freed is not None and freed.queue_item_id is None
+    assert hub.deletions() == []

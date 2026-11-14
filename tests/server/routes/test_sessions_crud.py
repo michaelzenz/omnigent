@@ -21,9 +21,10 @@ import pytest_asyncio
 
 from omnigent.agent_tasks.session_labels import MANAGER_ROLE_VALUE, ROLE_LABEL
 from omnigent.db.utils import generate_agent_id
-from omnigent.entities import USER_SESSION_TITLE_MAX_CHARS
+from omnigent.entities import USER_SESSION_TITLE_MAX_CHARS, Conversation
 from omnigent.harnesses.opencode_native.app_server import OpenCodeNativeServer
 from omnigent.runner import create_runner_app
+from omnigent.server import agent_task_session_events
 from omnigent.server.routes import sessions as sessions_module
 from omnigent.spec.types import AgentSpec
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -158,6 +159,27 @@ async def test_delete_session(
     assert resp.status_code == 200
     body = resp.json()
     assert body["deleted"] is True
+
+
+async def test_delete_session_reports_to_globalhub_before_the_row_goes(
+    client: httpx.AsyncClient,
+    session_id: str,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GlobalHub hears of a deleted session while its row and owner grant still exist."""
+    store = SqlAlchemyConversationStore(db_uri)
+    seen: list[tuple[str, bool]] = []
+
+    async def report(conv: Conversation) -> None:
+        seen.append((conv.id, store.get_conversation(conv.id) is not None))
+
+    monkeypatch.setattr(agent_task_session_events, "before_session_delete", report)
+
+    resp = await client.delete(f"/v1/sessions/{session_id}")
+
+    assert resp.status_code == 200
+    assert seen == [(session_id, True)]
 
 
 async def test_delete_session_survives_blob_delete_failure(
