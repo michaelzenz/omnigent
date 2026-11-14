@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import httpx
 
+from omnigent.agent_tasks.roles import CUSTODIAN_ROLE_KEY
 from omnigent.runner.identity import (
     ORCHESTRATION_SOURCE_HEADER,
     RUNNER_TUNNEL_TOKEN_HEADER,
     token_bound_runner_id,
 )
+from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
+from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
 
-ALICE = {"X-Forwarded-Email": "alice@example.com"}
+ALICE_ID = "alice@example.com"
+ALICE = {"X-Forwarded-Email": ALICE_ID}
 BOB = {"X-Forwarded-Email": "bob@example.com"}
 ROUTE = "/v1/agent-tasks/system-notice"
 CLEANUP = {
@@ -35,6 +41,18 @@ CLEANUP = {
 def _action(action_id: str, input_ids: list[str], **fields: Any) -> dict[str, Any]:
     inputs = [{"id": input_id, "kind": "toggle"} for input_id in input_ids]
     return {"id": action_id, "inputs": inputs, **fields}
+
+
+def _place_globalhub_with_a_custodian(db_uri: str) -> None:
+    SqlAlchemyAgentStore(db_uri).create(
+        uuid.uuid4().hex, "onih-custodian", "bundles/onih-custodian.tar.gz"
+    )
+    UserSettingsStore(db_uri).save_globalhub_placement(
+        GlobalHubPlacement(
+            host_id="0f1e2d3c4b5a69788796a5b4c3d2e1f0", workspace="/Users/alice/globalhub"
+        ),
+        user_id=ALICE_ID,
+    )
 
 
 async def test_the_caller_has_one_active_notice_until_they_dismiss_it(
@@ -121,3 +139,74 @@ async def test_publishing_checks_declared_ids_and_size_but_not_counts(
     assert statuses == [422] * len(rejected)
     assert accepted.status_code == 200, accepted.text
     assert len(accepted.json()["notice"]["actions"]) == 40
+
+
+async def test_a_click_waits_in_the_queue_for_the_custodian(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    _place_globalhub_with_a_custodian(db_uri)
+    notice = (await auth_client.post(ROUTE, json=CLEANUP, headers=ALICE)).json()["notice"]
+
+    clicked = await auth_client.post(
+        f"{ROUTE}/actions/confirm_cleanup/click",
+        json={"inputs": {"delete_a": True, "reason": "Finished last week"}},
+        headers=ALICE,
+    )
+
+    assert clicked.json() == {
+        "object": "agent.task.system_notice_click",
+        "notice_id": notice["id"],
+        "action_id": "confirm_cleanup",
+        "inputs": {"delete_a": True, "reason": "Finished last week"},
+    }
+    custodian = UserSettingsStore(db_uri).get_globalhub_role_session(
+        CUSTODIAN_ROLE_KEY, user_id=ALICE_ID
+    )
+    [item] = SqlAlchemyAgentQueueStore(db_uri).list(owner_user_id=ALICE_ID)
+    assert (item.kind, item.target_session_id, item.payload["inputs"]) == (
+        "notice_click",
+        custodian,
+        {"delete_a": True, "reason": "Finished last week"},
+    )
+    still_active = (await auth_client.get(ROUTE, headers=ALICE)).json()["notice"]
+    assert (still_active["id"], still_active["state"]) == (notice["id"], "active")
+
+
+async def test_a_click_must_match_the_declared_action_and_its_inputs(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    _place_globalhub_with_a_custodian(db_uri)
+    nothing_active = await auth_client.post(
+        f"{ROUTE}/actions/confirm/click", json={}, headers=ALICE
+    )
+    actions = [
+        {
+            "id": "confirm",
+            "inputs": [
+                {"id": "delete_a", "kind": "toggle"},
+                {"id": "reason", "kind": "text", "required": True},
+            ],
+        },
+        {"id": "bulk", "inputs": [{"id": f"note_{n}", "kind": "textarea"} for n in range(300)]},
+    ]
+    await auth_client.post(ROUTE, json={"title": "Cleanup", "actions": actions}, headers=ALICE)
+
+    async def click(action_id: str, inputs: dict[str, Any]) -> int:
+        response = await auth_client.post(
+            f"{ROUTE}/actions/{action_id}/click", json={"inputs": inputs}, headers=ALICE
+        )
+        return response.status_code
+
+    statuses = [
+        await click("undo", {"reason": "x"}),
+        await click("confirm", {"delete_b": True, "reason": "x"}),
+        await click("confirm", {"delete_a": "yes", "reason": "x"}),
+        await click("confirm", {"reason": "x" * 8_001}),
+        await click("confirm", {"delete_a": True, "reason": "  "}),
+        await click("confirm", {"delete_a": True}),
+        await click("bulk", {f"note_{n}": "x" * 8_000 for n in range(300)}),
+    ]
+
+    assert nothing_active.status_code == 404
+    assert statuses == [404, 400, 400, 400, 400, 400, 400]
+    assert SqlAlchemyAgentQueueStore(db_uri).list(owner_user_id=ALICE_ID) == []

@@ -6426,6 +6426,28 @@ class PublishAgentSystemNoticeRequest(BaseModel):
         return self
 
 
+class ClickAgentSystemNoticeActionRequest(BaseModel):
+    """Click a declared action of the caller's active system notice.
+
+    ``inputs`` holds values by input id: ``true`` or ``false`` for a toggle,
+    text of at most 8,000 characters for a text field. A required text field
+    must not be empty, and all the values serialize to at most 2 MB of JSON.
+    """
+
+    inputs: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentSystemNoticeClickResponse(BaseModel):
+    """A click queued for the caller's custodian session, with the values it carries."""
+
+    object: Literal["agent.task.system_notice_click"] = "agent.task.system_notice_click"
+    notice_id: str
+    action_id: str
+    inputs: dict[str, bool | str]
+
+
 class UpdateGlobalHubRoleProfileRequest(BaseModel):
     """Override fields of the caller's role definition.
 

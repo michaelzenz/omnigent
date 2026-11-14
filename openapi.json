@@ -907,6 +907,46 @@
         "title": "AgentSystemNoticeAction",
         "type": "object"
       },
+      "AgentSystemNoticeClickResponse": {
+        "description": "A click queued for the caller's custodian session, with the values it carries.",
+        "properties": {
+          "action_id": {
+            "title": "Action Id",
+            "type": "string"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "title": "Inputs",
+            "type": "object"
+          },
+          "notice_id": {
+            "title": "Notice Id",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.task.system_notice_click",
+            "default": "agent.task.system_notice_click",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "notice_id",
+          "action_id",
+          "inputs"
+        ],
+        "title": "AgentSystemNoticeClickResponse",
+        "type": "object"
+      },
       "AgentSystemNoticeInput": {
         "additionalProperties": false,
         "description": "A control the user sets before clicking an action: a toggle or a text box.\n\n`group` names a set of the action's inputs, e.g. the sessions on one\nhost, that the board can switch on or off together. `default` is a\ntoggle's initial value.",
@@ -2535,6 +2575,19 @@
           "cleared"
         ],
         "title": "ClearCodexGoalResponse",
+        "type": "object"
+      },
+      "ClickAgentSystemNoticeActionRequest": {
+        "additionalProperties": false,
+        "description": "Click a declared action of the caller's active system notice.\n\n`inputs` holds values by input id: `true` or `false` for a toggle,\ntext of at most 8,000 characters for a text field. A required text field\nmust not be empty, and all the values serialize to at most 2 MB of JSON.",
+        "properties": {
+          "inputs": {
+            "additionalProperties": true,
+            "title": "Inputs",
+            "type": "object"
+          }
+        },
+        "title": "ClickAgentSystemNoticeActionRequest",
         "type": "object"
       },
       "ClientTaskCancelEvent": {
@@ -16234,6 +16287,59 @@
           }
         },
         "summary": "Publish System Notice",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/system-notice/actions/{action_id}/click": {
+      "post": {
+        "description": "Send a click on an action of the caller's active notice to their custodian.\n\nThe click waits in the queue until the custodian session is between\nturns. The notice stays active; the custodian clears it after acting.",
+        "operationId": "click_system_notice_action_v1_agent_tasks_system_notice_actions__action_id__click_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "action_id",
+            "required": true,
+            "schema": {
+              "title": "Action Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClickAgentSystemNoticeActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSystemNoticeClickResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Click System Notice Action",
         "tags": [
           "agent-tasks"
         ]

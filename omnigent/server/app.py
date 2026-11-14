@@ -93,6 +93,7 @@ from omnigent.server.agent_queue_packagers import (
     BrokerPackager,
     EventNoticeWriter,
     ManagerPackager,
+    write_notice_click,
 )
 from omnigent.server.auth import (
     RESERVED_USER_LOCAL,
@@ -4199,7 +4200,7 @@ def create_app(
             )
         app.include_router(
             create_agent_task_system_notice_router(
-                board_stores, conversation_store, auth_provider
+                board_stores, conversation_store, auth_provider, sessions=role_session_stores
             ),
             prefix="/v1",
             tags=["agent-tasks"],
@@ -4247,7 +4248,8 @@ def create_app(
                 renderers={
                     "events": EventNoticeWriter(
                         board=board_stores, conversations=conversation_store
-                    ).write
+                    ).write,
+                    "notice_click": write_notice_click,
                 },
                 packagers=[
                     BrokerPackager(board=board_stores, sessions=role_session_stores),

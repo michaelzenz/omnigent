@@ -19,12 +19,13 @@ from omnigent.agent_tasks.role_sessions import (
     ensure_role_session,
 )
 from omnigent.agent_tasks.roles import BROKER_ROLE_KEY, MANAGER_ROLE_KEY, builtin_role
-from omnigent.entities import EventTag
+from omnigent.entities import AgentQueueItem, EventTag
 from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher
 from omnigent.server.agent_queue_packagers import (
     BrokerPackager,
     EventNoticeWriter,
     ManagerPackager,
+    write_notice_click,
 )
 from omnigent.server.agent_task_delivery import SendResult, SessionSendDeps
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -266,6 +267,41 @@ async def test_a_manager_notice_lists_its_events_by_id_and_ends_with_the_roster(
     )
     dismissed = board.events.get(stale_turn, owner_user_id=ALICE)
     assert dismissed is not None and dismissed.state == "dismissed"
+
+
+def test_a_notice_click_is_written_for_the_custodian() -> None:
+    item = AgentQueueItem(
+        id=next(_ids),
+        owner_user_id=ALICE,
+        target_session_id=next(_ids),
+        kind="notice_click",
+        state="sending",
+        seq=1,
+        created_at=0,
+        payload={
+            "notice_id": "notice-1",
+            "title": "Stale session cleanup",
+            "action_id": "confirm_cleanup",
+            "action_label": "Delete selected sessions",
+            "publisher_label": "Task custodian",
+            "inputs": {"delete_a": True, "delete_b": False, "reason": "x" * 600},
+        },
+    )
+
+    assert write_notice_click(item) == "\n".join(
+        [
+            "[System notice click — notice notice-1]",
+            "Title: Stale session cleanup",
+            "Action clicked: confirm_cleanup (Delete selected sessions)",
+            "Published by: Task custodian",
+            "Inputs:",
+            "  - delete_a: true",
+            "  - delete_b: false",
+            f'  - reason: "{"x" * 500}…"',
+            "Interpret this click per the notice's intent and the Custodian manual. Read the "
+            'notice itself with system_notice(action="get") if you need its full body.',
+        ]
+    )
 
 
 async def test_a_waiting_event_reaches_the_broker_as_a_notice(

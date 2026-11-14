@@ -1,4 +1,4 @@
-"""Queue the task events waiting for each user's broker and managers, and write their notices."""
+"""Queue the task events waiting for each user's broker and managers, and write queue messages."""
 
 from __future__ import annotations
 
@@ -40,6 +40,7 @@ _TURN_FINISHED_ADVICE = (
     "Read the recent session transcript to see what was done. "
     "Update the task overview and stamp all assets."
 )
+_CLICK_TEXT_SHOWN_CHARS = 500
 
 
 class BrokerPackager:
@@ -213,6 +214,31 @@ class EventNoticeWriter:
             and event.source_session_id is not None
             and self._conversations.get_conversation(event.source_session_id) is None
         )
+
+
+def write_notice_click(item: AgentQueueItem) -> str:
+    """Write the custodian's message for a ``notice_click`` queue item, from its payload."""
+    click = item.payload
+    label = click.get("action_label")
+    lines = [
+        f"[System notice click — notice {click['notice_id']}]",
+        f"Title: {click['title']}",
+        f"Action clicked: {click['action_id']}" + (f" ({label})" if label else ""),
+    ]
+    if click.get("publisher_label"):
+        lines.append(f"Published by: {click['publisher_label']}")
+    inputs: dict[str, Any] = click.get("inputs") or {}
+    if inputs:
+        lines.append("Inputs:")
+        for input_id, value in inputs.items():
+            if isinstance(value, str) and len(value) > _CLICK_TEXT_SHOWN_CHARS:
+                value = value[:_CLICK_TEXT_SHOWN_CHARS] + "…"
+            lines.append(f"  - {input_id}: {json.dumps(value, ensure_ascii=False)}")
+    lines.append(
+        "Interpret this click per the notice's intent and the Custodian manual. Read the "
+        'notice itself with system_notice(action="get") if you need its full body.'
+    )
+    return "\n".join(lines)
 
 
 def _tags(event: TaskEvent) -> list[dict[str, str]]:
