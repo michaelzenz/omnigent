@@ -9,8 +9,10 @@ from typing import Any
 import pytest
 
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.server import agent_task_delivery
 from omnigent.server.agent_task_delivery import SessionSendDeps, send_to_session
 from omnigent.server.routes import sessions
+from omnigent.server.routes._sessions import helpers
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 
@@ -116,3 +118,22 @@ async def test_sends_that_cannot_reach_the_session_say_why(
     assert unreachable == ("unreachable", "no runner can be reached or woken")
     assert rejected == ("failed", "Runner rejected the message")
     assert not_accepted == ("failed", "the runner did not accept the message")
+
+
+def test_a_finished_or_failed_turn_tells_the_queue(monkeypatch: pytest.MonkeyPatch) -> None:
+    notified: list[str] = []
+    monkeypatch.setattr(agent_task_delivery, "notify_turn_end", notified.append)
+    monkeypatch.setattr(helpers.session_live_state, "persist_live_status", lambda *_: None)
+    session_id = "c0ffee00c0ffee00c0ffee00c0ffee01"
+    monkeypatch.delitem(helpers._session_status_cache, session_id, raising=False)
+
+    helpers._publish_status(session_id, "idle")
+    helpers._publish_status(session_id, "running")
+    helpers._publish_status(session_id, "waiting")
+    before_the_turn_ends = list(notified)
+    helpers._publish_status(session_id, "idle")
+    helpers._publish_status(session_id, "running")
+    helpers._publish_status(session_id, "failed")
+
+    assert before_the_turn_ends == []
+    assert notified == [session_id, session_id]

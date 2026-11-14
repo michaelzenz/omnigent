@@ -82,11 +82,13 @@ from omnigent.runtime import (
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.runtime.harnesses.process_manager import HarnessProcessManager
 from omnigent.server import (
+    agent_task_delivery,
     managed_host_keepalive,
     session_live_state,
     session_pull_requests,
     shutdown_state,
 )
+from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher
 from omnigent.server.auth import (
     RESERVED_USER_LOCAL,
     AuthProvider,
@@ -2330,10 +2332,19 @@ def create_app(
                 await managed_sandbox_reaper.start()
 
         session_pull_requests.install_refresher(pull_request_refresher)
+        agent_queue_dispatcher: AgentQueueDispatcher | None = getattr(
+            app_inst.state, "agent_queue_dispatcher", None
+        )
+        if agent_queue_dispatcher is not None:
+            await agent_queue_dispatcher.start()
+            agent_task_delivery.install_turn_listener(agent_queue_dispatcher)
         try:
             with monitor_event_loop():
                 yield
         finally:
+            agent_task_delivery.install_turn_listener(None)
+            if agent_queue_dispatcher is not None:
+                await agent_queue_dispatcher.stop()
             session_pull_requests.install_refresher(None)
             await pull_request_refresher.aclose()
             if scheduler_start_retry is not None:
@@ -4215,6 +4226,21 @@ def create_app(
             prefix="/v1",
             tags=["agent-tasks"],
         )
+        if role_session_stores is not None:
+            # Started and stopped by the lifespan.
+            app.state.agent_queue_dispatcher = AgentQueueDispatcher(
+                board=board_stores,
+                sessions=role_session_stores,
+                send_deps=agent_task_delivery.SessionSendDeps(
+                    conversation_store=conversation_store,
+                    agent_store=agent_store,
+                    app_state=app.state,
+                    runner_router=runner_router,
+                    file_store=file_store,
+                    artifact_store=artifact_store,
+                ),
+                renderers={},
+            )
 
     if preference_store is not None:
         app.include_router(

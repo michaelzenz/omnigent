@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from omnigent.entities import Conversation
 from omnigent.mcp_selection import mcp_selection_revision
@@ -19,6 +19,28 @@ from omnigent.server.schemas import SessionEventInput
 _logger = logging.getLogger(__name__)
 
 SendOutcome = Literal["sent", "busy", "unreachable", "gone", "failed"]
+
+
+class TurnEndListener(Protocol):
+    """Told when a session's turn ends, e.g. the GlobalHub queue's dispatcher."""
+
+    def turn_ended(self, session_id: str) -> None:
+        """Handle the end of ``session_id``'s turn without blocking the event loop."""
+
+
+_installed: TurnEndListener | None = None
+
+
+def install_turn_listener(listener: TurnEndListener | None) -> None:
+    """Make ``listener`` the one :func:`notify_turn_end` tells; ``None`` uninstalls it."""
+    global _installed
+    _installed = listener
+
+
+def notify_turn_end(session_id: str) -> None:
+    """Tell the installed listener that a session's turn ended or failed."""
+    if _installed is not None:
+        _installed.turn_ended(session_id)
 
 
 @dataclass(frozen=True)
@@ -64,7 +86,7 @@ async def send_to_session(
     conv = await asyncio.to_thread(deps.conversation_store.get_conversation, session_id)
     if conv is None or conv.archived:
         return SendResult("gone")
-    if _mid_turn(conv):
+    if session_mid_turn(conv):
         return SendResult("busy")
     try:
         runner_client, conv = await sessions.ensure_runner_connected(
@@ -77,7 +99,7 @@ async def send_to_session(
         if runner_client is None:
             return SendResult("unreachable", "no runner can be reached or woken")
         # Waking the runner takes time; the user may have started a turn meanwhile.
-        if _mid_turn(conv):
+        if session_mid_turn(conv):
             return SendResult("busy")
         await sessions._ensure_runner_session_initialized(
             conv.id, conv, runner_client, deps.conversation_store
@@ -111,7 +133,8 @@ async def send_to_session(
     return SendResult("sent")
 
 
-def _mid_turn(conv: Conversation) -> bool:
+def session_mid_turn(conv: Conversation) -> bool:
+    """Whether a turn is running in the session, by main's live status."""
     from omnigent.server.routes import sessions
 
     status = sessions._session_status_cache.get(conv.id, conv.live_status)

@@ -7,9 +7,10 @@ import json
 import threading
 import time
 from collections.abc import Collection, Mapping
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import ColumnElement, and_, asc, or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session, aliased
 
 from omnigent.db.account_authority import require_active_account
@@ -199,7 +200,7 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
         queued_earlier = select(other.id).where(
             same_session, other.state == _QUEUED, other.seq < item.seq
         )
-        stmt = (
+        due = (
             select(item)
             .where(
                 item.workspace_id == workspace_id,
@@ -210,17 +211,99 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
             )
             .order_by(asc(item.seq), asc(item.id))
             .limit(limit)
-            .with_for_update()
         )
 
         def write(session: Session) -> builtins.list[AgentQueueItem]:
-            rows = list(session.execute(stmt).scalars())
+            rows = list(session.execute(due.with_for_update()).scalars())
             for row in rows:
                 row.state = _SENDING
                 row.updated_at = now
             return [_to_entity(row) for row in rows]
 
+        # Most passes find nothing; check without taking SQLite's write lock.
+        with self._session("find_due_agent_queue_items") as session:
+            if session.execute(due.with_only_columns(item.id).limit(1)).first() is None:
+                return []
         return run_write_transaction(self._session_immediate, "claim_due_agent_queue_items", write)
+
+    def release_stale_claims(self, *, claimed_before: int) -> int:
+        """Put back every owner's items claimed before ``claimed_before`` and never settled."""
+        now = now_epoch()
+
+        def write(session: Session) -> int:
+            result = cast(
+                CursorResult[tuple[object]],
+                session.execute(
+                    update(SqlAgentQueueItem)
+                    .where(
+                        SqlAgentQueueItem.workspace_id == current_workspace_id(),
+                        SqlAgentQueueItem.state == _SENDING,
+                        SqlAgentQueueItem.updated_at < claimed_before,
+                    )
+                    .values(state=_QUEUED, updated_at=now)
+                    .execution_options(synchronize_session=False)
+                ),
+            )
+            return result.rowcount
+
+        return run_write_transaction(
+            self._session_immediate, "release_stale_agent_queue_claims", write
+        )
+
+    def list_sent(self) -> builtins.list[AgentQueueItem]:
+        """List every owner's ``sent`` items in arrival order, for the dispatcher."""
+        stmt = (
+            select(SqlAgentQueueItem)
+            .where(
+                SqlAgentQueueItem.workspace_id == current_workspace_id(),
+                SqlAgentQueueItem.state == _SENT,
+            )
+            .order_by(asc(SqlAgentQueueItem.seq), asc(SqlAgentQueueItem.id))
+        )
+        with self._session("list_sent_agent_queue_items") as session:
+            return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
+
+    def mark_done_for_session(self, session_id: str) -> int:
+        """Record that the turn handling the item sent to ``session_id`` ended."""
+        now = now_epoch()
+
+        def write(session: Session) -> int:
+            result = cast(
+                CursorResult[tuple[object]],
+                session.execute(
+                    update(SqlAgentQueueItem)
+                    .where(
+                        SqlAgentQueueItem.workspace_id == current_workspace_id(),
+                        SqlAgentQueueItem.target_session_id == session_id,
+                        SqlAgentQueueItem.state == _SENT,
+                    )
+                    .values(state=_DONE, done_at=now, updated_at=now)
+                    .execution_options(synchronize_session=False)
+                ),
+            )
+            return result.rowcount
+
+        return run_write_transaction(
+            self._session_immediate, "mark_session_agent_queue_item_done", write
+        )
+
+    def defer(
+        self, item_id: str, *, owner_user_id: str | None, not_before: int
+    ) -> AgentQueueItem | None:
+        """Put a claimed item back without counting a failed attempt."""
+        now = now_epoch()
+
+        def write(session: Session) -> AgentQueueItem | None:
+            require_active_account(session, owner_user_id)
+            row = _owned_row(session, item_id, owner_user_id)
+            if row is None or row.state != _SENDING:
+                return None
+            row.state = _QUEUED
+            row.not_before = not_before
+            row.updated_at = now
+            return _to_entity(row)
+
+        return run_write_transaction(self._session_immediate, "defer_agent_queue_item", write)
 
     def mark_sent(self, item_id: str, *, owner_user_id: str | None) -> AgentQueueItem | None:
         """Record that a claimed item's send succeeded."""

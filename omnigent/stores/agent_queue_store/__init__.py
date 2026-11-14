@@ -78,6 +78,41 @@ class AgentQueueStore(ABC):
         """
 
     @abstractmethod
+    def release_stale_claims(self, *, claimed_before: int) -> int:
+        """
+        Put back every owner's items claimed before ``claimed_before`` and never settled.
+
+        A dispatcher that crashed mid-send leaves its claim behind; putting it
+        back lets the item be sent again.
+
+        :returns: How many items went back to the queue.
+        """
+
+    @abstractmethod
+    def list_sent(self) -> builtins.list[AgentQueueItem]:
+        """List every owner's ``sent`` items in arrival order, for the dispatcher."""
+
+    @abstractmethod
+    def mark_done_for_session(self, session_id: str) -> int:
+        """
+        Record that the turn handling the item sent to ``session_id`` ended.
+
+        :returns: How many items became ``done``.
+        """
+
+    @abstractmethod
+    def defer(
+        self, item_id: str, *, owner_user_id: str | None, not_before: int
+    ) -> AgentQueueItem | None:
+        """
+        Put a claimed item back without counting a failed attempt, e.g. while its session is busy.
+
+        :param not_before: Earliest Unix epoch second for the next send.
+        :returns: The queued item, or ``None`` when it is not the owner's item
+            in ``sending``.
+        """
+
+    @abstractmethod
     def mark_sent(self, item_id: str, *, owner_user_id: str | None) -> AgentQueueItem | None:
         """
         Record that a claimed item's send succeeded.

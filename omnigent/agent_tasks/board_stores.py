@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from omnigent.stores.agent_queue_store import AgentQueueStore
+from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 from omnigent.stores.fyi_cluster_store import FyiClusterStore
 from omnigent.stores.fyi_cluster_store.sqlalchemy_store import SqlAlchemyFyiClusterStore
 from omnigent.stores.manager_store import ManagerStore
@@ -32,6 +34,7 @@ class BoardStores:
     :param fyi_clusters: Events that need no task, kept for the user to read.
     :param assets: The links the tasks carry.
     :param system_notices: The notice pinned on each user's board.
+    :param queue: The messages waiting for the role sessions.
     """
 
     tasks: TaskStore
@@ -41,6 +44,7 @@ class BoardStores:
     fyi_clusters: FyiClusterStore
     assets: TaskAssetStore
     system_notices: SystemNoticeStore
+    queue: AgentQueueStore
 
 
 def open_board_stores(conversation_store: object) -> BoardStores | None:
@@ -61,4 +65,5 @@ def open_board_stores(conversation_store: object) -> BoardStores | None:
         fyi_clusters=SqlAlchemyFyiClusterStore(location),
         assets=SqlAlchemyTaskAssetStore(location),
         system_notices=SqlAlchemySystemNoticeStore(location),
+        queue=SqlAlchemyAgentQueueStore(location),
     )

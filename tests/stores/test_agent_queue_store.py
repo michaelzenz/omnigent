@@ -145,6 +145,29 @@ def test_a_failed_send_waits_for_its_retry_time_and_keeps_its_place(
     assert [item.id for item in queue.list(owner_user_id=ALICE, states=["queued"])] == [later]
 
 
+def test_crashed_claims_go_back_and_a_turn_end_settles_its_session(
+    queue: SqlAlchemyAgentQueueStore,
+) -> None:
+    broker_item = _enqueue(queue, BROKER_SESSION)
+    manager_item = _enqueue(queue, MANAGER_SESSION)
+    queue.claim_due(now=NOW)
+
+    not_yet = queue.release_stale_claims(claimed_before=NOW)
+    released = queue.release_stale_claims(claimed_before=NOW + 1)
+    queue.claim_due(now=NOW + 1)
+    queue.mark_sent(broker_item, owner_user_id=ALICE)
+    deferred = queue.defer(manager_item, owner_user_id=ALICE, not_before=NOW + 6)
+    sent = [item.id for item in queue.list_sent()]
+    settled = queue.mark_done_for_session(BROKER_SESSION)
+
+    assert (not_yet, released) == (0, 2)
+    assert deferred is not None
+    assert (deferred.state, deferred.attempts, deferred.not_before) == ("queued", 0, NOW + 6)
+    assert sent == [broker_item]
+    assert (settled, queue.mark_done_for_session(BROKER_SESSION)) == (1, 0)
+    assert queue.list_sent() == []
+
+
 def test_deleting_an_item_releases_its_events_to_be_queued_again(
     queue: SqlAlchemyAgentQueueStore, events: SqlAlchemyTaskEventStore
 ) -> None:

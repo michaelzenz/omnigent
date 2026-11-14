@@ -113,7 +113,13 @@ from omnigent.runtime import (
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.runtime.policies.engine import PolicyEngine
 from omnigent.runtime.tool_output import cap_tool_output
-from omnigent.server import presence, session_live_state, session_pull_requests, shutdown_state
+from omnigent.server import (
+    agent_task_delivery,
+    presence,
+    session_live_state,
+    session_pull_requests,
+    shutdown_state,
+)
 from omnigent.server._elicitation_registry import (
     _harness_elicitation_owners,
     _harness_parked_elicitations,
@@ -5210,6 +5216,9 @@ def _publish_status(
         # A turn can open or merge a PR while nobody watches; refresh what the server
         # stores. Stops and archives publish idle without persisting it, and skip this.
         session_pull_requests.notify_turn_end(session_id)
+    if status == "failed" or (status == "idle" and previous_status in ("running", "waiting")):
+        # A GlobalHub role session may take its next queued message now.
+        agent_task_delivery.notify_turn_end(session_id)
     # Mirror the transition onto the conversation row (best-effort,
     # deduplicated, off-loop) so replicas that don't hold this session's
     # runner tunnel serve the same sidebar status.
