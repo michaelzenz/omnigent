@@ -356,6 +356,79 @@
         "title": "AgentDetailObject",
         "type": "object"
       },
+      "AgentFyiClusterResponse": {
+        "description": "Related events that need no task, kept on the caller's board to read.\n\n`events` are the events filed into the cluster, oldest first. Dismissing\nthe cluster dismisses them too.",
+        "properties": {
+          "created_at": {
+            "format": "int64",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTaskEventResponse"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "headline": {
+            "title": "Headline",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.task.fyi_cluster",
+            "default": "agent.task.fyi_cluster",
+            "title": "Object",
+            "type": "string"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rationale"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "dismissed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "headline",
+          "rationale",
+          "state",
+          "created_at",
+          "resolved_at",
+          "events"
+        ],
+        "title": "AgentFyiClusterResponse",
+        "type": "object"
+      },
       "AgentList": {
         "description": "Paginated list of agents; `data` is a page of `AgentObject`.",
         "properties": {
@@ -795,6 +868,29 @@
         "title": "AgentObject",
         "type": "object"
       },
+      "AgentTaskBoardPending": {
+        "description": "What waits for the caller on their GlobalHub board.\n\n`fyi` lists the pending FYI clusters, oldest first.",
+        "properties": {
+          "fyi": {
+            "items": {
+              "$ref": "#/components/schemas/AgentFyiClusterResponse"
+            },
+            "title": "Fyi",
+            "type": "array"
+          },
+          "object": {
+            "const": "agent.task.board",
+            "default": "agent.task.board",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fyi"
+        ],
+        "title": "AgentTaskBoardPending",
+        "type": "object"
+      },
       "AgentTaskDeletedResponse": {
         "description": "A task archived (`permanent` false) or permanently deleted.",
         "properties": {
@@ -860,6 +956,17 @@
           "event_type": {
             "title": "Event Type",
             "type": "string"
+          },
+          "fyi_cluster_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fyi Cluster Id"
           },
           "id": {
             "title": "Id",
@@ -1013,6 +1120,7 @@
           "tags",
           "task_id",
           "manager_id",
+          "fyi_cluster_id",
           "created_at",
           "updated_at",
           "routed_at",
@@ -4185,6 +4293,56 @@
           "status"
         ],
         "title": "FailedResponseObject",
+        "type": "object"
+      },
+      "FileAgentTaskEventsRequest": {
+        "additionalProperties": false,
+        "description": "File events that need no task into an FYI cluster, all or none.\n\nWithout `cluster_id` a new cluster holds the events. With it, they join\nthat pending cluster and `headline` replaces its headline;\n`rationale` replaces its rationale only when given.",
+        "properties": {
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "event_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Event Ids",
+            "type": "array"
+          },
+          "headline": {
+            "maxLength": 512,
+            "title": "Headline",
+            "type": "string"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rationale"
+          }
+        },
+        "required": [
+          "event_ids",
+          "headline"
+        ],
+        "title": "FileAgentTaskEventsRequest",
         "type": "object"
       },
       "FilesystemAttachmentsInfo": {
@@ -15161,6 +15319,28 @@
         ]
       }
     },
+    "/v1/agent-tasks/board/pending": {
+      "get": {
+        "description": "List the caller's pending FYI clusters, oldest first, each with its events.",
+        "operationId": "list_board_pending_v1_agent_tasks_board_pending_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskBoardPending"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Board Pending",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
     "/v1/agent-tasks/managers": {
       "get": {
         "description": "List the caller's managers in creation order, each with its live tasks.",
@@ -16460,6 +16640,49 @@
         "summary": "Get Extension Asset",
         "tags": [
           "extensions"
+        ]
+      }
+    },
+    "/v1/fyi-clusters/{cluster_id}/resolve": {
+      "post": {
+        "description": "Dismiss one of the caller's FYI clusters and its events.\n\nDismissing a cluster again changes nothing.",
+        "operationId": "resolve_cluster_v1_fyi_clusters__cluster_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "cluster_id",
+            "required": true,
+            "schema": {
+              "title": "Cluster Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentFyiClusterResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Cluster",
+        "tags": [
+          "agent-tasks"
         ]
       }
     },
@@ -25424,6 +25647,48 @@
           }
         },
         "summary": "Route Events To Manager",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/task-events/fyi-clusters": {
+      "post": {
+        "description": "File events that need no task into an FYI cluster, all or none.\n\nWithout `cluster_id` a new cluster holds them; with it, they join that\npending cluster. Filing an event into its own cluster again is safe.",
+        "operationId": "file_events_v1_task_events_fyi_clusters_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileAgentTaskEventsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentFyiClusterResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "File Events",
         "tags": [
           "agent-tasks"
         ]

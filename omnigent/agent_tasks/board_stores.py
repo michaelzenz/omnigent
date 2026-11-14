@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from omnigent.stores.fyi_cluster_store import FyiClusterStore
+from omnigent.stores.fyi_cluster_store.sqlalchemy_store import SqlAlchemyFyiClusterStore
 from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -23,12 +25,14 @@ class BoardStores:
     :param managers: The managers that own the tasks.
     :param workers: The sessions working on the tasks.
     :param events: The signals the broker routes to managers.
+    :param fyi_clusters: Events that need no task, kept for the user to read.
     """
 
     tasks: TaskStore
     managers: ManagerStore
     workers: WorkerStore
     events: TaskEventStore
+    fyi_clusters: FyiClusterStore
 
 
 def open_board_stores(conversation_store: object) -> BoardStores | None:
@@ -46,4 +50,5 @@ def open_board_stores(conversation_store: object) -> BoardStores | None:
         managers=SqlAlchemyManagerStore(location),
         workers=SqlAlchemyWorkerStore(location),
         events=SqlAlchemyTaskEventStore(location),
+        fyi_clusters=SqlAlchemyFyiClusterStore(location),
     )

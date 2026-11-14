@@ -5919,6 +5919,7 @@ _AgentManagerDescription = Annotated[
 _AgentTaskWorkerTitle = Annotated[str, Field(max_length=200), AfterValidator(_strip_required_text)]
 _AgentTaskEventType = Annotated[str, Field(max_length=128), AfterValidator(_strip_required_text)]
 _AgentTaskEventTitle = Annotated[str, Field(max_length=512), AfterValidator(_strip_required_text)]
+_AgentFyiHeadline = Annotated[str, Field(max_length=512), AfterValidator(_strip_required_text)]
 
 
 class AgentTaskResponse(BaseModel):
@@ -6164,6 +6165,7 @@ class AgentTaskEventResponse(BaseModel):
     tags: list[AgentTaskEventTag]
     task_id: str | None
     manager_id: str | None
+    fyi_cluster_id: str | None
     created_at: int
     updated_at: int | None
     routed_at: int | None
@@ -6202,6 +6204,52 @@ class RouteAgentTaskEventsRequest(BaseModel):
 
     event_ids: list[str] = Field(..., min_length=1, max_length=100)
     manager_id: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+AgentFyiClusterState = Literal["pending", "dismissed"]
+
+
+class AgentFyiClusterResponse(BaseModel):
+    """Related events that need no task, kept on the caller's board to read.
+
+    ``events`` are the events filed into the cluster, oldest first. Dismissing
+    the cluster dismisses them too.
+    """
+
+    object: Literal["agent.task.fyi_cluster"] = "agent.task.fyi_cluster"
+    id: str
+    headline: str
+    rationale: str | None
+    state: AgentFyiClusterState
+    created_at: int
+    resolved_at: int | None
+    events: list[AgentTaskEventResponse]
+
+
+class AgentTaskBoardPending(BaseModel):
+    """What waits for the caller on their GlobalHub board.
+
+    ``fyi`` lists the pending FYI clusters, oldest first.
+    """
+
+    object: Literal["agent.task.board"] = "agent.task.board"
+    fyi: list[AgentFyiClusterResponse]
+
+
+class FileAgentTaskEventsRequest(BaseModel):
+    """File events that need no task into an FYI cluster, all or none.
+
+    Without ``cluster_id`` a new cluster holds the events. With it, they join
+    that pending cluster and ``headline`` replaces its headline;
+    ``rationale`` replaces its rationale only when given.
+    """
+
+    event_ids: list[str] = Field(..., min_length=1, max_length=100)
+    headline: _AgentFyiHeadline
+    cluster_id: str | None = None
+    rationale: str | None = Field(default=None, min_length=1, max_length=4_000)
 
     model_config = ConfigDict(extra="forbid")
 

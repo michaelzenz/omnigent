@@ -79,7 +79,7 @@ def create_agent_task_events_router(
                 tags=[EventTag(tag_type=tag.tag_type, tag=tag.tag) for tag in body.tags],
             )
 
-        return _event_response(await asyncio.to_thread(create))
+        return task_event_response(await asyncio.to_thread(create))
 
     @router.post("/task-events/batch-route-manager", response_model=AgentTaskEventList)
     async def route_events_to_manager(
@@ -115,7 +115,7 @@ def create_agent_task_events_router(
             return routed
 
         routed = await asyncio.to_thread(route)
-        return AgentTaskEventList(data=[_event_response(event) for event in routed])
+        return AgentTaskEventList(data=[task_event_response(event) for event in routed])
 
     @router.post("/task-events/{event_id}/dismiss", response_model=AgentTaskEventResponse)
     async def dismiss_event(request: Request, event_id: str) -> AgentTaskEventResponse:
@@ -127,12 +127,13 @@ def create_agent_task_events_router(
         event = await asyncio.to_thread(events.dismiss, event_id, owner_user_id=user_id)
         if event is None:
             raise OmnigentError("task event not found", code=ErrorCode.NOT_FOUND)
-        return _event_response(event)
+        return task_event_response(event)
 
     return router
 
 
-def _event_response(event: TaskEvent) -> AgentTaskEventResponse:
+def task_event_response(event: TaskEvent) -> AgentTaskEventResponse:
+    """Return the API form of a task event."""
     return AgentTaskEventResponse(
         id=event.id,
         event_type=event.event_type,
@@ -146,6 +147,7 @@ def _event_response(event: TaskEvent) -> AgentTaskEventResponse:
         tags=[AgentTaskEventTag(tag_type=tag.tag_type, tag=tag.tag) for tag in event.tags],
         task_id=event.task_id,
         manager_id=event.manager_id,
+        fyi_cluster_id=event.fyi_cluster_id,
         created_at=event.created_at,
         updated_at=event.updated_at,
         routed_at=event.routed_at,
