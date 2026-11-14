@@ -108,10 +108,10 @@ Use `just` for common tasks; run `just --list` for grouped recipes.
 ### omnigent-mz data folder
 
 This checkout is the omnigent-mz version and keeps its data out of the default
-`~/.omnigent`. Wherever the rules above say `~/.omnigent`, use `~/.omnigent-mz`:
-start its server and host with `OMNIGENT_DATA_DIR="$HOME/.omnigent-mz"`
-(database, state and logs) and `OMNIGENT_CONFIG_HOME="$HOME/.omnigent-mz"`
-(`config.yaml`), and use `sqlite:///$HOME/.omnigent-mz/chat.db` as the database
+`~/.omnigent`. Wherever the rules above say `~/.omnigent`, use `~/.omnigent-pmv2`:
+start its server and host with `OMNIGENT_DATA_DIR="$HOME/.omnigent-pmv2"`
+(database, state and logs) and `OMNIGENT_CONFIG_HOME="$HOME/.omnigent-pmv2"`
+(`config.yaml`), and use `sqlite:///$HOME/.omnigent-pmv2/chat.db` as the database
 URI.
 
 ### No proactive browser-based verification
