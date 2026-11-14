@@ -84,6 +84,8 @@ class TaskEventStore(ABC):
         manager_id: str | None = None,
         fyi_cluster_ids: Collection[str] | None = None,
         queue_item_ids: Collection[str] | None = None,
+        event_type: str | None = None,
+        source_key: str | None = None,
         limit: int | None = None,
     ) -> builtins.list[TaskEvent]:
         """
@@ -94,6 +96,8 @@ class TaskEventStore(ABC):
         :param manager_id: Only events routed to this manager.
         :param fyi_cluster_ids: Only events filed into these FYI clusters.
         :param queue_item_ids: Only events these queue items carry.
+        :param event_type: Only events of this type, e.g. ``"session.turn.finished"``.
+        :param source_key: Only events about this thing, e.g. a session id.
         :param limit: The most events to return, or ``None`` for all.
         """
 

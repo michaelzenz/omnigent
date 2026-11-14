@@ -129,8 +129,10 @@ async def test_sends_that_cannot_reach_the_session_say_why(
 
 
 def test_a_finished_or_failed_turn_tells_the_queue(monkeypatch: pytest.MonkeyPatch) -> None:
-    notified: list[str] = []
-    monkeypatch.setattr(agent_task_delivery, "notify_turn_end", notified.append)
+    notified: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        agent_task_delivery, "notify_turn_end", lambda *ended: notified.append(ended)
+    )
     monkeypatch.setattr(helpers.session_live_state, "persist_live_status", lambda *_: None)
     session_id = "c0ffee00c0ffee00c0ffee00c0ffee01"
     monkeypatch.delitem(helpers._session_status_cache, session_id, raising=False)
@@ -144,7 +146,27 @@ def test_a_finished_or_failed_turn_tells_the_queue(monkeypatch: pytest.MonkeyPat
     helpers._publish_status(session_id, "failed")
 
     assert before_the_turn_ends == []
-    assert notified == [session_id, session_id]
+    assert notified == [(session_id, "idle"), (session_id, "failed")]
+
+
+def test_every_turn_listener_hears_a_turn_end_when_another_fails() -> None:
+    heard: list[tuple[str, str]] = []
+
+    class _Fails:
+        def turn_ended(self, session_id: str, status: str) -> None:
+            raise RuntimeError(f"cannot handle {session_id} {status}")
+
+    class _Hears:
+        def turn_ended(self, session_id: str, status: str) -> None:
+            heard.append((session_id, status))
+
+    agent_task_delivery.install_turn_listeners(_Fails(), _Hears())
+    try:
+        agent_task_delivery.notify_turn_end("c0ffee00c0ffee00c0ffee00c0ffee02", "idle")
+    finally:
+        agent_task_delivery.install_turn_listeners()
+
+    assert heard == [("c0ffee00c0ffee00c0ffee00c0ffee02", "idle")]
 
 
 def _running_session(deps: SessionSendDeps, *, fresh_heartbeat: bool) -> str:

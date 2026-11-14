@@ -129,6 +129,18 @@ class SqlAlchemyWorkerStore(WorkerStore):
         with self._session("list_workers_for_tasks") as session:
             return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
 
+    def list_for_session(
+        self, session_id: str, *, owner_user_id: str | None
+    ) -> builtins.list[Worker]:
+        """List the owner's workers that wrap ``session_id``, in attach order."""
+        stmt = (
+            select(SqlWorker)
+            .where(_owned(owner_user_id), SqlWorker.session_id == session_id)
+            .order_by(asc(SqlWorker.created_at), asc(SqlWorker.id))
+        )
+        with self._session("list_workers_for_session") as session:
+            return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
+
     def update(
         self,
         worker_id: str,

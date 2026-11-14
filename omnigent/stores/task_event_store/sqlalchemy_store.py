@@ -184,6 +184,8 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         manager_id: str | None = None,
         fyi_cluster_ids: Collection[str] | None = None,
         queue_item_ids: Collection[str] | None = None,
+        event_type: str | None = None,
+        source_key: str | None = None,
         limit: int | None = None,
     ) -> builtins.list[TaskEvent]:
         """List the owner's events, oldest first."""
@@ -198,6 +200,10 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             stmt = stmt.where(SqlTaskEvent.fyi_cluster_id.in_(fyi_cluster_ids))
         if queue_item_ids is not None:
             stmt = stmt.where(SqlTaskEvent.queue_item_id.in_(queue_item_ids))
+        if event_type is not None:
+            stmt = stmt.where(SqlTaskEvent.event_type == event_type)
+        if source_key is not None:
+            stmt = stmt.where(SqlTaskEvent.source_key == source_key)
         stmt = stmt.order_by(asc(SqlTaskEvent.created_at), asc(SqlTaskEvent.id))
         if limit is not None:
             stmt = stmt.limit(limit)

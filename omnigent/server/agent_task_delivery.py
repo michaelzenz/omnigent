@@ -31,23 +31,27 @@ SendOutcome = Literal["sent", "busy", "unreachable", "gone", "failed"]
 class TurnEndListener(Protocol):
     """Told when a session's turn ends, e.g. the GlobalHub queue's dispatcher."""
 
-    def turn_ended(self, session_id: str) -> None:
-        """Handle the end of ``session_id``'s turn without blocking the event loop."""
+    def turn_ended(self, session_id: str, status: str) -> None:
+        """Handle a turn that ended ``"idle"`` or ``"failed"``, without blocking the loop."""
 
 
-_installed: TurnEndListener | None = None
+_installed: tuple[TurnEndListener, ...] = ()
 
 
-def install_turn_listener(listener: TurnEndListener | None) -> None:
-    """Make ``listener`` the one :func:`notify_turn_end` tells; ``None`` uninstalls it."""
+def install_turn_listeners(*listeners: TurnEndListener) -> None:
+    """Make ``listeners`` the ones :func:`notify_turn_end` tells; none uninstalls them."""
     global _installed
-    _installed = listener
+    _installed = listeners
 
 
-def notify_turn_end(session_id: str) -> None:
-    """Tell the installed listener that a session's turn ended or failed."""
-    if _installed is not None:
-        _installed.turn_ended(session_id)
+def notify_turn_end(session_id: str, status: str) -> None:
+    """Tell each installed listener that a session's turn ended (``"idle"``) or failed."""
+    for listener in _installed:
+        try:
+            listener.turn_ended(session_id, status)
+        except Exception:
+            # A GlobalHub listener must not break main's status publishing.
+            _logger.exception("GlobalHub turn listener %r failed for %s", listener, session_id)
 
 
 @dataclass(frozen=True)

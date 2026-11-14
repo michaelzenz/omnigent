@@ -82,6 +82,18 @@ def test_rosters_list_by_task_in_attach_order(store: SqlAlchemyWorkerStore) -> N
     assert store.list_for_tasks([], owner_user_id=ALICE) == []
 
 
+def test_a_sessions_workers_list_in_attach_order(store: SqlAlchemyWorkerStore) -> None:
+    session_id = uuid.uuid4().hex
+    first = _attach(store, session_id=session_id)
+    second = _attach(store, task_id=OTHER_TASK, session_id=session_id)
+    _attach(store)
+
+    workers = store.list_for_session(session_id, owner_user_id=ALICE)
+
+    assert [worker.id for worker in workers] == [first, second]
+    assert store.list_for_session(session_id, owner_user_id=BOB) == []
+
+
 def test_update_retitles_only_as_asked(store: SqlAlchemyWorkerStore) -> None:
     worker_id = _attach(store, title="Fixing retries")
 

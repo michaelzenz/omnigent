@@ -128,7 +128,7 @@ async def test_a_session_gets_its_next_item_only_after_its_turn_ends(harness: _H
     await harness.run()
     await harness.run()
     sent_while_the_turn_runs = list(harness.sent)
-    harness.dispatcher.turn_ended(broker)
+    harness.dispatcher.turn_ended(broker, "idle")
     await _until(lambda: harness.state(first) == "done")
     await harness.run()
 

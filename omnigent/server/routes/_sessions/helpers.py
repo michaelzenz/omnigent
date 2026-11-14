@@ -5217,8 +5217,8 @@ def _publish_status(
         # stores. Stops and archives publish idle without persisting it, and skip this.
         session_pull_requests.notify_turn_end(session_id)
     if status == "failed" or (status == "idle" and previous_status in ("running", "waiting")):
-        # A GlobalHub role session may take its next queued message now.
-        agent_task_delivery.notify_turn_end(session_id)
+        # GlobalHub frees a role session for its next message and reports other sessions' turns.
+        agent_task_delivery.notify_turn_end(session_id, status)
     # Mirror the transition onto the conversation row (best-effort,
     # deduplicated, off-loop) so replicas that don't hold this session's
     # runner tunnel serve the same sidebar status.

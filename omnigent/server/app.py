@@ -95,6 +95,7 @@ from omnigent.server.agent_queue_packagers import (
     ManagerPackager,
     write_notice_click,
 )
+from omnigent.server.agent_task_session_events import SessionEventReporter
 from omnigent.server.auth import (
     RESERVED_USER_LOCAL,
     AuthProvider,
@@ -2341,14 +2342,25 @@ def create_app(
         agent_queue_dispatcher: AgentQueueDispatcher | None = getattr(
             app_inst.state, "agent_queue_dispatcher", None
         )
+        session_event_reporter: SessionEventReporter | None = getattr(
+            app_inst.state, "session_event_reporter", None
+        )
         if agent_queue_dispatcher is not None:
             await agent_queue_dispatcher.start()
-            agent_task_delivery.install_turn_listener(agent_queue_dispatcher)
+        agent_task_delivery.install_turn_listeners(
+            *(
+                listener
+                for listener in (agent_queue_dispatcher, session_event_reporter)
+                if listener is not None
+            )
+        )
         try:
             with monitor_event_loop():
                 yield
         finally:
-            agent_task_delivery.install_turn_listener(None)
+            agent_task_delivery.install_turn_listeners()
+            if session_event_reporter is not None:
+                await session_event_reporter.stop()
             if agent_queue_dispatcher is not None:
                 await agent_queue_dispatcher.stop()
             session_pull_requests.install_refresher(None)
@@ -4261,6 +4273,9 @@ def create_app(
                         board=board_stores, conversations=conversation_store, send_deps=send_deps
                     ),
                 ],
+            )
+            app.state.session_event_reporter = SessionEventReporter(
+                board=board_stores, sessions=role_session_stores
             )
 
     if preference_store is not None:

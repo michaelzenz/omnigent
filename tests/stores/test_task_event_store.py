@@ -145,3 +145,16 @@ def test_lists_are_oldest_first_by_state_and_manager(store: SqlAlchemyTaskEventS
     assert ids(manager_id=MANAGER) == [routed]
     assert ids(limit=2) == [first, routed]
     assert [event.id for event in store.list(owner_user_id=None)] == [single_user]
+
+
+def test_lists_filter_by_event_type_and_source_key(store: SqlAlchemyTaskEventStore) -> None:
+    session_id = f"{200:032x}"
+    turn = _record(store, event_type="session.turn.finished", source_key=session_id)
+    _record(store, event_type="session.deleted", source_key=session_id)
+    _record(store, event_type="session.turn.finished", source_key=f"{201:032x}")
+
+    events = store.list(
+        owner_user_id=ALICE, event_type="session.turn.finished", source_key=session_id
+    )
+
+    assert [event.id for event in events] == [turn]

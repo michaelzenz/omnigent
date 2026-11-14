@@ -66,6 +66,12 @@ class WorkerStore(ABC):
         """List the owner's workers on these tasks, by task and then attach order."""
 
     @abstractmethod
+    def list_for_session(
+        self, session_id: str, *, owner_user_id: str | None
+    ) -> builtins.list[Worker]:
+        """List the owner's workers that wrap ``session_id``, in attach order."""
+
+    @abstractmethod
     def update(
         self,
         worker_id: str,

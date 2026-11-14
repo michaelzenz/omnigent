@@ -127,8 +127,9 @@ class AgentQueueDispatcher:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    def turn_ended(self, session_id: str) -> None:
-        """Free a session whose turn ended for its next item; a no-op outside an event loop."""
+    def turn_ended(self, session_id: str, status: str) -> None:
+        """Free a session whose turn ended or failed for its next item; a no-op outside a loop."""
+        del status
         if session_id not in self._in_flight:
             return
         try:
