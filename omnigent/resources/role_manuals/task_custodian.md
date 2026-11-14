@@ -70,9 +70,9 @@ system_notice(
       "id": "confirm_cleanup",
       "label": "Delete selected sessions",
       "inputs": [
-        {"id": "delete_<session_id>", "kind": "toggle",
+        {"id": "delete_<session_id>", "kind": "toggle", "group": "<host>",
          "label": "<session title> — worktree clean", "default": false},
-        {"id": "delete_<session_id>", "kind": "toggle",
+        {"id": "delete_<session_id>", "kind": "toggle", "group": "<host>",
          "label": "<session title> — worktree DIRTY", "default": false},
         ...
       ],
@@ -179,6 +179,9 @@ clear it. Never let a stale notice linger: clear notices whose actions you
 have already executed.
 - The title is the user's scan line: keep it specific ("3 stale sessions to
 clean up").
+- Give related inputs the same `group` label; the board shows one switch per
+group that turns all its toggles on or off. Group in the way that helps the
+user decide, e.g. by host, repository, or worktree state.
 - HTML bodies are optional; for the per-session delete form, the markdown
 form (native toggles) is clearer and safer. If you publish HTML, bind
 buttons with `data-action="<action id>"` and inputs with

@@ -121,6 +121,7 @@ from omnigent.tools.builtins.sys_terminal import (
     SysTerminalReadTool,
     SysTerminalSendTool,
 )
+from omnigent.tools.builtins.system_notice import SystemNoticeTool
 from omnigent.tools.builtins.timer import (
     # Shared with the in-process sys_timer_set tool so the runner's firing
     # loop validates the same argument shape and delay ceiling the LLM-facing
@@ -352,6 +353,8 @@ _CONVERSATION_SEARCH_TOOLS = frozenset({SearchConversationsTool.name()})
 _SESSION_DELETE_TOOLS = frozenset({SysSessionDeleteTool.name()})
 # Opt-in GlobalHub board API, called as the calling session.
 _PMV2_API_TOOLS = frozenset({Pmv2ApiTool.name()})
+# Opt-in publisher of the GlobalHub board's system notice, called as the calling session.
+_SYSTEM_NOTICE_TOOLS = frozenset({SystemNoticeTool.name()})
 _UI_TOOLS = frozenset({UiOpenFileTool.name()})
 
 # The title bound the rename tool advertises to the LLM — read once from the
@@ -940,6 +943,7 @@ _ALL_LOCAL_TOOLS = (
     | _CONVERSATION_SEARCH_TOOLS
     | _SESSION_DELETE_TOOLS
     | _PMV2_API_TOOLS
+    | _SYSTEM_NOTICE_TOOLS
     | _UI_TOOLS
     | _WEB_FETCH_TOOLS
     | _WEB_SEARCH_TOOLS
@@ -7420,6 +7424,10 @@ async def execute_tool(
             from omnigent.runner.pmv2_api import execute_pmv2_api
 
             output = await execute_pmv2_api(args, server_client, conversation_id)
+        elif tool_name in _SYSTEM_NOTICE_TOOLS:
+            from omnigent.runner.system_notice import execute_system_notice
+
+            output = await execute_system_notice(args, server_client, conversation_id)
         elif tool_name in _SESSION_CREATE_TOOLS:
             output = await _execute_session_create(
                 args,

@@ -182,6 +182,18 @@ def _create_pmv2_api(config: dict[str, str]) -> Tool:
     return Pmv2ApiTool()
 
 
+def _create_system_notice(config: dict[str, str]) -> Tool:
+    """
+    Lazy factory for SystemNoticeTool.
+
+    :param config: Tool config (unused).
+    :returns: A SystemNoticeTool instance.
+    """
+    from omnigent.tools.builtins.system_notice import SystemNoticeTool
+
+    return SystemNoticeTool()
+
+
 def _create_list_files(config: dict[str, str]) -> Tool:
     """
     Lazy factory for ListFilesTool.
@@ -293,6 +305,7 @@ _BUILTIN_REGISTRY: dict[str, _BuiltinFactory | None] = {
     "search_conversations": _create_search_conversations,
     "sys_session_delete": _create_session_delete,
     "pmv2_api": _create_pmv2_api,
+    "system_notice": _create_system_notice,
     "export_agent": _create_export_agent,
     # Framework-owned: need runtime context. ``web_fetch`` is
     # constructed by ToolManager before reaching this registry.

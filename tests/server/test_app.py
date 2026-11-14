@@ -31,6 +31,7 @@ from omnigent.server.seeded_agents import SEEDED_AGENTS_ENV
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.tools.manager import ToolManager
 
 
 @pytest.mark.asyncio
@@ -1675,9 +1676,11 @@ def test_ensure_default_agents_includes_antigravity(seed_stores: _SeedStores) ->
     assert seed_stores.agent_store.get_by_name(ANTIGRAVITY_NATIVE_AGENT_NAME) is not None
 
 
-@pytest.mark.parametrize("name", ["onih-pmv2", "onih-custodian"])
+@pytest.mark.parametrize(
+    ("name", "board_tool"), [("onih-pmv2", "pmv2_api"), ("onih-custodian", "system_notice")]
+)
 def test_ensure_default_agents_seeds_onih_role_profiles(
-    seed_stores: _SeedStores, monkeypatch: pytest.MonkeyPatch, name: str
+    seed_stores: _SeedStores, monkeypatch: pytest.MonkeyPatch, name: str, board_tool: str
 ) -> None:
     """
     Startup seeds the Onih Pi profiles GlobalHub roles bind by name.
@@ -1686,7 +1689,8 @@ def test_ensure_default_agents_seeds_onih_role_profiles(
     replace`` without instructions, and headless role sessions have no
     picker to choose a model, so each bundle must carry both. Roles get no
     shell or file-editing tools, reach MCP through Pi's ``mcp`` proxy, and
-    keep a short history window.
+    keep a short history window. The tool allowlist keeps every tool the
+    profile declares, including the role's board tool.
     """
     monkeypatch.setenv(SEEDED_AGENTS_ENV, "polly")
 
@@ -1708,6 +1712,8 @@ def test_ensure_default_agents_seeds_onih_role_profiles(
     assert spec.allowed_builtin_tools is not None
     assert not {"bash", "edit", "write"} & set(spec.allowed_builtin_tools)
     assert "mcp" in spec.allowed_builtin_tools
+    declared = {entry.name for entry in spec.tools.builtins}
+    assert {board_tool, *declared} <= set(ToolManager(spec).get_tool_names())
 
 
 def test_ensure_default_polly_agent_is_idempotent(seed_stores: _SeedStores) -> None:

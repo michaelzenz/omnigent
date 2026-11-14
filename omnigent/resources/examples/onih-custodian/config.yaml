@@ -19,6 +19,7 @@ tools:
   builtins:
     - search_conversations
     - sys_session_delete
+    - system_notice
 
 # No Pi shell or file-edit tools. `mcp` reaches the host's MCP servers through
 # the pi-mcp-adapter extension, and some of those can run code, so the
@@ -38,6 +39,7 @@ allowed_builtin_tools:
   - sys_scheduled_task_update
   - sys_scheduled_task_delete
   - sys_session_delete
+  - system_notice
 
 # system_prompt_mode: replace requires non-empty instructions.
 instructions: |

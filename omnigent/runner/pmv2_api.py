@@ -37,15 +37,48 @@ async def execute_pmv2_api(
     if client is None or source_id is None:
         return json.dumps({"error": "pmv2_api requires an authenticated runner"})
     body, query = args.get("body"), args.get("query")
+    return await send_board_request(
+        client,
+        method,
+        path,
+        source_id,
+        tool_name="pmv2_api",
+        json_body=body if isinstance(body, dict) and method in ("POST", "PATCH") else None,
+        params=query if isinstance(query, dict) and query else None,
+    )
+
+
+async def send_board_request(
+    client: httpx.AsyncClient,
+    method: str,
+    path: str,
+    source_id: str,
+    *,
+    tool_name: str,
+    json_body: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
+) -> str:
+    """
+    Send one board request as the calling session and return the tool output.
+
+    :param client: HTTP client pointed at the Omnigent server.
+    :param method: The HTTP method, e.g. ``"POST"``.
+    :param path: The server path, e.g. ``"/v1/agent-tasks"``.
+    :param source_id: The calling session, named in the orchestration-source header.
+    :param tool_name: The tool that a transport error names.
+    :param json_body: The JSON body, if any.
+    :param params: The query parameters, if any.
+    :returns: The server's JSON response, or JSON with an ``error``.
+    """
     request: dict[str, Any] = {"headers": {ORCHESTRATION_SOURCE_HEADER: source_id}}
-    if isinstance(query, dict) and query:
-        request["params"] = query
-    if isinstance(body, dict) and method in ("POST", "PATCH"):
-        request["json"] = body
+    if params:
+        request["params"] = params
+    if json_body is not None:
+        request["json"] = json_body
     try:
         response = await client.request(method, path, timeout=30.0, **request)
     except httpx.HTTPError as exc:
-        return json.dumps({"error": f"pmv2_api failed: {exc}"})
+        return json.dumps({"error": f"{tool_name} failed: {exc}"})
     if response.is_error:
         return json.dumps(
             {
