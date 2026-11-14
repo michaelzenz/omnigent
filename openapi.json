@@ -15908,7 +15908,7 @@
     },
     "/v1/agent-tasks/{task_id}/permanent": {
       "delete": {
-        "description": "Permanently delete one of the caller's tasks and its workers.\n\nThe manager's and workers' sessions keep running as ordinary sessions.",
+        "description": "Permanently delete one of the caller's tasks, its workers and its assets.\n\nThe manager's and workers' sessions keep running as ordinary sessions.",
         "operationId": "delete_task_permanently_v1_agent_tasks__task_id__permanent_delete",
         "parameters": [
           {

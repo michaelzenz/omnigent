@@ -10,7 +10,7 @@ from sqlalchemy import ColumnElement, and_, delete, desc, func, select, update
 from sqlalchemy.orm import Session
 
 from omnigent.db.account_authority import require_active_account
-from omnigent.db.db_models import SqlTask, SqlWorker, current_workspace_id
+from omnigent.db.db_models import SqlTask, SqlTaskAsset, SqlWorker, current_workspace_id
 from omnigent.db.enum_codecs import decode_task_state, encode_task_state
 from omnigent.db.utils import (
     get_or_create_engine,
@@ -269,7 +269,10 @@ class SqlAlchemyTaskStore(TaskStore):
         return run_write_transaction(self._session_immediate, "move_task_to_board_end", write)
 
     def delete(self, task_id: str, *, owner_user_id: str | None) -> bool:
-        """Permanently delete the owner's task and its workers; return whether it existed."""
+        """Permanently delete the owner's task, its workers and its assets.
+
+        :returns: Whether the task existed.
+        """
 
         def write(session: Session) -> bool:
             require_active_account(session, owner_user_id)
@@ -280,6 +283,12 @@ class SqlAlchemyTaskStore(TaskStore):
                 delete(SqlWorker).where(
                     SqlWorker.workspace_id == current_workspace_id(),
                     SqlWorker.task_id == task_id,
+                )
+            )
+            session.execute(
+                delete(SqlTaskAsset).where(
+                    SqlTaskAsset.workspace_id == current_workspace_id(),
+                    SqlTaskAsset.task_id == task_id,
                 )
             )
             session.delete(row)

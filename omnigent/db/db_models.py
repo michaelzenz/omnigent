@@ -1131,6 +1131,56 @@ class SqlFyiCluster(OmnigentBase):
     )
 
 
+class SqlTaskAsset(OmnigentBase):
+    """
+    SQLAlchemy model for the ``task_assets`` table: links a GlobalHub task carries.
+
+    A manager attaches the artifacts that a task's sessions produced or used,
+    one asset per URL on a task. Ownership is stamped on the row; there are no
+    foreign keys (Rule R032).
+
+    :param id: Uuid16 primary key (bare 32-char hex in Python).
+    :param owner_user_id: Owning user (the task's owner), or ``None`` in
+        single-user mode.
+    :param task_id: The task the asset belongs to.
+    :param category: Free-form label that groups assets on the task card, e.g.
+        ``"documents"``.
+    :param title: Short human-readable name of the artifact.
+    :param url: Where the artifact lives.
+    :param related_session_ids: JSON list of the sessions that produced or used it.
+    :param created_at: Unix epoch seconds at row creation.
+    :param updated_at: Unix epoch seconds of the last change, or ``None``.
+    """
+
+    __tablename__ = "task_assets"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    category: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    # MySQL rejects a server default on TEXT, so the store always writes it.
+    related_session_ids: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        # A task's assets in the order they were attached. URLs are TEXT, which
+        # MySQL cannot index whole, so the store finds a task's asset for a URL
+        # among the task's assets.
+        Index("ix_task_assets_task", "workspace_id", "task_id", "created_at", "id"),
+    )
+
+
 class SqlConversation(ConversationBase):
     """
     SQLAlchemy model for the ``conversations`` table.

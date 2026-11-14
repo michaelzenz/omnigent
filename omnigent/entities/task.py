@@ -1,10 +1,11 @@
 """GlobalHub board entities, persisted in the ``tasks``, ``managers``, ``workers``,
-``task_events`` and ``fyi_clusters`` tables.
+``task_events``, ``fyi_clusters`` and ``task_assets`` tables.
 
 A :class:`Task` is a long-lived unit of work on one user's GlobalHub board,
 owned by one :class:`Manager`. Each :class:`Worker` attaches a session that
-works on the task. A :class:`TaskEvent` is a signal the broker routes to a
-manager, which can file it into an :class:`FyiCluster` for the user.
+works on the task, and each :class:`TaskAsset` is a link the task carries. A
+:class:`TaskEvent` is a signal the broker routes to a manager, which can file
+it into an :class:`FyiCluster` for the user.
 """
 
 from __future__ import annotations
@@ -203,3 +204,34 @@ class FyiCluster:
     created_at: int
     rationale: str | None = None
     resolved_at: int | None = None
+
+
+@dataclass
+class TaskAsset:
+    """
+    A link a GlobalHub task carries, e.g. a design doc or pull request a session produced.
+
+    A task has at most one asset per URL.
+
+    :param id: UUID primary key (bare 32-char hex string, no dashes).
+    :param owner_user_id: Owning user (the task's owner), or ``None`` in
+        single-user mode.
+    :param task_id: The task the asset belongs to.
+    :param category: Free-form label that groups assets on the task card, e.g.
+        ``"documents"``; ``"other"`` when none was given.
+    :param title: Short human-readable name of the artifact.
+    :param url: Where the artifact lives.
+    :param created_at: Unix epoch seconds at row creation.
+    :param related_session_ids: The sessions that produced or used it.
+    :param updated_at: Unix epoch seconds of the last change.
+    """
+
+    id: str
+    owner_user_id: str | None
+    task_id: str
+    category: str
+    title: str
+    url: str
+    created_at: int
+    related_session_ids: list[str] = field(default_factory=list)
+    updated_at: int | None = None
