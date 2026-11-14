@@ -6030,7 +6030,9 @@ class AgentManagerResponse(BaseModel):
     ``conversation_id`` is the manager's session. ``tasks`` lists its live
     tasks (active, idle or agent-resolved); archived tasks are left out.
     ``host_id`` and ``workspace`` are where that session runs, null when it
-    is gone.
+    is gone. ``session_missing`` is true when the session is gone or
+    archived: the manager gets no events, which wait until the manager is
+    deleted or given a session again.
     """
 
     object: Literal["agent.manager"] = "agent.manager"
@@ -6040,6 +6042,7 @@ class AgentManagerResponse(BaseModel):
     description: str
     host_id: str | None
     workspace: str | None
+    session_missing: bool
     role_key: Literal["manager:default"] = "manager:default"
     task_count: int
     tasks: list[AgentManagerTask]

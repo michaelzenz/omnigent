@@ -197,6 +197,7 @@ def _manager_response(
         description=manager.description,
         host_id=session.host_id if session else None,
         workspace=session.workspace if session else None,
+        session_missing=session is None or session.archived,
         task_count=len(tasks),
         tasks=[
             AgentManagerTask(id=task.id, title=task.title, state=cast(AgentTaskState, task.state))

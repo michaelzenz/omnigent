@@ -619,7 +619,7 @@
         "type": "object"
       },
       "AgentManagerResponse": {
-        "description": "A manager on the caller's GlobalHub board.\n\n`conversation_id` is the manager's session. `tasks` lists its live\ntasks (active, idle or agent-resolved); archived tasks are left out.\n`host_id` and `workspace` are where that session runs, null when it\nis gone.",
+        "description": "A manager on the caller's GlobalHub board.\n\n`conversation_id` is the manager's session. `tasks` lists its live\ntasks (active, idle or agent-resolved); archived tasks are left out.\n`host_id` and `workspace` are where that session runs, null when it\nis gone. `session_missing` is true when the session is gone or\narchived: the manager gets no events, which wait until the manager is\ndeleted or given a session again.",
         "properties": {
           "conversation_id": {
             "anyOf": [
@@ -663,6 +663,10 @@
             "title": "Role Key",
             "type": "string"
           },
+          "session_missing": {
+            "title": "Session Missing",
+            "type": "boolean"
+          },
           "task_count": {
             "format": "int64",
             "title": "Task Count",
@@ -698,6 +702,7 @@
           "description",
           "host_id",
           "workspace",
+          "session_missing",
           "task_count",
           "tasks"
         ],

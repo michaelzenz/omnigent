@@ -171,25 +171,29 @@ async def test_only_the_managers_own_session_updates_its_description(
     assert [entry["description"] for entry in listed] == [body["description"]]
 
 
-async def test_list_shows_live_portfolios_and_only_the_callers_managers(
+async def test_list_shows_portfolios_missing_sessions_and_only_the_callers_managers(
     auth_client: httpx.AsyncClient, db_uri: str
 ) -> None:
     _install_manager_agent(db_uri)
     _place_globalhub(db_uri)
     storage = (await _create_manager(auth_client, "Storage"))["id"]
-    await _create_manager(auth_client, "Dashboards")
+    dashboards = await _create_manager(auth_client, "Dashboards")
     live = await _create_task(auth_client, storage, "live")
     archived = await _create_task(auth_client, storage, "archived")
     await auth_client.delete(f"/v1/agent-tasks/{archived}", headers=ALICE)
+    SqlAlchemyConversationStore(db_uri).update_conversation(
+        dashboards["conversation_id"], archived=True
+    )
 
     listed = (await auth_client.get(ROUTE, headers=ALICE)).json()["data"]
 
     portfolios = {
-        manager["title"]: (manager["task_count"], manager["tasks"]) for manager in listed
+        manager["title"]: (manager["task_count"], manager["tasks"], manager["session_missing"])
+        for manager in listed
     }
     assert portfolios == {
-        "Storage": (1, [{"id": live, "title": "live", "state": "active"}]),
-        "Dashboards": (0, []),
+        "Storage": (1, [{"id": live, "title": "live", "state": "active"}], False),
+        "Dashboards": (0, [], True),
     }
     assert (await auth_client.get(ROUTE, headers=BOB)).json()["data"] == []
 
