@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,7 +14,7 @@ from omnigent.agent_tasks.board_stores import open_board_stores
 from omnigent.agent_tasks.role_sessions import RoleSessionStores, ensure_role_session
 from omnigent.agent_tasks.roles import BROKER_ROLE_KEY, builtin_role
 from omnigent.entities import AgentQueueItem
-from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher
+from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher, Packager
 from omnigent.server.agent_task_delivery import SendResult, SessionSendDeps
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -32,7 +32,7 @@ NOW = 1_800_000_000
 class _Harness:
     """A dispatcher over real stores, with a fake send and a settable clock."""
 
-    def __init__(self, db_uri: str) -> None:
+    def __init__(self, db_uri: str, packagers: Sequence[Packager] = ()) -> None:
         conversations = SqlAlchemyConversationStore(db_uri)
         agents = SqlAlchemyAgentStore(db_uri)
         for name in ("onih-pmv2", "onih-custodian"):
@@ -58,6 +58,7 @@ class _Harness:
                 conversation_store=conversations, agent_store=agents, app_state=SimpleNamespace()
             ),
             renderers={"events": lambda item: item.payload.get("text")},
+            packagers=packagers,
             send=self._send,
             clock=lambda: self.now,
         )
@@ -182,6 +183,21 @@ async def test_a_missed_turn_end_is_settled_after_a_minute_idle(harness: _Harnes
     await harness.run()
 
     assert (after_59_idle_seconds, harness.state(item_id)) == ("sent", "done")
+
+
+async def test_packagers_run_every_five_seconds(db_uri: str) -> None:
+    runs: list[int] = []
+
+    class _Recorder:
+        async def package(self, now: int) -> None:
+            runs.append(now)
+
+    harness = _Harness(db_uri, packagers=[_Recorder()])
+    for offset in (0, 4, 5):
+        harness.now = NOW + offset
+        await harness.run()
+
+    assert runs == [NOW, NOW + 5]
 
 
 async def test_a_claim_left_by_a_crashed_send_goes_back_after_ten_minutes(

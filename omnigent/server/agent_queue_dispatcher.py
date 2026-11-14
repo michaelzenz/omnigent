@@ -1,9 +1,10 @@
 """Deliver queued GlobalHub messages to role sessions, one turn at a time per session.
 
-Each pass claims every session's oldest queued item, checks that its target
-still serves its role, writes the message text and sends it. A sent item
-holds its session until the turn handling it ends: main's status hook reports
-the turn end, and a session idle for a minute after the send counts too.
+Every few seconds the packagers queue items from waiting board work. Each pass
+claims every session's oldest queued item, checks that its target still serves
+its role, writes the message text and sends it. A sent item holds its session
+until the turn handling it ends: main's status hook reports the turn end, and
+a session idle for a minute after the send counts too.
 """
 
 from __future__ import annotations
@@ -11,8 +12,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Mapping
-from typing import Any
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import Any, Protocol
 
 from omnigent.agent_tasks.board_stores import BoardStores
 from omnigent.agent_tasks.role_sessions import RoleSessionStores, is_role_session_current
@@ -28,6 +29,7 @@ from omnigent.server.auth import RESERVED_USER_LOCAL
 _logger = logging.getLogger(__name__)
 
 SCAN_INTERVAL_S = 1.0
+PACKAGE_INTERVAL_S = 5
 # A sent item whose session stays idle this long counts as handled, in case its
 # turn end was never reported, e.g. when the server restarted mid-turn.
 IDLE_FALLBACK_S = 60
@@ -41,6 +43,13 @@ _MAX_RETRY_DELAY_S = 5 * 60
 # Writes an item's message text, or returns None when nothing is left to say.
 ItemRenderer = Callable[[AgentQueueItem], str | None]
 Sender = Callable[..., Awaitable[SendResult]]
+
+
+class Packager(Protocol):
+    """Queues the items that waiting board work makes due."""
+
+    async def package(self, now: int) -> None:
+        """Queue what is due at ``now``, in Unix epoch seconds."""
 
 
 def retry_delay_s(attempts: int) -> int:
@@ -58,6 +67,7 @@ class AgentQueueDispatcher:
         sessions: RoleSessionStores,
         send_deps: SessionSendDeps,
         renderers: Mapping[str, ItemRenderer],
+        packagers: Sequence[Packager] = (),
         send: Sender = send_to_session,
         clock: Callable[[], float] = time.time,
     ) -> None:
@@ -66,6 +76,8 @@ class AgentQueueDispatcher:
         :param sessions: Where role sessions and their records live.
         :param send_deps: How a send reaches a session's runner.
         :param renderers: Writes the message text for each item kind.
+        :param packagers: Queue items from waiting board work, every
+            :data:`PACKAGE_INTERVAL_S` seconds.
         :param send: Sends one message into a session.
         :param clock: Returns Unix epoch seconds.
         """
@@ -74,8 +86,10 @@ class AgentQueueDispatcher:
         self._sessions = sessions
         self._send_deps = send_deps
         self._renderers = dict(renderers)
+        self._packagers = tuple(packagers)
         self._send = send
         self._clock = clock
+        self._last_package: int | None = None
         self._loop: asyncio.Task[None] | None = None
         self._tasks: set[asyncio.Task[Any]] = set()
         # Sessions with a sent item, refreshed from the queue on every pass.
@@ -121,6 +135,13 @@ class AgentQueueDispatcher:
             await asyncio.to_thread(
                 self._queue.release_stale_claims, claimed_before=now - STALE_CLAIM_S
             )
+        if self._last_package is None or now - self._last_package >= PACKAGE_INTERVAL_S:
+            self._last_package = now
+            for packager in self._packagers:
+                try:
+                    await packager.package(now)
+                except Exception:
+                    _logger.exception("GlobalHub packager %r failed", packager)
         await self._settle_sent(now)
         claimed = await asyncio.to_thread(self._queue.claim_due, now=now)
         return [self._track(asyncio.create_task(self._deliver(item))) for item in claimed]
