@@ -4,7 +4,9 @@ Every few seconds the packagers queue items from waiting board work. Each pass
 claims every session's oldest queued item, checks that its target still serves
 its role, writes the message text and sends it. A sent item holds its session
 until the turn handling it ends: main's status hook reports the turn end, and
-a session idle for a minute after the send counts too.
+a session idle for a minute after the send counts too. A turn whose runner died
+in a crash ends the next time the dispatcher reads the session, which settles
+the turn the way main's session list does.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from omnigent.server.agent_task_delivery import (
     SessionSendDeps,
     send_to_session,
     session_mid_turn,
+    settle_orphaned_turns,
 )
 from omnigent.server.auth import RESERVED_USER_LOCAL
 
@@ -43,6 +46,8 @@ _MAX_RETRY_DELAY_S = 5 * 60
 # Writes an item's message text, or returns None when nothing is left to say.
 ItemRenderer = Callable[[AgentQueueItem], str | None]
 Sender = Callable[..., Awaitable[SendResult]]
+# Settles the given sessions whose turn lost its runner and returns their ids.
+OrphanSettler = Callable[..., Awaitable[list[str]]]
 
 
 class Packager(Protocol):
@@ -69,6 +74,7 @@ class AgentQueueDispatcher:
         renderers: Mapping[str, ItemRenderer],
         packagers: Sequence[Packager] = (),
         send: Sender = send_to_session,
+        settle_orphans: OrphanSettler = settle_orphaned_turns,
         clock: Callable[[], float] = time.time,
     ) -> None:
         """
@@ -79,6 +85,8 @@ class AgentQueueDispatcher:
         :param packagers: Queue items from waiting board work, every
             :data:`PACKAGE_INTERVAL_S` seconds.
         :param send: Sends one message into a session.
+        :param settle_orphans: Settles the sent items' sessions whose turn lost
+            its runner.
         :param clock: Returns Unix epoch seconds.
         """
         self._queue = board.queue
@@ -88,6 +96,7 @@ class AgentQueueDispatcher:
         self._renderers = dict(renderers)
         self._packagers = tuple(packagers)
         self._send = send
+        self._settle_orphans = settle_orphans
         self._clock = clock
         self._last_package: int | None = None
         self._loop: asyncio.Task[None] | None = None
@@ -99,8 +108,15 @@ class AgentQueueDispatcher:
         self._last_stale_sweep: int | None = None
 
     async def start(self) -> None:
-        """Start the delivery loop."""
+        """Put back the claims a stopped server left, then start the delivery loop."""
         if self._loop is None:
+            # GlobalHub runs on one server, so a claim found at start is from a stopped process.
+            try:
+                await asyncio.to_thread(
+                    self._queue.release_stale_claims, claimed_before=int(self._clock()) + 1
+                )
+            except Exception:
+                _logger.exception("GlobalHub could not put back the claims a stopped server left")
             self._loop = asyncio.create_task(self._run_forever(), name="globalhub-agent-queue")
 
     async def stop(self) -> None:
@@ -155,7 +171,7 @@ class AgentQueueDispatcher:
             await asyncio.sleep(SCAN_INTERVAL_S)
 
     async def _settle_sent(self, now: int) -> None:
-        """Mark done the sent items whose sessions stayed idle past the fallback."""
+        """Mark done the sent items whose turn lost its runner, or whose session stayed idle."""
         sent = await asyncio.to_thread(self._queue.list_sent)
         self._in_flight = {item.target_session_id for item in sent}
         if not sent:
@@ -165,15 +181,22 @@ class AgentQueueDispatcher:
             self._send_deps.conversation_store.get_conversations,
             [item.target_session_id for item in sent],
         )
+        orphaned = set(await self._settle_orphans(targets.values(), deps=self._send_deps))
         idle_since: dict[str, int] = {}
         for item in sent:
-            conv = targets.get(item.target_session_id)
-            if conv is not None and session_mid_turn(conv):
-                continue
-            since = self._idle_since.get(item.id, now)
-            if now - since < IDLE_FALLBACK_S:
-                idle_since[item.id] = since
-                continue
+            if item.target_session_id in orphaned:
+                _logger.info(
+                    "GlobalHub settled session %s, whose turn lost its runner",
+                    item.target_session_id,
+                )
+            else:
+                conv = targets.get(item.target_session_id)
+                if conv is not None and session_mid_turn(conv):
+                    continue
+                since = self._idle_since.get(item.id, now)
+                if now - since < IDLE_FALLBACK_S:
+                    idle_since[item.id] = since
+                    continue
             await asyncio.to_thread(
                 self._queue.mark_done, item.id, owner_user_id=item.owner_user_id
             )

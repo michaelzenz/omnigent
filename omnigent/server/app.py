@@ -4233,18 +4233,20 @@ def create_app(
             tags=["agent-tasks"],
         )
         if role_session_stores is not None:
+            send_deps = agent_task_delivery.SessionSendDeps(
+                conversation_store=conversation_store,
+                agent_store=agent_store,
+                app_state=app.state,
+                runner_router=runner_router,
+                file_store=file_store,
+                artifact_store=artifact_store,
+                liveness_lookup=_bulk_session_liveness,
+            )
             # Started and stopped by the lifespan.
             app.state.agent_queue_dispatcher = AgentQueueDispatcher(
                 board=board_stores,
                 sessions=role_session_stores,
-                send_deps=agent_task_delivery.SessionSendDeps(
-                    conversation_store=conversation_store,
-                    agent_store=agent_store,
-                    app_state=app.state,
-                    runner_router=runner_router,
-                    file_store=file_store,
-                    artifact_store=artifact_store,
-                ),
+                send_deps=send_deps,
                 renderers={
                     "events": EventNoticeWriter(
                         board=board_stores, conversations=conversation_store
@@ -4252,8 +4254,12 @@ def create_app(
                     "notice_click": write_notice_click,
                 },
                 packagers=[
-                    BrokerPackager(board=board_stores, sessions=role_session_stores),
-                    ManagerPackager(board=board_stores, conversations=conversation_store),
+                    BrokerPackager(
+                        board=board_stores, sessions=role_session_stores, send_deps=send_deps
+                    ),
+                    ManagerPackager(
+                        board=board_stores, conversations=conversation_store, send_deps=send_deps
+                    ),
                 ],
             )
 

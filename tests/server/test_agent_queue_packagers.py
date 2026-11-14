@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import itertools
 import json
 import time
@@ -28,6 +29,7 @@ from omnigent.server.agent_queue_packagers import (
     write_notice_click,
 )
 from omnigent.server.agent_task_delivery import SendResult, SessionSendDeps
+from omnigent.server.routes._sessions.helpers import SessionLiveness
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
@@ -65,6 +67,15 @@ def board(sessions: RoleSessionStores) -> BoardStores:
     opened = open_board_stores(sessions.conversation_store)
     assert opened is not None
     return opened
+
+
+@pytest.fixture()
+def send_deps(sessions: RoleSessionStores) -> SessionSendDeps:
+    return SessionSendDeps(
+        conversation_store=sessions.conversation_store,
+        agent_store=sessions.agent_store,
+        app_state=SimpleNamespace(),
+    )
 
 
 def _event(board: BoardStores, owner: str = ALICE, *tags: str, **fields: Any) -> str:
@@ -108,7 +119,7 @@ def _manager(
 
 
 async def test_waiting_events_become_items_for_each_users_broker(
-    board: BoardStores, sessions: RoleSessionStores
+    board: BoardStores, sessions: RoleSessionStores, send_deps: SessionSendDeps
 ) -> None:
     session_id = uuid.uuid4().hex
     turns = [
@@ -117,7 +128,7 @@ async def test_waiting_events_become_items_for_each_users_broker(
     ]
     comment = _event(board, ALICE, "host:h1")
     bobs = _event(board, BOB, "host:h1")
-    packager = BrokerPackager(board=board, sessions=sessions)
+    packager = BrokerPackager(board=board, sessions=sessions, send_deps=send_deps)
 
     await packager.package(int(time.time()) + 31)
     await packager.package(int(time.time()) + 31)
@@ -182,16 +193,17 @@ async def test_the_notice_carries_the_items_waiting_events_in_tag_clusters(
 
 
 async def test_routed_events_become_items_for_their_managers_session(
-    board: BoardStores, sessions: RoleSessionStores
+    board: BoardStores, sessions: RoleSessionStores, send_deps: SessionSendDeps
 ) -> None:
     manager_id, manager_session = _manager(board, sessions)
     orphan_id, _ = _manager(board, sessions, "Former manager", archived=True)
     routed = [_event(board, manager_id=manager_id) for _ in range(2)]
     stranded = _event(board, manager_id=orphan_id)
-
-    await ManagerPackager(board=board, conversations=sessions.conversation_store).package(
-        int(time.time()) + 31
+    packager = ManagerPackager(
+        board=board, conversations=sessions.conversation_store, send_deps=send_deps
     )
+
+    await packager.package(int(time.time()) + 31)
 
     [item] = board.queue.list(owner_user_id=ALICE)
     carried = board.events.list(owner_user_id=ALICE, queue_item_ids=[item.id])
@@ -199,6 +211,24 @@ async def test_routed_events_become_items_for_their_managers_session(
     # The archived session cannot take the event, so it waits.
     stranded_event = board.events.get(stranded, owner_user_id=ALICE)
     assert stranded_event is not None and stranded_event.queue_item_id is None
+
+
+async def test_a_broker_whose_turn_lost_its_runner_gets_its_waiting_events(
+    board: BoardStores, sessions: RoleSessionStores, send_deps: SessionSendDeps
+) -> None:
+    broker = await _broker(sessions)
+    assert sessions.conversation_store.set_runner_id(broker, f"runner_{broker}")
+    sessions.conversation_store.set_session_live_status(broker, "running")
+    gone = SessionLiveness(runner_online=False, host_online=True)
+    deps = dataclasses.replace(send_deps, liveness_lookup=lambda ids: dict.fromkeys(ids, gone))
+    comment = _event(board)
+    packager = BrokerPackager(board=board, sessions=sessions, send_deps=deps)
+
+    await packager.package(int(time.time()) + 31)
+
+    [item] = board.queue.list(owner_user_id=ALICE)
+    carried = board.events.list(owner_user_id=ALICE, queue_item_ids=[item.id])
+    assert (item.target_session_id, [event.id for event in carried]) == (broker, [comment])
 
 
 async def test_a_manager_notice_lists_its_events_by_id_and_ends_with_the_roster(
@@ -305,7 +335,7 @@ def test_a_notice_click_is_written_for_the_custodian() -> None:
 
 
 async def test_a_waiting_event_reaches_the_broker_as_a_notice(
-    board: BoardStores, sessions: RoleSessionStores
+    board: BoardStores, sessions: RoleSessionStores, send_deps: SessionSendDeps
 ) -> None:
     sent: list[tuple[str, str]] = []
 
@@ -316,17 +346,13 @@ async def test_a_waiting_event_reaches_the_broker_as_a_notice(
     dispatcher = AgentQueueDispatcher(
         board=board,
         sessions=sessions,
-        send_deps=SessionSendDeps(
-            conversation_store=sessions.conversation_store,
-            agent_store=sessions.agent_store,
-            app_state=SimpleNamespace(),
-        ),
+        send_deps=send_deps,
         renderers={
             "events": EventNoticeWriter(
                 board=board, conversations=sessions.conversation_store
             ).write
         },
-        packagers=[BrokerPackager(board=board, sessions=sessions)],
+        packagers=[BrokerPackager(board=board, sessions=sessions, send_deps=send_deps)],
         send=send,
         clock=lambda: time.time() + 31,
     )

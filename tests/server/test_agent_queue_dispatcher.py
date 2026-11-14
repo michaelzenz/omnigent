@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from types import SimpleNamespace
 from typing import Any
 
@@ -13,7 +13,7 @@ import pytest
 from omnigent.agent_tasks.board_stores import open_board_stores
 from omnigent.agent_tasks.role_sessions import RoleSessionStores, ensure_role_session
 from omnigent.agent_tasks.roles import BROKER_ROLE_KEY, builtin_role
-from omnigent.entities import AgentQueueItem
+from omnigent.entities import AgentQueueItem, Conversation
 from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher, Packager
 from omnigent.server.agent_task_delivery import SendResult, SessionSendDeps
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -30,7 +30,7 @@ NOW = 1_800_000_000
 
 
 class _Harness:
-    """A dispatcher over real stores, with a fake send and a settable clock."""
+    """A dispatcher over real stores, with a settable clock and fake sends and orphan checks."""
 
     def __init__(self, db_uri: str, packagers: Sequence[Packager] = ()) -> None:
         conversations = SqlAlchemyConversationStore(db_uri)
@@ -51,6 +51,8 @@ class _Harness:
         self.now = NOW
         self.replies: list[SendResult] = []
         self.sent: list[tuple[str, str, str | None]] = []
+        # Sessions whose turn lost its runner.
+        self.lost_turns: set[str] = set()
         self.dispatcher = AgentQueueDispatcher(
             board=board,
             sessions=self.sessions,
@@ -60,6 +62,7 @@ class _Harness:
             renderers={"events": lambda item: item.payload.get("text")},
             packagers=packagers,
             send=self._send,
+            settle_orphans=self._settle_orphans,
             clock=lambda: self.now,
         )
 
@@ -68,6 +71,11 @@ class _Harness:
     ) -> SendResult:
         self.sent.append((session_id, text, created_by))
         return self.replies.pop(0) if self.replies else SendResult("sent")
+
+    async def _settle_orphans(
+        self, conversations: Iterable[Conversation], *, deps: Any
+    ) -> list[str]:
+        return [conv.id for conv in conversations if conv.id in self.lost_turns]
 
     async def broker(self) -> str:
         role = builtin_role(BROKER_ROLE_KEY)
@@ -185,6 +193,20 @@ async def test_a_missed_turn_end_is_settled_after_a_minute_idle(harness: _Harnes
     assert (after_59_idle_seconds, harness.state(item_id)) == ("sent", "done")
 
 
+async def test_a_session_whose_turn_lost_its_runner_takes_its_next_item_at_once(
+    harness: _Harness,
+) -> None:
+    broker = await harness.broker()
+    first, second = harness.enqueue(broker, "first"), harness.enqueue(broker, "second")
+    await harness.run()
+    harness.lost_turns.add(broker)
+
+    await harness.run()
+
+    assert harness.sent == [(broker, "first", ALICE), (broker, "second", ALICE)]
+    assert (harness.state(first), harness.state(second)) == ("done", "sent")
+
+
 async def test_packagers_run_every_five_seconds(db_uri: str) -> None:
     runs: list[int] = []
 
@@ -214,4 +236,18 @@ async def test_a_claim_left_by_a_crashed_send_goes_back_after_ten_minutes(
     await harness.run()
 
     assert sent_early == []
+    assert harness.sent == [(broker, "2 new events", ALICE)]
+
+
+async def test_a_claim_left_by_a_stopped_server_goes_back_when_the_dispatcher_starts(
+    harness: _Harness,
+) -> None:
+    broker = await harness.broker()
+    harness.enqueue(broker)
+    harness.board.queue.claim_due(now=NOW)
+
+    await harness.dispatcher.start()
+    await harness.dispatcher.stop()
+    await harness.run()
+
     assert harness.sent == [(broker, "2 new events", ALICE)]

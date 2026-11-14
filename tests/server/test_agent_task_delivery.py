@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
+import time
+import uuid
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
@@ -10,13 +13,18 @@ import pytest
 
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server import agent_task_delivery
-from omnigent.server.agent_task_delivery import SessionSendDeps, send_to_session
+from omnigent.server.agent_task_delivery import (
+    SessionSendDeps,
+    send_to_session,
+    settle_orphaned_turns,
+)
 from omnigent.server.routes import sessions
 from omnigent.server.routes._sessions import helpers
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 
 OWNER = "alice@example.com"
+HOST_ID = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
 
 
 class _Runner:
@@ -137,3 +145,75 @@ def test_a_finished_or_failed_turn_tells_the_queue(monkeypatch: pytest.MonkeyPat
 
     assert before_the_turn_ends == []
     assert notified == [session_id, session_id]
+
+
+def _running_session(deps: SessionSendDeps, *, fresh_heartbeat: bool) -> str:
+    """Seed a session that the database reads as mid-turn, bound to a runner."""
+    agent_id = uuid.uuid4().hex
+    deps.agent_store.create(agent_id, f"agent-{agent_id}", "bundles/agent.tar.gz")
+    session = deps.conversation_store.create_conversation(agent_id=agent_id, host_id=HOST_ID)
+    runner_id = f"runner_{session.id}"
+    assert deps.conversation_store.set_runner_id(session.id, runner_id)
+    deps.conversation_store.set_session_live_status(session.id, "running")
+    if fresh_heartbeat:
+        deps.conversation_store.touch_runner_liveness([runner_id], int(time.time()))
+    return session.id
+
+
+def _with_liveness(
+    deps: SessionSendDeps, *, runner_online: bool, host_online: bool
+) -> SessionSendDeps:
+    liveness = helpers.SessionLiveness(runner_online=runner_online, host_online=host_online)
+    return dataclasses.replace(deps, liveness_lookup=lambda ids: dict.fromkeys(ids, liveness))
+
+
+async def _host_asleep(*_: Any, **__: Any) -> bool:
+    return True
+
+
+@pytest.mark.parametrize(
+    ("fresh_heartbeat", "seen_here", "runner_online", "host_online", "settled"),
+    [
+        (False, False, False, True, True),
+        (True, False, False, True, False),
+        (False, True, False, True, False),
+        (False, False, True, True, False),
+        (False, False, False, False, False),
+    ],
+    ids=["runner_gone", "fresh_heartbeat", "status_seen_here", "runner_elsewhere", "host_asleep"],
+)
+async def test_only_a_turn_whose_runner_is_gone_is_settled(
+    deps: SessionSendDeps,
+    monkeypatch: pytest.MonkeyPatch,
+    fresh_heartbeat: bool,
+    seen_here: bool,
+    runner_online: bool,
+    host_online: bool,
+    settled: bool,
+) -> None:
+    session_id = _running_session(deps, fresh_heartbeat=fresh_heartbeat)
+    if seen_here:
+        monkeypatch.setitem(sessions._session_status_cache, session_id, "running")
+    monkeypatch.setattr(sessions, "_host_row_offline", _host_asleep)
+    checking = _with_liveness(deps, runner_online=runner_online, host_online=host_online)
+    session = deps.conversation_store.get_conversation(session_id)
+    assert session is not None
+
+    result = await settle_orphaned_turns([session], deps=checking)
+
+    stored = deps.conversation_store.get_conversation(session_id)
+    assert stored is not None
+    expected = ([session_id], "idle") if settled else ([], "running")
+    assert (result, stored.live_status) == expected
+
+
+async def test_a_send_settles_a_turn_whose_runner_is_gone_and_goes_out(
+    deps: SessionSendDeps, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _use(monkeypatch, _Runner())
+    session_id = _running_session(deps, fresh_heartbeat=False)
+    checking = _with_liveness(deps, runner_online=False, host_online=True)
+
+    result = await send_to_session(session_id, "notice", created_by=OWNER, deps=checking)
+
+    assert (result.outcome, len(runner.dispatched)) == ("sent", 1)

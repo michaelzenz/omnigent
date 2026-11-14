@@ -25,7 +25,7 @@ from omnigent.agent_tasks.roles import (
     session_role,
 )
 from omnigent.entities import LIVE_TASK_STATES, AgentQueueItem, Conversation, Task, TaskEvent
-from omnigent.server.agent_task_delivery import session_mid_turn
+from omnigent.server.agent_task_delivery import SessionSendDeps, session_has_live_turn
 
 _logger = logging.getLogger(__name__)
 
@@ -46,16 +46,20 @@ _CLICK_TEXT_SHOWN_CHARS = 500
 class BrokerPackager:
     """Queues the events waiting for each user's broker, in v2's batches."""
 
-    def __init__(self, *, board: BoardStores, sessions: RoleSessionStores) -> None:
+    def __init__(
+        self, *, board: BoardStores, sessions: RoleSessionStores, send_deps: SessionSendDeps
+    ) -> None:
         """
         :param board: Holds the events and the queue.
         :param sessions: Where each user's broker session lives.
+        :param send_deps: How a broker's runner is reached, to settle a turn that lost it.
         """
         role = builtin_role(BROKER_ROLE_KEY)
         assert role is not None
         self._role = role
         self._board = board
         self._sessions = sessions
+        self._send_deps = send_deps
 
     async def package(self, now: int) -> None:
         """Queue the batches due at ``now``, user by user."""
@@ -77,7 +81,8 @@ class BrokerPackager:
             # Without a GlobalHub host there is no broker yet; the events wait.
             return
         broker, _ = await ensure_role_session(self._role, user_id=owner, stores=self._sessions)
-        for batch in broker_batches(events, now=now, broker_idle=not session_mid_turn(broker)):
+        idle = not await session_has_live_turn(broker, deps=self._send_deps)
+        for batch in broker_batches(events, now=now, broker_idle=idle):
             await asyncio.to_thread(
                 self._board.queue.enqueue,
                 uuid.uuid4().hex,
@@ -91,13 +96,17 @@ class BrokerPackager:
 class ManagerPackager:
     """Queues the events routed to each manager, in v2's batches."""
 
-    def __init__(self, *, board: BoardStores, conversations: Any) -> None:
+    def __init__(
+        self, *, board: BoardStores, conversations: Any, send_deps: SessionSendDeps
+    ) -> None:
         """
         :param board: Holds the events, the managers and the queue.
         :param conversations: Finds each manager's session.
+        :param send_deps: How a manager's runner is reached, to settle a turn that lost it.
         """
         self._board = board
         self._conversations = conversations
+        self._send_deps = send_deps
 
     async def package(self, now: int) -> None:
         """Queue the batches due at ``now``, manager by manager."""
@@ -121,7 +130,8 @@ class ManagerPackager:
         if session is None:
             # The manager list shows the missing session; the events wait.
             return
-        for batch in manager_batches(events, now=now, manager_idle=not session_mid_turn(session)):
+        idle = not await session_has_live_turn(session, deps=self._send_deps)
+        for batch in manager_batches(events, now=now, manager_idle=idle):
             await asyncio.to_thread(
                 self._board.queue.enqueue,
                 uuid.uuid4().hex,
