@@ -54,6 +54,10 @@ const InboxPage = withPageView(
   "inbox",
   lazy(() => import("@/pages/InboxPage").then((m) => ({ default: m.InboxPage }))),
 );
+const GlobalHubPage = withPageView(
+  "globalhub",
+  lazy(() => import("@/pages/GlobalHubPage").then((m) => ({ default: m.GlobalHubPage }))),
+);
 // The shell owns the board so selecting a conversation never unmounts it.
 const CanvasLandingPage = withPageView("canvas", () => null);
 const GridPage = withPageView("grid", () => null);
@@ -190,6 +194,7 @@ function AppRoutes({ basename }: AppProps) {
             }
           />
           <Route path={`${prefix}/inbox`} element={<InboxPage />} />
+          <Route path={`${prefix}/globalhub`} element={<GlobalHubPage />} />
           <Route
             path={`${prefix}/canvas`}
             element={

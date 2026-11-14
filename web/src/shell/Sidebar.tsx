@@ -75,6 +75,7 @@ import {
   Maximize2Icon,
   Minimize2Icon,
   MoreHorizontalIcon,
+  PawPrintIcon,
   PencilIcon,
   PinIcon,
   PinOffIcon,
@@ -586,6 +587,7 @@ interface SidebarProps {
 function useActiveNavItem(): {
   isNewChatPage: boolean;
   isInboxPage: boolean;
+  isGlobalHubPage: boolean;
   isCanvasPage: boolean;
   isTasksPage: boolean;
   isUsagePage: boolean;
@@ -604,6 +606,7 @@ function useActiveNavItem(): {
   const leaf = segments.at(-1);
   const isExtensionRoute = extensionPathParts(location.pathname) !== null;
   const isInboxPage = !isExtensionRoute && leaf === "inbox";
+  const isGlobalHubPage = !isExtensionRoute && leaf === "globalhub";
   const isCanvasPage =
     !isExtensionRoute && isCanvasPathname(location.pathname, rebasePath("/canvas"));
   // True for both /tasks (list) and /tasks/:taskId (detail). Basename-agnostic:
@@ -616,6 +619,7 @@ function useActiveNavItem(): {
     activeConversationId == null &&
     (gridId == null || !isFeatureEnabled(serverInfo, "grid_sessions_display_ui")) &&
     !isInboxPage &&
+    !isGlobalHubPage &&
     !isCanvasPage &&
     !isTasksPage &&
     !isUsagePage &&
@@ -631,6 +635,7 @@ function useActiveNavItem(): {
   return {
     isNewChatPage,
     isInboxPage,
+    isGlobalHubPage,
     isCanvasPage,
     isTasksPage,
     isUsagePage,
@@ -916,6 +921,7 @@ function SidebarImpl({
   const {
     isNewChatPage,
     isInboxPage,
+    isGlobalHubPage,
     isCanvasPage,
     isTasksPage,
     isUsagePage,
@@ -1410,6 +1416,15 @@ function SidebarImpl({
                   <NewSessionShortcutHint />
                 </Link>
               </Button>
+              <PrimaryNavLink
+                to="/globalhub"
+                label="Global Hub"
+                icon={PawPrintIcon}
+                active={isGlobalHubPage}
+                onClick={onNavClick}
+                componentId="sidebar.globalhub"
+                testId="globalhub-nav"
+              />
               {/* Keep Scheduled in the primary nav group with the same row treatment as New session. */}
               {automationsEnabled && (
                 <Button

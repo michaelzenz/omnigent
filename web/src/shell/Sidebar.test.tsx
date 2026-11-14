@@ -1255,6 +1255,16 @@ describe("Sidebar session list", () => {
     expect(usage).toHaveClass("bg-[var(--sidebar-active)]");
   });
 
+  it("renders and highlights the Global Hub nav row without lighting New session", () => {
+    mockConversations(THREE_TYPE_CONVERSATIONS);
+    renderSidebar(true, "/globalhub");
+
+    const globalHub = screen.getByTestId("globalhub-nav");
+    expect(globalHub).toHaveAttribute("href", "/globalhub");
+    expect(globalHub).toHaveAttribute("aria-current", "page");
+    expect(screen.getByTestId("new-chat-button")).not.toHaveClass("bg-[var(--sidebar-active)]");
+  });
+
   it("hides Canvas navigation while the release feature is off", () => {
     mockConversations(THREE_TYPE_CONVERSATIONS);
     renderSidebar(true, "/canvas");
