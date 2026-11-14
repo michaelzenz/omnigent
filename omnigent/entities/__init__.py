@@ -43,6 +43,7 @@ from omnigent.entities.session_resources import (
     resolve_terminal_entry_by_resource_id,
 )
 from omnigent.entities.task import (
+    AgentQueueItem,
     EventTag,
     FyiCluster,
     Manager,
@@ -61,6 +62,7 @@ __all__ = [
     "Account",
     "AccountToken",
     "Agent",
+    "AgentQueueItem",
     "Comment",
     "CommentsFingerprint",
     "CompactionData",

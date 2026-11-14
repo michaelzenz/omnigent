@@ -102,7 +102,8 @@ class TaskEventStore(ABC):
         """
         Route the owner's events to one manager, all or none.
 
-        Events already routed to that manager stay as they are.
+        Events already routed to that manager stay as they are. A newly
+        routed event leaves its queue item, so the manager's item can carry it.
 
         :returns: The events in request order, or ``None``, changing nothing,
             when one is missing, someone else's, or neither unrouted nor

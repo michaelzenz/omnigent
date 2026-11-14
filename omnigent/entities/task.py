@@ -155,6 +155,8 @@ class TaskEvent:
     :param task_id: The task the event concerns.
     :param manager_id: The manager the event was routed to.
     :param fyi_cluster_id: The FYI cluster the event was filed into.
+    :param queue_item_id: The queue item that carries the event to its role
+        session; cleared when the event passes to another role.
     :param updated_at: Unix epoch seconds of the last change.
     :param routed_at: When the event was routed to a manager.
     :param processed_at: When the event was dismissed or filed.
@@ -175,6 +177,7 @@ class TaskEvent:
     task_id: str | None = None
     manager_id: str | None = None
     fyi_cluster_id: str | None = None
+    queue_item_id: str | None = None
     updated_at: int | None = None
     routed_at: int | None = None
     processed_at: int | None = None
@@ -273,3 +276,44 @@ class SystemNotice:
     publisher_label: str | None = None
     updated_at: int | None = None
     resolved_at: int | None = None
+
+
+@dataclass
+class AgentQueueItem:
+    """
+    A message waiting for, or sent to, a GlobalHub role session.
+
+    The dispatcher sends each session one item at a time, in arrival order,
+    when the session is idle. It writes the message text when it sends, from
+    ``payload`` and the task events that point at the item.
+
+    :param id: UUID primary key (bare 32-char hex string, no dashes).
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param target_session_id: The session the message goes to.
+    :param kind: ``"events"``, ``"notice_click"`` or ``"spawn_managers"``.
+    :param state: ``"queued"``, ``"sending"``, ``"sent"`` or ``"done"``.
+    :param seq: Arrival order; a session receives its items in this order.
+    :param created_at: Unix epoch seconds at row creation.
+    :param payload: Inputs for the message text, e.g. a notice click's values.
+    :param attempts: How many sends failed.
+    :param not_before: Earliest Unix epoch second for the next send after a failure.
+    :param last_error: Why the last send failed.
+    :param updated_at: Unix epoch seconds of the last change.
+    :param sent_at: When the send succeeded.
+    :param done_at: When the turn that handled the item ended.
+    """
+
+    id: str
+    owner_user_id: str | None
+    target_session_id: str
+    kind: str
+    state: str
+    seq: int
+    created_at: int
+    payload: dict[str, Any] = field(default_factory=dict)
+    attempts: int = 0
+    not_before: int | None = None
+    last_error: str | None = None
+    updated_at: int | None = None
+    sent_at: int | None = None
+    done_at: int | None = None

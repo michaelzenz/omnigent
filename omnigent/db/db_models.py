@@ -1026,6 +1026,8 @@ class SqlTaskEvent(OmnigentBase):
     :param task_id: The task the event concerns, or ``None``.
     :param manager_id: The manager it was routed to, or ``None``.
     :param fyi_cluster_id: The FYI cluster it was filed into, or ``None``.
+    :param queue_item_id: The queue item that carries it to its role session,
+        or ``None`` before it is packaged.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last change, or ``None``.
     :param routed_at: When it was routed to a manager, or ``None``.
@@ -1057,6 +1059,7 @@ class SqlTaskEvent(OmnigentBase):
     task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     manager_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     fyi_cluster_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    queue_item_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     routed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -1086,6 +1089,8 @@ class SqlTaskEvent(OmnigentBase):
         Index("ix_task_events_source_key", "workspace_id", "owner_user_id", "source_key"),
         # The events filed into an FYI cluster.
         Index("ix_task_events_fyi_cluster", "workspace_id", "fyi_cluster_id"),
+        # The events a queue item carries.
+        Index("ix_task_events_queue_item", "workspace_id", "queue_item_id"),
     )
 
 
@@ -1233,6 +1238,73 @@ class SqlSystemNotice(OmnigentBase):
         CheckConstraint("body_kind IN (1, 2)", name="ck_system_notices_body_kind"),
         # One owner's notices in a state, e.g. their active one.
         Index("ix_system_notices_owner_state", "workspace_id", "owner_user_id", "state", "id"),
+    )
+
+
+class SqlAgentQueueItem(OmnigentBase):
+    """
+    SQLAlchemy model for the ``agent_queue_items`` table: messages for GlobalHub role sessions.
+
+    The dispatcher sends each target session one item at a time, in ``seq``
+    order. Task events point at the item that carries them through
+    ``task_events.queue_item_id``. Ownership is stamped on the row; there are
+    no foreign keys (Rule R032).
+
+    :param id: Uuid16 primary key (bare 32-char hex in Python).
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param target_session_id: The session the message goes to.
+    :param kind: An ``AGENT_QUEUE_ITEM_KIND`` code.
+    :param state: An ``AGENT_QUEUE_ITEM_STATE`` code.
+    :param seq: Arrival order, a nanosecond clock reading; ``created_at`` has
+        only one-second resolution.
+    :param payload: JSON inputs for the message text, or ``None``.
+    :param attempts: How many sends failed.
+    :param not_before: Earliest Unix epoch second for the next send, or ``None``.
+    :param last_error: Why the last send failed, or ``None``.
+    :param created_at: Unix epoch seconds at row creation.
+    :param updated_at: Unix epoch seconds of the last change, or ``None``.
+    :param sent_at: When the send succeeded, or ``None``.
+    :param done_at: When the turn that handled it ended, or ``None``.
+    """
+
+    __tablename__ = "agent_queue_items"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    target_session_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    kind: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    payload: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    not_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sent_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    done_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("kind IN (1, 2, 3)", name="ck_agent_queue_items_kind"),
+        CheckConstraint("state IN (1, 2, 3, 4)", name="ck_agent_queue_items_state"),
+        # Items in a state in arrival order, e.g. the dispatcher's scan.
+        Index("ix_agent_queue_items_state_seq", "workspace_id", "state", "seq"),
+        # One session's items in a state, e.g. whether one is in flight.
+        Index(
+            "ix_agent_queue_items_target_state",
+            "workspace_id",
+            "target_session_id",
+            "state",
+            "seq",
+        ),
     )
 
 

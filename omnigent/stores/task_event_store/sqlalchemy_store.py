@@ -45,6 +45,7 @@ def _to_entity(row: SqlTaskEvent) -> TaskEvent:
         task_id=row.task_id,
         manager_id=row.manager_id,
         fyi_cluster_id=row.fyi_cluster_id,
+        queue_item_id=row.queue_item_id,
         updated_at=row.updated_at,
         routed_at=row.routed_at,
         processed_at=row.processed_at,
@@ -216,6 +217,8 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 if row.state == _UNROUTED:
                     row.state = _ROUTED
                     row.manager_id = manager_id
+                    # The manager's own queue item carries it from here.
+                    row.queue_item_id = None
                     row.routed_at = now
                     row.updated_at = now
             return [_to_entity(rows[event_id]) for event_id in wanted]

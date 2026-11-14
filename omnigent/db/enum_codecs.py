@@ -175,6 +175,25 @@ SYSTEM_NOTICE_BODY_KIND: dict[str, int] = {
     "html": 2,
 }
 
+# What a GlobalHub queue item asks its session to handle.
+AGENT_QUEUE_ITEM_KIND: dict[str, int] = {
+    # Task events packaged for the broker or a manager.
+    "events": 1,
+    # A click on a system notice action, for the custodian.
+    "notice_click": 2,
+    # A request that the broker create managers for unmanaged tasks.
+    "spawn_managers": 3,
+}
+
+# GlobalHub queue items: claimed by the dispatcher, sent, then done when the
+# turn that handles the item ends.
+AGENT_QUEUE_ITEM_STATE: dict[str, int] = {
+    "queued": 1,
+    "sending": 2,
+    "sent": 3,
+    "done": 4,
+}
+
 
 def _assert_item_type_codes_cover_data_classes() -> None:
     """
@@ -416,6 +435,26 @@ def encode_system_notice_body_kind(name: str) -> int:
 def decode_system_notice_body_kind(code: int) -> str:
     """Decode a ``system_notices.body_kind`` int code to its name."""
     return _decode(SYSTEM_NOTICE_BODY_KIND, code, field="system_notices.body_kind")
+
+
+def encode_agent_queue_item_kind(name: str) -> int:
+    """Encode an ``agent_queue_items.kind`` name to its int code."""
+    return _encode(AGENT_QUEUE_ITEM_KIND, name, field="agent_queue_items.kind")
+
+
+def decode_agent_queue_item_kind(code: int) -> str:
+    """Decode an ``agent_queue_items.kind`` int code to its name."""
+    return _decode(AGENT_QUEUE_ITEM_KIND, code, field="agent_queue_items.kind")
+
+
+def encode_agent_queue_item_state(name: str) -> int:
+    """Encode an ``agent_queue_items.state`` name to its int code."""
+    return _encode(AGENT_QUEUE_ITEM_STATE, name, field="agent_queue_items.state")
+
+
+def decode_agent_queue_item_state(code: int) -> str:
+    """Decode an ``agent_queue_items.state`` int code to its name."""
+    return _decode(AGENT_QUEUE_ITEM_STATE, code, field="agent_queue_items.state")
 
 
 def encode_scheduled_task_execution_target(name: str) -> int:
