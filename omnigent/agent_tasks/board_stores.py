@@ -8,6 +8,8 @@ from omnigent.stores.fyi_cluster_store import FyiClusterStore
 from omnigent.stores.fyi_cluster_store.sqlalchemy_store import SqlAlchemyFyiClusterStore
 from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+from omnigent.stores.system_notice_store import SystemNoticeStore
+from omnigent.stores.system_notice_store.sqlalchemy_store import SqlAlchemySystemNoticeStore
 from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
 from omnigent.stores.task_event_store import TaskEventStore
@@ -29,6 +31,7 @@ class BoardStores:
     :param events: The signals the broker routes to managers.
     :param fyi_clusters: Events that need no task, kept for the user to read.
     :param assets: The links the tasks carry.
+    :param system_notices: The notice pinned on each user's board.
     """
 
     tasks: TaskStore
@@ -37,6 +40,7 @@ class BoardStores:
     events: TaskEventStore
     fyi_clusters: FyiClusterStore
     assets: TaskAssetStore
+    system_notices: SystemNoticeStore
 
 
 def open_board_stores(conversation_store: object) -> BoardStores | None:
@@ -56,4 +60,5 @@ def open_board_stores(conversation_store: object) -> BoardStores | None:
         events=SqlAlchemyTaskEventStore(location),
         fyi_clusters=SqlAlchemyFyiClusterStore(location),
         assets=SqlAlchemyTaskAssetStore(location),
+        system_notices=SqlAlchemySystemNoticeStore(location),
     )

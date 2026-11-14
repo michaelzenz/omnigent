@@ -125,6 +125,9 @@ from omnigent.server.routes.agent_task_events import create_agent_task_events_ro
 from omnigent.server.routes.agent_task_fyi import create_agent_task_fyi_router
 from omnigent.server.routes.agent_task_managers import create_agent_task_managers_router
 from omnigent.server.routes.agent_task_roles import create_agent_task_roles_router
+from omnigent.server.routes.agent_task_system_notice import (
+    create_agent_task_system_notice_router,
+)
 from omnigent.server.routes.agent_task_workers import create_agent_task_workers_router
 from omnigent.server.routes.agent_tasks import create_agent_tasks_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
@@ -4168,7 +4171,8 @@ def create_app(
         )
     board_stores = open_board_stores(conversation_store)
     if board_stores is not None:
-        # Before the tasks router, whose /agent-tasks/{task_id} matches /agent-tasks/managers.
+        # The managers and system notice routers go before the tasks router,
+        # whose /agent-tasks/{task_id} matches their literal paths.
         if role_session_stores is not None:
             app.include_router(
                 create_agent_task_managers_router(
@@ -4177,6 +4181,13 @@ def create_app(
                 prefix="/v1",
                 tags=["agent-tasks"],
             )
+        app.include_router(
+            create_agent_task_system_notice_router(
+                board_stores, conversation_store, auth_provider
+            ),
+            prefix="/v1",
+            tags=["agent-tasks"],
+        )
         app.include_router(
             create_agent_tasks_router(board_stores, auth_provider),
             prefix="/v1",

@@ -11,7 +11,10 @@ delineator further down:
 
 from __future__ import annotations
 
+import json
 import re
+from collections import Counter
+from collections.abc import Iterable
 from typing import Annotated, Any, Literal, Self, get_args
 
 from pydantic import (
@@ -5925,6 +5928,12 @@ _AgentTaskAssetCategory = Annotated[
     str, Field(max_length=64), AfterValidator(_strip_required_text)
 ]
 _AgentTaskAssetUrl = Annotated[str, Field(max_length=8_192), AfterValidator(_strip_required_text)]
+_AgentSystemNoticeTitle = Annotated[
+    str, Field(max_length=512), AfterValidator(_strip_required_text)
+]
+_AgentSystemNoticeControlId = Annotated[
+    str, Field(max_length=64), AfterValidator(_strip_required_text)
+]
 
 
 class AgentTaskResponse(BaseModel):
@@ -6301,6 +6310,117 @@ class AgentTaskAssetDeletedResponse(BaseModel):
     id: str
     task_id: str
     deleted: Literal[True] = True
+
+
+AgentSystemNoticeState = Literal["active", "resolved"]
+AgentSystemNoticeBodyKind = Literal["markdown", "html"]
+_AGENT_SYSTEM_NOTICE_ACTIONS_MAX_BYTES = 2 * 1024 * 1024
+
+
+def _repeated(ids: Iterable[str]) -> list[str]:
+    return [item_id for item_id, count in Counter(ids).items() if count > 1]
+
+
+class AgentSystemNoticeInput(BaseModel):
+    """A control the user sets before clicking an action: a toggle or a text box.
+
+    ``group`` names a set of the action's inputs, e.g. the sessions on one
+    host, that the board can switch on or off together. ``default`` is a
+    toggle's initial value.
+    """
+
+    id: _AgentSystemNoticeControlId
+    kind: Literal["toggle", "text", "textarea"]
+    label: str | None = None
+    group: str | None = None
+    placeholder: str | None = None
+    default: bool | None = None
+    required: bool | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentSystemNoticeAction(BaseModel):
+    """A button on a system notice; a click carries the values of its inputs.
+
+    Input ids are unique within the action.
+    """
+
+    id: _AgentSystemNoticeControlId
+    label: str | None = None
+    inputs: list[AgentSystemNoticeInput] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _check_input_ids(self) -> Self:
+        repeated = _repeated(item.id for item in self.inputs)
+        if repeated:
+            raise ValueError(f"action {self.id!r} repeats input ids: {', '.join(repeated)}")
+        return self
+
+
+class AgentSystemNoticeResponse(BaseModel):
+    """A notice pinned on the caller's GlobalHub board, e.g. the custodian's
+    cleanup proposal.
+
+    ``publisher_session_id`` and ``publisher_label`` name the session that
+    published it, when that session's runner sent the request.
+    """
+
+    object: Literal["agent.task.system_notice"] = "agent.task.system_notice"
+    id: str
+    title: str
+    body_kind: AgentSystemNoticeBodyKind
+    body: str | None
+    actions: list[AgentSystemNoticeAction]
+    state: AgentSystemNoticeState
+    publisher_session_id: str | None
+    publisher_label: str | None
+    created_at: int
+    updated_at: int | None
+    resolved_at: int | None
+
+
+class AgentTaskBoardSystemNotice(BaseModel):
+    """The system notice a request returned, or null when there was none.
+
+    Reading returns the caller's active notice, publishing returns the new
+    notice, and dismissing returns the notice it resolved.
+    """
+
+    object: Literal["agent.task.board.system_notice"] = "agent.task.board.system_notice"
+    notice: AgentSystemNoticeResponse | None
+
+
+class PublishAgentSystemNoticeRequest(BaseModel):
+    """Publish the caller's system notice; it replaces the active one.
+
+    The board renders a ``markdown`` body as text and an ``html`` body in a
+    sandboxed frame. Action ids are unique, and the actions serialize to at
+    most 2 MB of JSON.
+    """
+
+    title: _AgentSystemNoticeTitle
+    body: str | None = Field(default=None, max_length=200_000)
+    body_kind: AgentSystemNoticeBodyKind = "markdown"
+    actions: list[AgentSystemNoticeAction] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+    def declared_actions(self) -> list[dict[str, Any]]:
+        """Return the actions as the board stores them, without unset fields."""
+        return [action.model_dump(exclude_none=True) for action in self.actions]
+
+    @model_validator(mode="after")
+    def _check_actions(self) -> Self:
+        repeated = _repeated(action.id for action in self.actions)
+        if repeated:
+            raise ValueError(f"action ids repeat: {', '.join(repeated)}")
+        encoded = json.dumps(self.declared_actions(), ensure_ascii=False).encode()
+        if len(encoded) > _AGENT_SYSTEM_NOTICE_ACTIONS_MAX_BYTES:
+            raise ValueError("actions must serialize to at most 2 MB of JSON")
+        return self
 
 
 class UpdateGlobalHubRoleProfileRequest(BaseModel):

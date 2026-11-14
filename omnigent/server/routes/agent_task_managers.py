@@ -22,12 +22,8 @@ from omnigent.agent_tasks.role_sessions import (
 from omnigent.agent_tasks.roles import MANAGER_ROLE_KEY, builtin_role
 from omnigent.entities import Conversation, Manager, Task
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.runner.identity import (
-    ORCHESTRATION_SOURCE_HEADER,
-    RUNNER_TUNNEL_TOKEN_HEADER,
-    token_bound_runner_id,
-)
 from omnigent.server.auth import AuthProvider
+from omnigent.server.routes._agent_task_callers import runner_bound_caller
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.server.routes._session_create_validation import resolve_host_home_workspace
 from omnigent.server.routes._sessions.helpers import _announce_session_added
@@ -40,9 +36,7 @@ from omnigent.server.schemas import (
     CreateAgentManagerRequest,
     UpdateAgentManagerSelfRequest,
 )
-from omnigent.stores import ConversationStore
 from omnigent.stores.user_settings_store import GlobalHubPlacement
-from omnigent.util.uuid import InvalidUuidError, uuid_to_bytes
 
 # Archived tasks no longer count toward a manager's portfolio.
 _LIVE_TASK_STATES = ("active", "idle", "agent-resolved")
@@ -148,11 +142,9 @@ def create_agent_task_managers_router(
         call this.
         """
         user_id = require_user(request, auth_provider)
-        source_id = request.headers.get(ORCHESTRATION_SOURCE_HEADER, "")
-        token = (request.headers.get(RUNNER_TUNNEL_TOKEN_HEADER) or "").strip()
 
         def update() -> tuple[Manager, list[Task], Conversation]:
-            session = _runner_bound_session(source_id, token, sessions.conversation_store)
+            session = runner_bound_caller(request, sessions.conversation_store)
             if session is None:
                 raise OmnigentError(
                     "only a manager's own session can update it", code=ErrorCode.FORBIDDEN
@@ -196,22 +188,6 @@ def create_agent_task_managers_router(
         return AgentManagerDeletedResponse(id=manager.id, conversation_id=manager.conversation_id)
 
     return router
-
-
-def _runner_bound_session(
-    session_id: str, token: str, conversations: ConversationStore
-) -> Conversation | None:
-    """Return the named session when ``token`` is its runner's tunnel token. Blocking."""
-    if not token:
-        return None
-    try:
-        canonical_id = uuid_to_bytes(session_id).hex()
-    except InvalidUuidError:
-        return None
-    session = conversations.get_conversation(canonical_id)
-    if session is None or session.runner_id != token_bound_runner_id(token):
-        return None
-    return session
 
 
 def _manager_response(

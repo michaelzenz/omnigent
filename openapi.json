@@ -868,6 +868,240 @@
         "title": "AgentObject",
         "type": "object"
       },
+      "AgentSystemNoticeAction": {
+        "additionalProperties": false,
+        "description": "A button on a system notice; a click carries the values of its inputs.\n\nInput ids are unique within the action.",
+        "properties": {
+          "id": {
+            "maxLength": 64,
+            "title": "Id",
+            "type": "string"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/AgentSystemNoticeInput"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "AgentSystemNoticeAction",
+        "type": "object"
+      },
+      "AgentSystemNoticeInput": {
+        "additionalProperties": false,
+        "description": "A control the user sets before clicking an action: a toggle or a text box.\n\n`group` names a set of the action's inputs, e.g. the sessions on one\nhost, that the board can switch on or off together. `default` is a\ntoggle's initial value.",
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default"
+          },
+          "group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group"
+          },
+          "id": {
+            "maxLength": 64,
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "toggle",
+              "text",
+              "textarea"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "placeholder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placeholder"
+          },
+          "required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "title": "AgentSystemNoticeInput",
+        "type": "object"
+      },
+      "AgentSystemNoticeResponse": {
+        "description": "A notice pinned on the caller's GlobalHub board, e.g. the custodian's\ncleanup proposal.\n\n`publisher_session_id` and `publisher_label` name the session that\npublished it, when that session's runner sent the request.",
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/AgentSystemNoticeAction"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "body_kind": {
+            "enum": [
+              "markdown",
+              "html"
+            ],
+            "title": "Body Kind",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "int64",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.task.system_notice",
+            "default": "agent.task.system_notice",
+            "title": "Object",
+            "type": "string"
+          },
+          "publisher_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher Label"
+          },
+          "publisher_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher Session Id"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "state": {
+            "enum": [
+              "active",
+              "resolved"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "body_kind",
+          "body",
+          "actions",
+          "state",
+          "publisher_session_id",
+          "publisher_label",
+          "created_at",
+          "updated_at",
+          "resolved_at"
+        ],
+        "title": "AgentSystemNoticeResponse",
+        "type": "object"
+      },
       "AgentTaskAssetDeletedResponse": {
         "description": "An asset removed from one of the caller's tasks.",
         "properties": {
@@ -987,6 +1221,32 @@
           "fyi"
         ],
         "title": "AgentTaskBoardPending",
+        "type": "object"
+      },
+      "AgentTaskBoardSystemNotice": {
+        "description": "The system notice a request returned, or null when there was none.\n\nReading returns the caller's active notice, publishing returns the new\nnotice, and dismissing returns the notice it resolved.",
+        "properties": {
+          "notice": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentSystemNoticeResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "object": {
+            "const": "agent.task.board.system_notice",
+            "default": "agent.task.board.system_notice",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "notice"
+        ],
+        "title": "AgentTaskBoardSystemNotice",
         "type": "object"
       },
       "AgentTaskDeletedResponse": {
@@ -7026,6 +7286,50 @@
           "ordered_project_ids"
         ],
         "title": "ProjectOrderResponse",
+        "type": "object"
+      },
+      "PublishAgentSystemNoticeRequest": {
+        "additionalProperties": false,
+        "description": "Publish the caller's system notice; it replaces the active one.\n\nThe board renders a `markdown` body as text and an `html` body in a\nsandboxed frame. Action ids are unique, and the actions serialize to at\nmost 2 MB of JSON.",
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/AgentSystemNoticeAction"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "maxLength": 200000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "body_kind": {
+            "default": "markdown",
+            "enum": [
+              "markdown",
+              "html"
+            ],
+            "title": "Body Kind",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 512,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "PublishAgentSystemNoticeRequest",
         "type": "object"
       },
       "QueuedEvent": {
@@ -15863,6 +16167,90 @@
           }
         },
         "summary": "Adopt Session",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/system-notice": {
+      "get": {
+        "description": "Return the caller's active system notice, or null when there is none.",
+        "operationId": "get_system_notice_v1_agent_tasks_system_notice_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskBoardSystemNotice"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get System Notice",
+        "tags": [
+          "agent-tasks"
+        ]
+      },
+      "post": {
+        "description": "Publish the caller's system notice; it replaces the active one.\n\nThe notice names its publisher only when a session's runner sends the\nrequest for that session.",
+        "operationId": "publish_system_notice_v1_agent_tasks_system_notice_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishAgentSystemNoticeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskBoardSystemNotice"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish System Notice",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/system-notice/dismiss": {
+      "post": {
+        "description": "Resolve the caller's active system notice and return it; null when there is none.\n\nDismissal only resolves the notice; no session hears of it.",
+        "operationId": "dismiss_system_notice_v1_agent_tasks_system_notice_dismiss_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskBoardSystemNotice"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Dismiss System Notice",
         "tags": [
           "agent-tasks"
         ]
