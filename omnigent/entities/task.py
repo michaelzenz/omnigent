@@ -1,11 +1,12 @@
 """GlobalHub board entities, persisted in the ``tasks``, ``managers``, ``workers``,
-``task_events``, ``fyi_clusters`` and ``task_assets`` tables.
+``task_events``, ``fyi_clusters``, ``task_assets`` and ``system_notices`` tables.
 
 A :class:`Task` is a long-lived unit of work on one user's GlobalHub board,
 owned by one :class:`Manager`. Each :class:`Worker` attaches a session that
 works on the task, and each :class:`TaskAsset` is a link the task carries. A
 :class:`TaskEvent` is a signal the broker routes to a manager, which can file
-it into an :class:`FyiCluster` for the user.
+it into an :class:`FyiCluster` for the user. A :class:`SystemNotice` is pinned
+on the board for the user to act on.
 """
 
 from __future__ import annotations
@@ -235,3 +236,40 @@ class TaskAsset:
     created_at: int
     related_session_ids: list[str] = field(default_factory=list)
     updated_at: int | None = None
+
+
+@dataclass
+class SystemNotice:
+    """
+    The notice pinned on a user's GlobalHub board, e.g. the custodian's cleanup proposal.
+
+    Each user has at most one ``active`` notice; publishing another resolves it.
+    Its declared actions are the buttons the user can click, each optionally
+    with inputs (toggles and text fields) whose values the click carries.
+
+    :param id: UUID primary key (bare 32-char hex string, no dashes).
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param title: The notice's headline.
+    :param body_kind: ``"markdown"`` or ``"html"``.
+    :param state: ``"active"`` or ``"resolved"``.
+    :param created_at: Unix epoch seconds at row creation.
+    :param body: The notice's body.
+    :param actions: The declared actions, e.g. ``[{"id": "confirm", "inputs": [...]}]``.
+    :param publisher_session_id: The session that published it, when confirmed.
+    :param publisher_label: That session's title when it published.
+    :param updated_at: Unix epoch seconds of the last change.
+    :param resolved_at: When it was replaced or dismissed.
+    """
+
+    id: str
+    owner_user_id: str | None
+    title: str
+    body_kind: str
+    state: str
+    created_at: int
+    body: str | None = None
+    actions: list[dict[str, Any]] = field(default_factory=list)
+    publisher_session_id: str | None = None
+    publisher_label: str | None = None
+    updated_at: int | None = None
+    resolved_at: int | None = None

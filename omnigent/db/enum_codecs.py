@@ -163,6 +163,18 @@ FYI_CLUSTER_STATE: dict[str, int] = {
     "dismissed": 2,
 }
 
+# GlobalHub system notices: active until replaced or dismissed.
+SYSTEM_NOTICE_STATE: dict[str, int] = {
+    "active": 1,
+    "resolved": 2,
+}
+
+# How the board renders a system notice's body.
+SYSTEM_NOTICE_BODY_KIND: dict[str, int] = {
+    "markdown": 1,
+    "html": 2,
+}
+
 
 def _assert_item_type_codes_cover_data_classes() -> None:
     """
@@ -384,6 +396,26 @@ def encode_fyi_cluster_state(name: str) -> int:
 def decode_fyi_cluster_state(code: int) -> str:
     """Decode a ``fyi_clusters.state`` int code to its name."""
     return _decode(FYI_CLUSTER_STATE, code, field="fyi_clusters.state")
+
+
+def encode_system_notice_state(name: str) -> int:
+    """Encode a ``system_notices.state`` name to its int code."""
+    return _encode(SYSTEM_NOTICE_STATE, name, field="system_notices.state")
+
+
+def decode_system_notice_state(code: int) -> str:
+    """Decode a ``system_notices.state`` int code to its name."""
+    return _decode(SYSTEM_NOTICE_STATE, code, field="system_notices.state")
+
+
+def encode_system_notice_body_kind(name: str) -> int:
+    """Encode a ``system_notices.body_kind`` name to its int code."""
+    return _encode(SYSTEM_NOTICE_BODY_KIND, name, field="system_notices.body_kind")
+
+
+def decode_system_notice_body_kind(code: int) -> str:
+    """Decode a ``system_notices.body_kind`` int code to its name."""
+    return _decode(SYSTEM_NOTICE_BODY_KIND, code, field="system_notices.body_kind")
 
 
 def encode_scheduled_task_execution_target(name: str) -> int:

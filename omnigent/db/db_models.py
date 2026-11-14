@@ -1181,6 +1181,61 @@ class SqlTaskAsset(OmnigentBase):
     )
 
 
+class SqlSystemNotice(OmnigentBase):
+    """
+    SQLAlchemy model for the ``system_notices`` table: the notice pinned on a GlobalHub board.
+
+    Each user has at most one active notice. Publishing resolves it and adds
+    the new one; dismissing resolves it. Ownership is stamped on the row;
+    there are no foreign keys (Rule R032).
+
+    :param id: Uuid16 primary key (bare 32-char hex in Python).
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param title: The notice's headline.
+    :param body_kind: A ``SYSTEM_NOTICE_BODY_KIND`` code.
+    :param body: The notice's body, or ``None``.
+    :param actions: JSON list of the declared actions the user can click, or
+        ``None`` when there are none.
+    :param state: A ``SYSTEM_NOTICE_STATE`` code.
+    :param publisher_session_id: The session that published it, when the
+        server could confirm it.
+    :param publisher_label: That session's title when it published.
+    :param created_at: Unix epoch seconds at row creation.
+    :param updated_at: Unix epoch seconds of the last change, or ``None``.
+    :param resolved_at: When it was replaced or dismissed, or ``None``.
+    """
+
+    __tablename__ = "system_notices"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    body_kind: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    body: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    actions: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    publisher_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    publisher_label: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    resolved_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 2)", name="ck_system_notices_state"),
+        CheckConstraint("body_kind IN (1, 2)", name="ck_system_notices_body_kind"),
+        # One owner's notices in a state, e.g. their active one.
+        Index("ix_system_notices_owner_state", "workspace_id", "owner_user_id", "state", "id"),
+    )
+
+
 class SqlConversation(ConversationBase):
     """
     SQLAlchemy model for the ``conversations`` table.

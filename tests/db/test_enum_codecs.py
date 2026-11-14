@@ -49,6 +49,12 @@ _CODECS = [
     (ec.TASK_STATE, ec.encode_task_state, ec.decode_task_state),
     (ec.TASK_EVENT_STATE, ec.encode_task_event_state, ec.decode_task_event_state),
     (ec.FYI_CLUSTER_STATE, ec.encode_fyi_cluster_state, ec.decode_fyi_cluster_state),
+    (ec.SYSTEM_NOTICE_STATE, ec.encode_system_notice_state, ec.decode_system_notice_state),
+    (
+        ec.SYSTEM_NOTICE_BODY_KIND,
+        ec.encode_system_notice_body_kind,
+        ec.decode_system_notice_body_kind,
+    ),
 ]
 
 
@@ -142,3 +148,5 @@ def test_shipped_codes_are_stable() -> None:
     assert ec.TASK_STATE == {"active": 1, "idle": 3, "archived": 4, "agent-resolved": 5}
     assert ec.TASK_EVENT_STATE == {"unrouted": 4, "routed": 6, "dismissed": 8, "fyi": 12}
     assert ec.FYI_CLUSTER_STATE == {"pending": 1, "dismissed": 2}
+    assert ec.SYSTEM_NOTICE_STATE == {"active": 1, "resolved": 2}
+    assert ec.SYSTEM_NOTICE_BODY_KIND == {"markdown": 1, "html": 2}
