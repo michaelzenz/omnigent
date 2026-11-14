@@ -10,8 +10,10 @@ import pytest
 from omnigent.agent_tasks.role_sessions import (
     GLOBALHUB_PROJECT_NAME,
     RoleSessionStores,
+    create_role_session,
     ensure_globalhub_project,
     ensure_role_session,
+    is_role_session_current,
 )
 from omnigent.agent_tasks.roles import (
     BROKER_ROLE_KEY,
@@ -23,6 +25,7 @@ from omnigent.agent_tasks.session_labels import BROKER_ROLE_VALUE, ROLE_LABEL
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
 from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
@@ -105,6 +108,42 @@ async def test_ensure_replaces_a_session_the_user_can_no_longer_use(
     assert settings.get_globalhub_role_session(BROKER_ROLE_KEY, user_id=ALICE) == new.id
     expected_workspace = "/Users/alice/elsewhere" if change == "moved" else PLACEMENT.workspace
     assert new.workspace == expected_workspace
+
+
+async def test_only_a_roles_current_session_takes_its_messages(
+    stores: RoleSessionStores, db_uri: str
+) -> None:
+    settings = stores.user_settings_store
+    settings.save_globalhub_placement(PLACEMENT, user_id=ALICE)
+    broker, _ = await ensure_role_session(_broker(), user_id=ALICE, stores=stores)
+    manager_role = builtin_role(MANAGER_ROLE_KEY)
+    assert manager_role is not None
+    owned, unowned = [
+        create_role_session(
+            manager_role, user_id=ALICE, placement=PLACEMENT, title=title, stores=stores
+        )
+        for title in ("Storage", "Former manager")
+    ]
+    managers = SqlAlchemyManagerStore(db_uri)
+    managers.create(
+        uuid.uuid4().hex, owner_user_id=ALICE, title="Storage", conversation_id=owned.id
+    )
+    plain = stores.conversation_store.create_conversation(title="Fix S3 retries")
+
+    def current(session_id: str, user_id: str | None = ALICE) -> bool:
+        session = stores.conversation_store.get_conversation(session_id)
+        assert session is not None
+        return is_role_session_current(session, user_id=user_id, stores=stores, managers=managers)
+
+    before = [current(session.id) for session in (broker, owned, unowned, plain)]
+    for_bob = current(broker.id, user_id="bob@example.com")
+    stores.conversation_store.update_conversation(owned.id, archived=True)
+    moved = GlobalHubPlacement(host_id=PLACEMENT.host_id, workspace="/Users/alice/elsewhere")
+    settings.save_globalhub_placement(moved, user_id=ALICE)
+
+    assert before == [True, True, False, False]
+    assert for_bob is False
+    assert (current(broker.id), current(owned.id)) == (False, False)
 
 
 async def test_ensure_requires_a_placement_and_a_singleton_role(

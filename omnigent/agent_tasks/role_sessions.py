@@ -13,11 +13,12 @@ import weakref
 from dataclasses import dataclass
 from typing import Any
 
-from omnigent.agent_tasks.roles import BuiltinRole, role_definition
+from omnigent.agent_tasks.roles import BuiltinRole, role_definition, session_role
 from omnigent.agent_tasks.session_labels import ROLE_LABEL
 from omnigent.entities import Conversation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import LEVEL_OWNER
+from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
 
 GLOBALHUB_PROJECT_NAME = "GlobalHub"
@@ -156,12 +157,40 @@ def ensure_globalhub_project(project_store: Any | None, user_id: str | None) -> 
         return found
 
 
-def _ensure_role_session(
-    role: BuiltinRole, user_id: str | None, stores: RoleSessionStores
-) -> tuple[Conversation, bool]:
-    settings = stores.user_settings_store
-    placement = require_globalhub_placement(settings, user_id)
-    session_id = settings.get_globalhub_role_session(role.key, user_id=user_id)
+def is_role_session_current(
+    session: Conversation,
+    *,
+    user_id: str | None,
+    stores: RoleSessionStores,
+    managers: ManagerStore,
+) -> bool:
+    """Whether ``session`` still serves its role, so messages for the role may go to it. Blocking.
+
+    A broker or custodian session must be the user's current one for that role;
+    a manager session must belong to one of the user's managers.
+    """
+    role = session_role(session.labels)
+    if role is None or session.archived:
+        return False
+    if not role.singleton:
+        return managers.get_by_conversation_id(session.id, owner_user_id=user_id) is not None
+    placement = stores.user_settings_store.get_globalhub_placement(user_id=user_id)
+    current = _current_role_session(role, user_id, stores, placement) if placement else None
+    return current is not None and current.id == session.id
+
+
+def _current_role_session(
+    role: BuiltinRole,
+    user_id: str | None,
+    stores: RoleSessionStores,
+    placement: GlobalHubPlacement,
+) -> Conversation | None:
+    """Return the recorded session for a singleton role unless it was replaced.
+
+    A recorded session is replaced when it was deleted or archived, or when the
+    user moved GlobalHub to another host or workspace.
+    """
+    session_id = stores.user_settings_store.get_globalhub_role_session(role.key, user_id=user_id)
     current = stores.conversation_store.get_conversation(session_id) if session_id else None
     if (
         current is not None
@@ -169,6 +198,17 @@ def _ensure_role_session(
         and current.host_id == placement.host_id
         and current.workspace == placement.workspace
     ):
+        return current
+    return None
+
+
+def _ensure_role_session(
+    role: BuiltinRole, user_id: str | None, stores: RoleSessionStores
+) -> tuple[Conversation, bool]:
+    settings = stores.user_settings_store
+    placement = require_globalhub_placement(settings, user_id)
+    current = _current_role_session(role, user_id, stores, placement)
+    if current is not None:
         return current, False
     created = create_role_session(
         role, user_id=user_id, placement=placement, title=role.title, stores=stores
