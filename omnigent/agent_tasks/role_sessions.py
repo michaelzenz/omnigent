@@ -174,9 +174,20 @@ def is_role_session_current(
         return False
     if not role.singleton:
         return managers.get_by_conversation_id(session.id, owner_user_id=user_id) is not None
-    placement = stores.user_settings_store.get_globalhub_placement(user_id=user_id)
-    current = _current_role_session(role, user_id, stores, placement) if placement else None
+    current = current_role_session(role, user_id=user_id, stores=stores)
     return current is not None and current.id == session.id
+
+
+def current_role_session(
+    role: BuiltinRole, *, user_id: str | None, stores: RoleSessionStores
+) -> Conversation | None:
+    """Return the user's session for a singleton role without creating one. Blocking.
+
+    ``None`` when the user has no GlobalHub placement, or when the recorded
+    session was deleted, archived, or left behind when GlobalHub moved.
+    """
+    placement = stores.user_settings_store.get_globalhub_placement(user_id=user_id)
+    return _current_role_session(role, user_id, stores, placement) if placement else None
 
 
 def _current_role_session(

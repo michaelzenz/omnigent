@@ -137,6 +137,7 @@ from omnigent.server.routes.agent_task_board import create_agent_task_board_rout
 from omnigent.server.routes.agent_task_events import create_agent_task_events_router
 from omnigent.server.routes.agent_task_fyi import create_agent_task_fyi_router
 from omnigent.server.routes.agent_task_managers import create_agent_task_managers_router
+from omnigent.server.routes.agent_task_role_board import create_agent_task_role_board_router
 from omnigent.server.routes.agent_task_roles import create_agent_task_roles_router
 from omnigent.server.routes.agent_task_system_notice import (
     create_agent_task_system_notice_router,
@@ -4225,6 +4226,13 @@ def create_app(
             tags=["agent-tasks"],
         )
         if role_session_stores is not None:
+            app.include_router(
+                create_agent_task_role_board_router(
+                    board_stores, role_session_stores, send_deps, auth_provider
+                ),
+                prefix="/v1",
+                tags=["agent-tasks"],
+            )
             app.include_router(
                 create_agent_task_managers_router(
                     board_stores, role_session_stores, auth_provider

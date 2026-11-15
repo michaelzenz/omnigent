@@ -6316,7 +6316,7 @@ class AgentTaskAssetDeletedResponse(BaseModel):
 
 
 class AgentTaskBoardSession(BaseModel):
-    """The session a worker wraps, with the title and live state the session list shows."""
+    """A worker's or a role's session, with the title and live state the session list shows."""
 
     title: str | None
     status: Literal["idle", "running", "waiting", "failed"]
@@ -6363,6 +6363,39 @@ class AgentTaskBoard(BaseModel):
     object: Literal["agent.task.board.cards"] = "agent.task.board.cards"
     data: list[AgentTaskBoardCard]
     has_more: bool
+
+
+class AgentTaskBoardRole(BaseModel):
+    """A role that runs the caller's board, with its session and what waits for it.
+
+    ``session`` is null when the role has no current session; a broker or
+    custodian gets a new one when it has work. ``waiting`` counts the events
+    that wait for the broker or a manager, or the clicks queued for the
+    custodian.
+    """
+
+    role: str
+    title: str
+    manager_id: str | None
+    session_id: str | None
+    session: AgentTaskBoardSession | None
+    waiting: int
+
+
+class AgentTaskBoardRoles(BaseModel):
+    """The roles that run the caller's board: the broker, the custodian, then each manager."""
+
+    object: Literal["agent.task.board.roles"] = "agent.task.board.roles"
+    data: list[AgentTaskBoardRole]
+
+
+class AgentTaskRoleWaitingDismissed(BaseModel):
+    """How much waiting work a dismissal removed from one of the caller's roles."""
+
+    object: Literal["agent.task.role.waiting_dismissed"] = "agent.task.role.waiting_dismissed"
+    role: str
+    manager_id: str | None
+    dismissed: int
 
 
 AgentSystemNoticeState = Literal["active", "resolved"]

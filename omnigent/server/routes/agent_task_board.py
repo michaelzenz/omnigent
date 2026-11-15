@@ -16,11 +16,10 @@ from typing import cast
 from fastapi import APIRouter, Query, Request
 
 from omnigent.agent_tasks.board_stores import BoardStores
-from omnigent.entities import LIVE_TASK_STATES, Conversation, Task, TaskAsset, Worker
-from omnigent.runtime import pending_elicitations
-from omnigent.server.agent_task_delivery import SessionSendDeps, settle_orphaned_turns
+from omnigent.entities import LIVE_TASK_STATES, Task, TaskAsset, Worker
+from omnigent.server.agent_task_delivery import SessionSendDeps
+from omnigent.server.agent_task_session_states import read_session_states
 from omnigent.server.auth import AuthProvider
-from omnigent.server.routes import sessions as session_routes
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.server.routes.agent_task_assets import asset_response
 from omnigent.server.routes.agent_task_workers import worker_response
@@ -64,18 +63,12 @@ def create_agent_task_board_router(
             conversation_store.get_conversations,
             list(dict.fromkeys(worker.session_id for worker in workers)),
         )
-        conversations = [conv for conv in found.values() if conv.agent_id is not None]
-        # A settled session publishes its new status, which the rows below read.
-        await settle_orphaned_turns(conversations, deps=session_deps)
-        ids = [conv.id for conv in conversations]
-        children = await asyncio.to_thread(
-            conversation_store.list_child_conversation_ids_by_parent, ids
+        return await read_session_states(
+            list(found.values()),
+            user_id=user_id,
+            conversation_store=conversation_store,
+            deps=session_deps,
         )
-        pending = pending_elicitations.counts_for(ids)
-        return {
-            conv.id: _session_state(conv, user_id, pending[conv.id], children.get(conv.id, []))
-            for conv in conversations
-        }
 
     @router.get("/agent-tasks/board", response_model=AgentTaskBoard)
     async def read_board(
@@ -128,31 +121,6 @@ def _live_tasks(
 
 def _board_position(task: Task) -> tuple[int, str]:
     return task.queue_rank, task.id
-
-
-def _session_state(
-    conv: Conversation, user_id: str | None, pending_count: int, child_session_ids: list[str]
-) -> AgentTaskBoardSession:
-    # Main's session-list row, so a worker reads as it does in the sidebar.
-    row = session_routes._build_session_list_item(
-        conv,
-        agent_names_by_id={},
-        grants=[],
-        user_id=user_id,
-        user_is_admin=False,
-        permissions_enabled=False,
-        pending_count=pending_count,
-        child_session_ids=child_session_ids,
-        comments_fingerprint=None,
-    )
-    return AgentTaskBoardSession(
-        title=row.title,
-        status=row.status,
-        pending_elicitations_count=row.pending_elicitations_count,
-        background_work_running=row.background_work_running,
-        blocked_on=row.blocked_on,
-        updated_at=row.updated_at,
-    )
 
 
 def _card(

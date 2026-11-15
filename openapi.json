@@ -1408,8 +1408,91 @@
         "title": "AgentTaskBoardPending",
         "type": "object"
       },
+      "AgentTaskBoardRole": {
+        "description": "A role that runs the caller's board, with its session and what waits for it.\n\n`session` is null when the role has no current session; a broker or\ncustodian gets a new one when it has work. `waiting` counts the events\nthat wait for the broker or a manager, or the clicks queued for the\ncustodian.",
+        "properties": {
+          "manager_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manager Id"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "session": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentTaskBoardSession"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "waiting": {
+            "format": "int64",
+            "title": "Waiting",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "role",
+          "title",
+          "manager_id",
+          "session_id",
+          "session",
+          "waiting"
+        ],
+        "title": "AgentTaskBoardRole",
+        "type": "object"
+      },
+      "AgentTaskBoardRoles": {
+        "description": "The roles that run the caller's board: the broker, the custodian, then each manager.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTaskBoardRole"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "object": {
+            "const": "agent.task.board.roles",
+            "default": "agent.task.board.roles",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "AgentTaskBoardRoles",
+        "type": "object"
+      },
       "AgentTaskBoardSession": {
-        "description": "The session a worker wraps, with the title and live state the session list shows.",
+        "description": "A worker's or a role's session, with the title and live state the session list shows.",
         "properties": {
           "background_work_running": {
             "title": "Background Work Running",
@@ -1963,6 +2046,44 @@
           "updated_at"
         ],
         "title": "AgentTaskResponse",
+        "type": "object"
+      },
+      "AgentTaskRoleWaitingDismissed": {
+        "description": "How much waiting work a dismissal removed from one of the caller's roles.",
+        "properties": {
+          "dismissed": {
+            "format": "int64",
+            "title": "Dismissed",
+            "type": "integer"
+          },
+          "manager_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manager Id"
+          },
+          "object": {
+            "const": "agent.task.role.waiting_dismissed",
+            "default": "agent.task.role.waiting_dismissed",
+            "title": "Object",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "manager_id",
+          "dismissed"
+        ],
+        "title": "AgentTaskRoleWaitingDismissed",
         "type": "object"
       },
       "AgentTaskSessionAdoption": {
@@ -16155,6 +16276,28 @@
         ]
       }
     },
+    "/v1/agent-tasks/board/roles": {
+      "get": {
+        "description": "List the roles that run the caller's board, each with its session and waiting work.\n\nThe broker and the custodian come first, then the managers in creation\norder. A manager whose session is gone or archived has no session.",
+        "operationId": "read_roles_v1_agent_tasks_board_roles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskBoardRoles"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Read Roles",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
     "/v1/agent-tasks/managers": {
       "get": {
         "description": "List the caller's managers in creation order, each with its live tasks.",
@@ -16302,6 +16445,49 @@
         ]
       }
     },
+    "/v1/agent-tasks/managers/{manager_id}/dismiss-waiting": {
+      "post": {
+        "description": "Dismiss the events routed to one of the caller's managers.\n\nA notice the manager is already handling goes on.",
+        "operationId": "dismiss_manager_waiting_v1_agent_tasks_managers__manager_id__dismiss_waiting_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "manager_id",
+            "required": true,
+            "schema": {
+              "title": "Manager Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskRoleWaitingDismissed"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dismiss Manager Waiting",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
     "/v1/agent-tasks/roles/profiles": {
       "get": {
         "description": "List the caller's role definitions, optionally of one kind, e.g. `manager`.",
@@ -16347,6 +16533,49 @@
           }
         },
         "summary": "List Role Profiles",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/roles/{role}/dismiss-waiting": {
+      "post": {
+        "description": "Dismiss the broker's unrouted events, or drop the custodian's queued clicks.\n\nA notice or click the role is already handling goes on.",
+        "operationId": "dismiss_role_waiting_v1_agent_tasks_roles__role__dismiss_waiting_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "title": "Role",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskRoleWaitingDismissed"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dismiss Role Waiting",
         "tags": [
           "agent-tasks"
         ]
