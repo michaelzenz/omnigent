@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { TimezonePicker } from "@/components/scheduled/TimezonePicker";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,6 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   type GlobalHubSettings,
@@ -23,9 +25,14 @@ import {
 } from "@/hooks/useGlobalHubSettings";
 import { useHosts } from "@/hooks/useHosts";
 import { useRecentWorkspaces } from "@/hooks/useRecentWorkspaces";
+import { localTimezone } from "@/lib/timezones";
 import { HostLabel } from "@/shell/HostLabel";
 import { WorkspacePathField } from "@/shell/WorkspacePathField";
 import { WorkspacePickerDialog } from "@/shell/WorkspacePickerDialog";
+
+const DEFAULT_SWEEP_TIME = "09:00";
+// The server accepts a time of day on a 24-hour clock.
+const SWEEP_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 interface GlobalHubSettingsDialogProps {
   open: boolean;
@@ -37,7 +44,8 @@ interface GlobalHubSettingsDialogProps {
 /**
  * Choose the host and workspace where the broker, custodian and managers run
  * their sessions. The server checks that the host is online and the folder
- * exists, and refuses the save otherwise.
+ * exists, and refuses the save otherwise. The form also sets when the
+ * custodian looks for sessions to clean up each day.
  */
 export function GlobalHubSettingsDialog({
   open,
@@ -66,15 +74,22 @@ function SettingsForm({
   const [hostId, setHostId] = useState(settings?.host_id ?? "");
   const [workspace, setWorkspace] = useState(settings?.workspace ?? "");
   const [reportNewSessions, setReportNewSessions] = useState(settings?.report_new_sessions ?? true);
+  const savedSweep = settings?.custodian_sweep;
+  const [sweepEnabled, setSweepEnabled] = useState(savedSweep?.enabled ?? true);
+  const [sweepTime, setSweepTime] = useState(savedSweep?.time ?? DEFAULT_SWEEP_TIME);
+  const [sweepTimezone, setSweepTimezone] = useState(() => savedSweep?.timezone ?? localTimezone());
   const [browsing, setBrowsing] = useState(false);
   const hosts = useHosts();
   const { recent, addRecent } = useRecentWorkspaces(hostId || null);
   const save = useSaveGlobalHubSettings();
   const path = workspace.trim();
+  const sweep = SWEEP_TIME.test(sweepTime)
+    ? { enabled: sweepEnabled, time: sweepTime, timezone: sweepTimezone }
+    : undefined;
 
   function submit(placement: Pick<GlobalHubSettingsUpdate, "host_id" | "workspace">): void {
     save.mutate(
-      { ...placement, report_new_sessions: reportNewSessions },
+      { ...placement, report_new_sessions: reportNewSessions, custodian_sweep: sweep },
       {
         onSuccess: (saved) => {
           if (saved.workspace !== null) addRecent(saved.workspace);
@@ -162,6 +177,40 @@ function SettingsForm({
           onCheckedChange={setReportNewSessions}
         />
       </div>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-muted-foreground">Session cleanup</span>
+            <span className="text-xs text-muted-foreground">
+              Every day at this time, the custodian looks for sessions that are safe to delete and
+              asks you on the board before it deletes any.
+            </span>
+          </div>
+          <Switch
+            aria-label="Daily session cleanup"
+            checked={sweepEnabled}
+            onCheckedChange={setSweepEnabled}
+          />
+        </div>
+        {sweepEnabled && (
+          <div className="flex items-center gap-2">
+            <Input
+              type="time"
+              aria-label="Cleanup time"
+              aria-invalid={sweep === undefined ? true : undefined}
+              value={sweepTime}
+              onChange={(event) => setSweepTime(event.target.value)}
+              className="w-32 text-xs"
+            />
+            <TimezonePicker
+              timezone={sweepTimezone}
+              onChange={setSweepTimezone}
+              className="min-w-0 flex-1 justify-between text-xs font-normal"
+              testId="globalhub-sweep-timezone"
+            />
+          </div>
+        )}
+      </div>
       {save.error && (
         <p role="alert" className="text-xs text-destructive" data-testid="globalhub-settings-error">
           {save.error.message}
@@ -179,7 +228,7 @@ function SettingsForm({
           </Button>
         )}
         <Button
-          disabled={!hostId || !path}
+          disabled={!hostId || !path || sweep === undefined}
           loading={save.isPending}
           onClick={() => submit({ host_id: hostId, workspace: path })}
           data-testid="globalhub-settings-save"

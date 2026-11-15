@@ -1,23 +1,17 @@
 // Inline recurrence controls share validation with the automation's ending settings.
 import { ScheduleSelect as Select } from "./ScheduleSelect";
 import { pickerTriggerClass } from "./pickerStyles";
-import { useId, useMemo, useState, type ReactNode } from "react";
-import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { useId, useState, type ReactNode } from "react";
+import { ChevronDownIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import {
-  Command,
-  CommandEmpty,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
 import { SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScheduleTimePicker } from "./ScheduleTimePicker";
+import { TimezonePicker } from "./TimezonePicker";
 import { useScheduleEscape } from "./useScheduleEscape";
 import { cn } from "@/lib/utils";
-import { commonTimezones, dateInTimezone, endOfDayInTimezone } from "@/lib/timezones";
+import { dateInTimezone, endOfDayInTimezone } from "@/lib/timezones";
 import {
   DEFAULT_SCHEDULE_MODEL,
   MAX_MINUTE_INTERVAL,
@@ -111,8 +105,6 @@ export function ScheduleFields({
     MIN_SUBHOUR_MINUTE_INTERVAL;
   // Both editors save the same minute recurrence; saved rules reopen as Interval.
   const [customMinutes, setCustomMinutes] = useState(false);
-  const [timezoneOpen, setTimezoneOpen] = useState(false);
-  const zones = useMemo(() => commonTimezones(timezone), [timezone]);
   const [dateInput, setDateInput] = useState<{
     value: string;
     until: string;
@@ -213,8 +205,6 @@ export function ScheduleFields({
     if (model.end?.type === "until")
       changeEndDate(activeDateInput?.value ?? (until ? dateInTimezone(until, timezone) : ""), next);
     onTimezoneChange(next);
-    setTimezoneOpen(false);
-    onSelectOpenChange?.(false);
   }
 
   const intervalInput = (
@@ -244,50 +234,15 @@ export function ScheduleFields({
     />
   );
   const timezonePicker = (
-    <Popover
-      modal
-      open={timezoneOpen}
-      onOpenChange={(open) => {
-        setTimezoneOpen(open);
-        onSelectOpenChange?.(open);
-      }}
-    >
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          className={cn(
-            "h-8 max-w-full min-w-0 shrink justify-between gap-2 border-0 bg-transparent px-0 font-normal text-muted-foreground shadow-none dark:bg-transparent",
-            pickerTriggerClass,
-          )}
-          role="combobox"
-          aria-label="Timezone"
-          aria-expanded={timezoneOpen}
-          data-testid="task-timezone-trigger"
-        >
-          <span className="truncate">{timezone.replaceAll("_", " ")}</span>
-          <ChevronDownIcon className="size-3.5 shrink-0" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="menu-surface w-[min(22rem,calc(100vw-2rem))] p-0">
-        <Command label="Search timezones">
-          <CommandInput placeholder="Search timezones…" aria-label="Search timezones" />
-          <CommandList>
-            <CommandEmpty>No timezone found.</CommandEmpty>
-            {zones.map((zone) => (
-              <CommandItem
-                key={zone}
-                value={zone}
-                keywords={[zone.replaceAll("_", " ")]}
-                onSelect={() => changeTimezone(zone)}
-              >
-                {zone.replaceAll("_", " ")}
-                <CheckIcon className={cn("ml-auto size-4", zone !== timezone && "invisible")} />
-              </CommandItem>
-            ))}
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+    <TimezonePicker
+      timezone={timezone}
+      onChange={changeTimezone}
+      onOpenChange={onSelectOpenChange}
+      className={cn(
+        "h-8 max-w-full min-w-0 shrink justify-between gap-2 border-0 bg-transparent px-0 font-normal text-muted-foreground shadow-none dark:bg-transparent",
+        pickerTriggerClass,
+      )}
+    />
   );
   const recurrenceFields = (
     <div className="flex min-w-0 flex-col gap-2" data-testid="schedule-fields">
