@@ -9,7 +9,7 @@ from sqlalchemy import ColumnElement, and_, asc, delete, select
 from sqlalchemy.orm import Session
 
 from omnigent.db.account_authority import require_active_account
-from omnigent.db.db_models import SqlRoleSchedule, SqlWatcher, current_workspace_id
+from omnigent.db.db_models import SqlRoleSchedule, SqlWatcher, SqlWatchItem, current_workspace_id
 from omnigent.db.utils import (
     get_or_create_engine,
     make_named_managed_session_maker,
@@ -168,7 +168,7 @@ class SqlAlchemyWatcherStore(WatcherStore):
         return run_write_transaction(self._session_immediate, "update_watcher", write)
 
     def delete(self, watcher_id: str, *, owner_user_id: str | None) -> Watcher | None:
-        """Delete the owner's watcher and its schedule in one transaction."""
+        """Delete the owner's watcher, its schedule and its tracked items in one transaction."""
 
         def write(session: Session) -> Watcher | None:
             require_active_account(session, owner_user_id)
@@ -181,6 +181,13 @@ class SqlAlchemyWatcherStore(WatcherStore):
                     SqlRoleSchedule.workspace_id == current_workspace_id(),
                     SqlRoleSchedule.owner_user_id == owner_user_id,
                     SqlRoleSchedule.role_key == deleted.role_key,
+                )
+            )
+            session.execute(
+                delete(SqlWatchItem).where(
+                    SqlWatchItem.workspace_id == current_workspace_id(),
+                    SqlWatchItem.owner_user_id == owner_user_id,
+                    SqlWatchItem.watcher_id == deleted.id,
                 )
             )
             session.delete(row)

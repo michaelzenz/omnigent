@@ -59,6 +59,54 @@ def _to_entity(row: SqlTaskEvent) -> TaskEvent:
     )
 
 
+def new_task_event_row(
+    event_id: str,
+    *,
+    owner_user_id: str | None,
+    event_type: str,
+    title: str,
+    now: int,
+    payload: dict[str, Any] | None = None,
+    source: str | None = None,
+    source_key: str | None = None,
+    source_offset: str | None = None,
+    source_session_id: str | None = None,
+    tags: Sequence[EventTag] = (),
+    task_id: str | None = None,
+    manager_id: str | None = None,
+) -> SqlTaskEvent:
+    """
+    Build a task event row: routed when ``manager_id`` is given, else unrouted.
+
+    Another store adds the row to its own transaction, e.g. to record an event
+    together with the change it reports.
+    """
+    routed = manager_id is not None
+    return SqlTaskEvent(
+        id=event_id,
+        owner_user_id=owner_user_id,
+        event_type=event_type,
+        title=title,
+        payload=json.dumps(payload, ensure_ascii=False) if payload else None,
+        source=source,
+        source_key=source_key,
+        source_offset=source_offset,
+        source_session_id=source_session_id,
+        tags=json.dumps(
+            [{"tag_type": tag.tag_type, "tag": tag.tag} for tag in tags],
+            ensure_ascii=False,
+        ),
+        state=_ROUTED if routed else _UNROUTED,
+        task_id=task_id,
+        manager_id=manager_id,
+        delivery_count=0,
+        created_at=now,
+        updated_at=None,
+        routed_at=now if routed else None,
+        processed_at=None,
+    )
+
+
 def _owned(owner_user_id: str | None) -> ColumnElement[bool]:
     return and_(
         SqlTaskEvent.workspace_id == current_workspace_id(),
@@ -113,32 +161,23 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
     ) -> TaskEvent:
         """Record an event: routed when ``manager_id`` is given, else unrouted."""
         now = now_epoch()
-        routed = manager_id is not None
 
         def write(session: Session) -> TaskEvent:
             require_active_account(session, owner_user_id)
-            row = SqlTaskEvent(
-                id=event_id,
+            row = new_task_event_row(
+                event_id,
                 owner_user_id=owner_user_id,
                 event_type=event_type,
                 title=title,
-                payload=json.dumps(payload, ensure_ascii=False) if payload else None,
+                now=now,
+                payload=payload,
                 source=source,
                 source_key=source_key,
                 source_offset=source_offset,
                 source_session_id=source_session_id,
-                tags=json.dumps(
-                    [{"tag_type": tag.tag_type, "tag": tag.tag} for tag in tags],
-                    ensure_ascii=False,
-                ),
-                state=_ROUTED if routed else _UNROUTED,
+                tags=tags,
                 task_id=task_id,
                 manager_id=manager_id,
-                delivery_count=0,
-                created_at=now,
-                updated_at=None,
-                routed_at=now if routed else None,
-                processed_at=None,
             )
             session.add(row)
             return _to_entity(row)

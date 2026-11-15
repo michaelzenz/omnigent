@@ -5,6 +5,8 @@ from __future__ import annotations
 import uuid
 
 from omnigent.stores.role_schedule_store.sqlalchemy_store import SqlAlchemyRoleScheduleStore
+from omnigent.stores.watch_item_store import WatchObservation
+from omnigent.stores.watch_item_store.sqlalchemy_store import SqlAlchemyWatchItemStore
 from omnigent.stores.watcher_store.sqlalchemy_store import SqlAlchemyWatcherStore
 
 ALICE = "alice@example.com"
@@ -63,14 +65,18 @@ def test_an_update_changes_only_the_fields_it_names(db_uri: str) -> None:
     assert store.get_by_conversation_id(SESSION_ID, owner_user_id=BOB) is None
 
 
-def test_delete_removes_the_watcher_and_only_its_own_schedule(db_uri: str) -> None:
+def test_delete_removes_the_watcher_and_only_its_own_schedule_and_items(db_uri: str) -> None:
     store = SqlAlchemyWatcherStore(db_uri)
     schedules = SqlAlchemyRoleScheduleStore(db_uri)
+    items = SqlAlchemyWatchItemStore(db_uri)
     watcher = store.create(uuid.uuid4().hex, owner_user_id=ALICE, name="PR watcher")
     other = store.create(uuid.uuid4().hex, owner_user_id=ALICE, name="Ticket watcher")
     store.update(watcher.id, owner_user_id=ALICE, conversation_id=SESSION_ID)
     for role_key in (watcher.role_key, other.role_key, "custodian"):
         schedules.save(role_key, owner_user_id=ALICE, rrule=HOURLY, timezone="UTC", next_run_at=1)
+    seen = [WatchObservation(source="github", source_key="https://example.com/1", offsets={})]
+    for each in (watcher, other):
+        items.observe(each, seen, session_id=None, now=1)
 
     refused = store.delete(watcher.id, owner_user_id=BOB)
     deleted = store.delete(watcher.id, owner_user_id=ALICE)
@@ -83,3 +89,8 @@ def test_delete_removes_the_watcher_and_only_its_own_schedule(db_uri: str) -> No
         schedules.get(role_key, owner_user_id=ALICE) is not None
         for role_key in (watcher.role_key, other.role_key, "custodian")
     ] == [False, True, True]
+    counts = [
+        items.count(each.id, owner_user_id=ALICE, statuses=("active", "done"))
+        for each in (watcher, other)
+    ]
+    assert counts == [0, 1]

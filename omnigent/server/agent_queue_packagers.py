@@ -12,6 +12,7 @@ import logging
 import uuid
 from collections import defaultdict
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfoNotFoundError
 
@@ -44,6 +45,8 @@ from omnigent.entities import (
     RoleSchedule,
     Task,
     TaskEvent,
+    Watcher,
+    WatchItem,
 )
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.agent_task_delivery import SessionSendDeps, session_has_live_turn
@@ -76,9 +79,20 @@ _CUSTODIAN_RUN_PROMPT = (
 )
 _WATCHER_RUN_PROMPT = (
     "[System: scheduled watcher run]\n"
-    "Follow your manual: check what it says to watch, and report what changed. "
-    "Do not start sessions."
+    "Follow your manual: check what it says to watch.\n"
+    '1. Report the current state of each item with watch_items action "observe". The '
+    "server compares it with your last run and reports each change; do not report "
+    "changes any other way.\n"
+    '2. Mark finished items with watch_items action "done".\n'
+    "Do not start sessions or change anything."
 )
+# The run message shows the items most in need of a check; the watcher pages
+# through the rest with its tool. About 5,000 tokens at most, so a large
+# tracker cannot crowd out the manual.
+_RUN_ITEMS_SHOWN = 50
+_RUN_ITEMS_MAX_CHARS = 20_000
+# A done item stays this long, so a watcher that finds it again does not report it as new.
+_DONE_WATCH_ITEMS_KEPT_S = 30 * 24 * 60 * 60
 # A run message not yet handled covers the next run too.
 _UNHANDLED_STATES = ("queued", "sending", "sent")
 
@@ -176,7 +190,7 @@ class RoleSchedulePackager:
             await asyncio.to_thread(settings.get_globalhub_placement, user_id=owner) is None
         ):
             return
-        session = await self._session_for(schedule)
+        session = await self._session_for(schedule, now)
         if session is None:
             return
         unhandled = await asyncio.to_thread(
@@ -199,7 +213,7 @@ class RoleSchedulePackager:
             payload={"role_key": schedule.role_key},
         )
 
-    async def _session_for(self, schedule: RoleSchedule) -> Conversation | None:
+    async def _session_for(self, schedule: RoleSchedule, now: int) -> Conversation | None:
         """Return the session that gets the schedule's run, or ``None`` when its role is gone."""
         owner = schedule.owner_user_id
         if schedule.role_key.startswith(WATCHER_ROLE_KEY_PREFIX):
@@ -216,6 +230,12 @@ class RoleSchedulePackager:
                     self._board.role_schedules.delete, schedule.role_key, owner_user_id=owner
                 )
                 return None
+            await asyncio.to_thread(
+                self._board.watch_items.purge_done,
+                watcher_id,
+                owner_user_id=owner,
+                before=now - _DONE_WATCH_ITEMS_KEPT_S,
+            )
             return session
         role = builtin_role(schedule.role_key)
         if role is None or not role.singleton:
@@ -427,6 +447,8 @@ class ScheduledRunWriter:
         """
         Return the run message for the role the item names. Blocking.
 
+        A watcher's message lists its active items with the offsets it saw last.
+
         :returns: The message, or ``None`` for a role without one or a watcher
             that was deleted after the run was queued.
         """
@@ -435,9 +457,38 @@ class ScheduledRunWriter:
             return _CUSTODIAN_RUN_PROMPT
         if isinstance(role_key, str) and role_key.startswith(WATCHER_ROLE_KEY_PREFIX):
             watcher_id = role_key.removeprefix(WATCHER_ROLE_KEY_PREFIX)
-            if self._board.watchers.get(watcher_id, owner_user_id=item.owner_user_id) is not None:
-                return _WATCHER_RUN_PROMPT
+            watcher = self._board.watchers.get(watcher_id, owner_user_id=item.owner_user_id)
+            if watcher is not None:
+                return f"{_WATCHER_RUN_PROMPT}\n\n{self._tracked_items_text(watcher)}"
         return None
+
+    def _tracked_items_text(self, watcher: Watcher) -> str:
+        """Write the ``[Tracked items]`` section: active items, least recently checked first."""
+        owner = watcher.owner_user_id
+        items = self._board.watch_items.stalest(
+            watcher.id, owner_user_id=owner, limit=_RUN_ITEMS_SHOWN
+        )
+        lines = ["[Tracked items] (the least recently checked first)"]
+        used = 0
+        for index, tracked in enumerate(items):
+            line = _watch_item_line(tracked)
+            if index and used + len(line) > _RUN_ITEMS_MAX_CHARS:
+                break
+            lines.append(line)
+            used += len(line) + 1
+        shown = len(lines) - 1
+        total = (
+            self._board.watch_items.count(watcher.id, owner_user_id=owner)
+            if len(items) == _RUN_ITEMS_SHOWN or shown < len(items)
+            else len(items)
+        )
+        if not items:
+            lines.append("(none yet)")
+        elif total > shown:
+            lines.append(
+                f'… and {total - shown} more; page through them with watch_items action "list".'
+            )
+        return "\n".join(lines)
 
 
 def write_notice_click(item: AgentQueueItem) -> str:
@@ -575,3 +626,14 @@ def _roster_text(tasks: Sequence[Task]) -> str:
 
 def _task_line(task: Task) -> str:
     return f"{task.id} — {task.title} ({task.state})"
+
+
+def _watch_item_line(item: WatchItem) -> str:
+    title = f' "{item.title}"' if item.title else ""
+    task = f" task {item.task_id}" if item.task_id else ""
+    offsets = ", ".join(f"{name}={value}" for name, value in item.offsets.items())
+    checked = datetime.fromtimestamp(item.checked_at, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
+    return (
+        f"- {item.source} {item.source_key}{title}{task}: "
+        f"{offsets or 'no offsets'} (checked {checked})"
+    )

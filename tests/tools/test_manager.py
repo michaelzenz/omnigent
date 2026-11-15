@@ -1797,7 +1797,7 @@ def test_allowed_builtin_tools_drops_unnamed_builtins_but_not_client_tools(
 
 
 @pytest.mark.parametrize(
-    "tool_name", ["sys_session_delete", "pmv2_api", "pmv2_read", "system_notice"]
+    "tool_name", ["sys_session_delete", "pmv2_api", "pmv2_read", "system_notice", "watch_items"]
 )
 def test_opt_in_builtins_register_only_when_declared(tool_name: str) -> None:
     """Deleting sessions and changing the GlobalHub board need an explicit declaration."""

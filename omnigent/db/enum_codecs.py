@@ -196,6 +196,12 @@ AGENT_QUEUE_ITEM_STATE: dict[str, int] = {
     "done": 4,
 }
 
+# Items a GlobalHub watcher tracks: checked on each run until it marks them done.
+WATCH_ITEM_STATUS: dict[str, int] = {
+    "active": 1,
+    "done": 2,
+}
+
 
 def _assert_item_type_codes_cover_data_classes() -> None:
     """
@@ -457,6 +463,16 @@ def encode_agent_queue_item_state(name: str) -> int:
 def decode_agent_queue_item_state(code: int) -> str:
     """Decode an ``agent_queue_items.state`` int code to its name."""
     return _decode(AGENT_QUEUE_ITEM_STATE, code, field="agent_queue_items.state")
+
+
+def encode_watch_item_status(name: str) -> int:
+    """Encode a ``watch_items.status`` name to its int code."""
+    return _encode(WATCH_ITEM_STATUS, name, field="watch_items.status")
+
+
+def decode_watch_item_status(code: int) -> str:
+    """Decode a ``watch_items.status`` int code to its name."""
+    return _decode(WATCH_ITEM_STATUS, code, field="watch_items.status")
 
 
 def encode_scheduled_task_execution_target(name: str) -> int:

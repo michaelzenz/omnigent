@@ -1410,6 +1410,85 @@ class SqlWatcher(OmnigentBase):
     )
 
 
+class SqlWatchItem(OmnigentBase):
+    """
+    SQLAlchemy model for the ``watch_items`` table: what each GlobalHub watcher tracks.
+
+    Each row is one thing a watcher checks on its runs, e.g. a pull request,
+    with the named offsets the watcher saw last. A watcher tracks a thing once
+    per source and source key. Ownership is stamped on the row; there are no
+    foreign keys (Rule R032).
+
+    :param id: Uuid16 primary key (bare 32-char hex in Python).
+    :param owner_user_id: Owning user (the watcher's owner), or ``None`` in
+        single-user mode.
+    :param watcher_id: The watcher that tracks it.
+    :param source: The system, e.g. ``"github"``.
+    :param source_key: What is tracked, e.g. a pull request URL.
+    :param title: A short label for events and the watcher card; may be empty.
+    :param offsets: JSON object of the values the watcher saw last, by name.
+    :param status: A ``WATCH_ITEM_STATUS`` code.
+    :param task_id: The task the item belongs to, or ``None``.
+    :param version: How many changes the item had; names its change events.
+    :param created_at: Unix epoch seconds at row creation.
+    :param checked_at: When the watcher last observed it.
+    :param changed_at: When an offset last changed, or ``None`` before the first change.
+    :param done_at: When the watcher marked it done, or ``None``.
+    """
+
+    __tablename__ = "watch_items"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    watcher_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    # MySQL rejects a server default on TEXT, so the store always writes it.
+    offsets: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    checked_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    changed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    done_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("status IN (1, 2)", name="ck_watch_items_status"),
+        # A watcher tracks a thing once.
+        Index(
+            "ix_watch_items_key", "workspace_id", "watcher_id", "source", "source_key", unique=True
+        ),
+        # A watcher's items in a status, the least recently checked first, for its runs.
+        Index(
+            "ix_watch_items_watcher_checked",
+            "workspace_id",
+            "watcher_id",
+            "status",
+            "checked_at",
+            "id",
+        ),
+        # A watcher's items in a status, in tracking order, for stable pages.
+        Index(
+            "ix_watch_items_watcher_created",
+            "workspace_id",
+            "watcher_id",
+            "status",
+            "created_at",
+            "id",
+        ),
+    )
+
+
 class SqlConversation(ConversationBase):
     """
     SQLAlchemy model for the ``conversations`` table.

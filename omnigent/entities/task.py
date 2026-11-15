@@ -1,6 +1,6 @@
 """GlobalHub board entities, persisted in the ``tasks``, ``managers``, ``workers``,
 ``task_events``, ``fyi_clusters``, ``task_assets``, ``system_notices``,
-``agent_queue_items``, ``role_schedules`` and ``watchers`` tables.
+``agent_queue_items``, ``role_schedules``, ``watchers`` and ``watch_items`` tables.
 
 A :class:`Task` is a long-lived unit of work on one user's GlobalHub board,
 owned by one :class:`Manager`. Each :class:`Worker` attaches a session that
@@ -8,7 +8,7 @@ works on the task, and each :class:`TaskAsset` is a link the task carries. A
 :class:`TaskEvent` is a signal the broker routes to a manager, which can file
 it into an :class:`FyiCluster` for the user. A :class:`SystemNotice` is pinned
 on the board for the user to act on. A :class:`Watcher` runs on its schedule
-and reports what changed in the things it watches.
+and reports what changed in the things it watches, each a :class:`WatchItem`.
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ from typing import Any
 LIVE_TASK_STATES = ("active", "idle", "agent-resolved")
 #: Starts a watcher's role key, which names its schedule, e.g. ``"watcher:<id>"``.
 WATCHER_ROLE_KEY_PREFIX = "watcher:"
+#: The most offsets one tracked item keeps.
+MAX_WATCH_ITEM_OFFSETS = 10
 
 
 @dataclass
@@ -404,3 +406,42 @@ class Watcher:
     def role_key(self) -> str:
         """The key of the watcher's schedule, e.g. ``"watcher:<id>"``."""
         return f"{WATCHER_ROLE_KEY_PREFIX}{self.id}"
+
+
+@dataclass
+class WatchItem:
+    """
+    One thing a watcher tracks, e.g. a pull request, with what it saw last.
+
+    :param id: UUID primary key (bare 32-char hex string, no dashes).
+    :param owner_user_id: Owning user (the watcher's owner), or ``None`` in
+        single-user mode.
+    :param watcher_id: The watcher that tracks it.
+    :param source: The system, e.g. ``"github"``.
+    :param source_key: What is tracked, e.g. a pull request URL.
+    :param title: A short label for events and the watcher card; may be empty.
+    :param offsets: The values the watcher saw last, by name, e.g.
+        ``{"state": "open", "checks": "failure@abc123"}``.
+    :param status: ``"active"`` or ``"done"``.
+    :param created_at: Unix epoch seconds at row creation.
+    :param checked_at: When the watcher last observed it.
+    :param task_id: The task it belongs to, or ``None``.
+    :param version: How many changes it had.
+    :param changed_at: When an offset last changed, or ``None`` before the first change.
+    :param done_at: When the watcher marked it done, or ``None``.
+    """
+
+    id: str
+    owner_user_id: str | None
+    watcher_id: str
+    source: str
+    source_key: str
+    title: str
+    offsets: dict[str, str]
+    status: str
+    created_at: int
+    checked_at: int
+    task_id: str | None = None
+    version: int = 0
+    changed_at: int | None = None
+    done_at: int | None = None

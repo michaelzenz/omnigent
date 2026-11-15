@@ -131,6 +131,7 @@ from omnigent.tools.builtins.timer import (
 from omnigent.tools.builtins.ui import OpenFileRequest, UiOpenFileTool
 from omnigent.tools.builtins.update_comment import UpdateCommentTool
 from omnigent.tools.builtins.upload_file import UploadFileTool, safe_resolve
+from omnigent.tools.builtins.watch_items import WatchItemsTool
 from omnigent.util.reasoning_effort import validate_effort_for_harness
 from omnigent.util.session_lifecycle import (
     CLOSED_LABEL_KEY,
@@ -355,6 +356,8 @@ _SESSION_DELETE_TOOLS = frozenset({SysSessionDeleteTool.name()})
 _PMV2_API_TOOLS = frozenset({Pmv2ApiTool.name(), Pmv2ReadTool.name()})
 # Opt-in publisher of the GlobalHub board's system notice, called as the calling session.
 _SYSTEM_NOTICE_TOOLS = frozenset({SystemNoticeTool.name()})
+# Opt-in tracker of a GlobalHub watcher, called as the watcher's session.
+_WATCH_ITEMS_TOOLS = frozenset({WatchItemsTool.name()})
 _UI_TOOLS = frozenset({UiOpenFileTool.name()})
 
 # The title bound the rename tool advertises to the LLM — read once from the
@@ -944,6 +947,7 @@ _ALL_LOCAL_TOOLS = (
     | _SESSION_DELETE_TOOLS
     | _PMV2_API_TOOLS
     | _SYSTEM_NOTICE_TOOLS
+    | _WATCH_ITEMS_TOOLS
     | _UI_TOOLS
     | _WEB_FETCH_TOOLS
     | _WEB_SEARCH_TOOLS
@@ -7429,6 +7433,10 @@ async def execute_tool(
             from omnigent.runner.system_notice import execute_system_notice
 
             output = await execute_system_notice(args, server_client, conversation_id)
+        elif tool_name in _WATCH_ITEMS_TOOLS:
+            from omnigent.runner.watch_items import execute_watch_items
+
+            output = await execute_watch_items(args, server_client, conversation_id)
         elif tool_name in _SESSION_CREATE_TOOLS:
             output = await _execute_session_create(
                 args,

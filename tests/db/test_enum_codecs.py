@@ -61,6 +61,7 @@ _CODECS = [
         ec.encode_agent_queue_item_state,
         ec.decode_agent_queue_item_state,
     ),
+    (ec.WATCH_ITEM_STATUS, ec.encode_watch_item_status, ec.decode_watch_item_status),
 ]
 
 
@@ -156,5 +157,11 @@ def test_shipped_codes_are_stable() -> None:
     assert ec.FYI_CLUSTER_STATE == {"pending": 1, "dismissed": 2}
     assert ec.SYSTEM_NOTICE_STATE == {"active": 1, "resolved": 2}
     assert ec.SYSTEM_NOTICE_BODY_KIND == {"markdown": 1, "html": 2}
-    assert ec.AGENT_QUEUE_ITEM_KIND == {"events": 1, "notice_click": 2, "spawn_managers": 3}
+    assert ec.AGENT_QUEUE_ITEM_KIND == {
+        "events": 1,
+        "notice_click": 2,
+        "spawn_managers": 3,
+        "scheduled_run": 4,
+    }
     assert ec.AGENT_QUEUE_ITEM_STATE == {"queued": 1, "sending": 2, "sent": 3, "done": 4}
+    assert ec.WATCH_ITEM_STATUS == {"active": 1, "done": 2}

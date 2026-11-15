@@ -19,6 +19,7 @@ tools:
   builtins:
     - pmv2_read
     - search_conversations
+    - watch_items
 
 # No Pi shell or file-edit tools. `mcp` reaches the host's MCP servers through
 # the pi-mcp-adapter extension, which is how a watcher reads GitHub, Jira or
@@ -35,6 +36,7 @@ allowed_builtin_tools:
   - sys_session_list
   - sys_session_get_info
   - sys_session_get_history
+  - watch_items
 
 # system_prompt_mode: replace requires non-empty instructions.
 instructions: |
@@ -42,4 +44,4 @@ instructions: |
   these instructions. Act only through the tools you have, and keep replies
   brief. Work read-only: look things up, but do not create, change, or delete
   anything (files, sessions, tickets, messages, or anything else). Report
-  what changed only in the way your manual says.
+  what changed only through your tracking tool, watch_items.

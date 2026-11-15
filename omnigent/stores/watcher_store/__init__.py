@@ -88,7 +88,7 @@ class WatcherStore(ABC):
     @abstractmethod
     def delete(self, watcher_id: str, *, owner_user_id: str | None) -> Watcher | None:
         """
-        Delete the owner's watcher and its schedule in one transaction.
+        Delete the owner's watcher, its schedule and its tracked items in one transaction.
 
         :returns: The deleted watcher, or ``None`` when missing or someone else's.
         """

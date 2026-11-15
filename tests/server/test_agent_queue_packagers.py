@@ -28,6 +28,7 @@ from omnigent.agent_tasks.roles import (
 )
 from omnigent.db.db_models import workspace_scope
 from omnigent.entities import AgentQueueItem, EventTag
+from omnigent.server import agent_queue_packagers
 from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher
 from omnigent.server.agent_queue_packagers import (
     BrokerPackager,
@@ -45,6 +46,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConver
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
 from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
+from omnigent.stores.watch_item_store import WatchObservation
 
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
@@ -407,11 +409,62 @@ async def test_the_custodian_and_a_watcher_due_together_each_get_one_run_in_thei
     writer = ScheduledRunWriter(board=board)
     texts = {item.payload["role_key"]: writer.write(item) for item in items}
     assert (texts[watcher.role_key] or "").startswith("[System: scheduled watcher run]\n")
+    no_items = "[Tracked items] (the least recently checked first)\n(none yet)"
+    assert (texts[watcher.role_key] or "").endswith(no_items)
     assert (texts[CUSTODIAN_ROLE_KEY] or "").startswith("[System: session cleanup]\n")
     # A run queued for a watcher that was deleted has nothing left to say.
     board.watchers.delete(watcher.id, owner_user_id=ALICE)
     watcher_item = next(item for item in items if item.payload["role_key"] == watcher.role_key)
     assert writer.write(watcher_item) is None
+
+
+async def test_a_watcher_run_lists_its_items_and_drops_items_done_long_ago(
+    board: BoardStores, sessions: RoleSessionStores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = 1_800_000_000
+    day = 86_400
+    watcher = board.watchers.create(uuid.uuid4().hex, owner_user_id=ALICE, name="PR watcher")
+    for n in range(3):
+        seen = WatchObservation(
+            source="github",
+            source_key=f"https://example.com/pr/{n}",
+            offsets={"state": "open"},
+            title=f"PR {n}",
+        )
+        # 40 days ago, an hour apart, so the run lists them in this order.
+        board.watch_items.observe(watcher, [seen], session_id=None, now=now - 40 * day + n * 3_600)
+    board.watch_items.finish(
+        watcher.id,
+        [("github", "https://example.com/pr/0")],
+        owner_user_id=ALICE,
+        now=now - 31 * day,
+    )
+    board.role_schedules.save(
+        watcher.role_key, owner_user_id=ALICE, rrule="FREQ=HOURLY", timezone="UTC", next_run_at=now
+    )
+
+    await RoleSchedulePackager(board=board, sessions=sessions).package(now)
+
+    (item,) = board.queue.list(owner_user_id=ALICE)
+    text = ScheduledRunWriter(board=board).write(item) or ""
+    monkeypatch.setattr(agent_queue_packagers, "_RUN_ITEMS_SHOWN", 1)
+    short = ScheduledRunWriter(board=board).write(item) or ""
+    everything = board.watch_items.count(
+        watcher.id, owner_user_id=ALICE, statuses=("active", "done")
+    )
+    assert everything == 2
+    pr_lines = [
+        '- github https://example.com/pr/1 "PR 1": state=open (checked 2026-12-06 09:00 UTC)',
+        '- github https://example.com/pr/2 "PR 2": state=open (checked 2026-12-06 10:00 UTC)',
+    ]
+    assert text.splitlines()[-3:] == [
+        "[Tracked items] (the least recently checked first)",
+        *pr_lines,
+    ]
+    assert short.splitlines()[-2:] == [
+        pr_lines[0],
+        '… and 1 more; page through them with watch_items action "list".',
+    ]
 
 
 async def test_the_schedule_of_a_deleted_watcher_goes_away_without_a_run(

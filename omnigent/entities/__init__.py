@@ -44,6 +44,7 @@ from omnigent.entities.session_resources import (
 )
 from omnigent.entities.task import (
     LIVE_TASK_STATES,
+    MAX_WATCH_ITEM_OFFSETS,
     WATCHER_ROLE_KEY_PREFIX,
     AgentQueueItem,
     EventTag,
@@ -55,6 +56,7 @@ from omnigent.entities.task import (
     TaskAsset,
     TaskEvent,
     Watcher,
+    WatchItem,
     Worker,
 )
 
@@ -62,6 +64,7 @@ __all__ = [
     "DEFAULT_ENVIRONMENT_ID",
     "DEFAULT_GENERATED_TITLE_MAX_CHARS",
     "LIVE_TASK_STATES",
+    "MAX_WATCH_ITEM_OFFSETS",
     "NON_CONTENT_ITEM_TYPES",
     "USER_SESSION_TITLE_MAX_CHARS",
     "WATCHER_ROLE_KEY_PREFIX",
@@ -108,6 +111,7 @@ __all__ = [
     "TaskAsset",
     "TaskEvent",
     "TerminalCommandData",
+    "WatchItem",
     "Watcher",
     "Worker",
     "filter_resources_by_type",

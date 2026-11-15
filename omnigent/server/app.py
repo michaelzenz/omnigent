@@ -145,6 +145,7 @@ from omnigent.server.routes.agent_task_roles import create_agent_task_roles_rout
 from omnigent.server.routes.agent_task_system_notice import (
     create_agent_task_system_notice_router,
 )
+from omnigent.server.routes.agent_task_watch_items import create_agent_task_watch_items_router
 from omnigent.server.routes.agent_task_watchers import create_agent_task_watchers_router
 from omnigent.server.routes.agent_task_workers import create_agent_task_workers_router
 from omnigent.server.routes.agent_tasks import create_agent_tasks_router
@@ -4250,6 +4251,13 @@ def create_app(
             )
             app.include_router(
                 create_agent_task_watchers_router(
+                    board_stores, role_session_stores, auth_provider
+                ),
+                prefix="/v1",
+                tags=["agent-tasks"],
+            )
+            app.include_router(
+                create_agent_task_watch_items_router(
                     board_stores, role_session_stores, auth_provider
                 ),
                 prefix="/v1",

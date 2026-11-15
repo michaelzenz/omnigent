@@ -46,6 +46,7 @@ from omnigent.entities import (
     TerminalCommandData,
 )
 from omnigent.entities.conversation import StartupInputOptions
+from omnigent.entities.task import MAX_WATCH_ITEM_OFFSETS
 from omnigent.inner.native_attachments import reject_authored_framework_notices
 from omnigent.onboarding.sandboxes.profiles import SandboxProfileSummary
 from omnigent.server.server_config import (
@@ -6056,6 +6057,169 @@ class GlobalHubWatcherSessionResponse(BaseModel):
     watcher_id: str
     session_id: str
     created: bool
+
+
+_WatchItemSource = Annotated[str, Field(max_length=64), AfterValidator(_strip_required_text)]
+_WatchItemSourceKey = Annotated[str, Field(max_length=512), AfterValidator(_strip_required_text)]
+WatchItemStatusFilter = Literal["active", "done", "all"]
+_WATCH_ITEM_OFFSET_NAME_MAX_CHARS = 64
+_WATCH_ITEM_OFFSET_VALUE_MAX_CHARS = 256
+_WATCH_ITEM_DETAILS_MAX_CHARS = 8_000
+_WATCH_ITEMS_PER_CALL = 100
+
+
+class WatchItemObservation(BaseModel):
+    """What the calling watcher sees now for one item, e.g. a pull request.
+
+    ``source`` names the system and ``source_key`` the item; together they
+    identify it. ``offsets`` maps a name to the value to compare with the last
+    run, and null removes the name; names left out keep their value. A null
+    ``title`` or ``task_id`` keeps the saved one. ``summary`` and ``details``
+    explain a change in its event. ``announce`` records an event for a new item.
+    """
+
+    source: _WatchItemSource
+    source_key: _WatchItemSourceKey
+    offsets: dict[str, str | None] = Field(default_factory=dict)
+    title: str | None = Field(default=None, max_length=256)
+    task_id: str | None = Field(default=None, max_length=64)
+    summary: str | None = Field(default=None, max_length=512)
+    details: dict[str, Any] | None = None
+    announce: bool = False
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("offsets")
+    @classmethod
+    def _offsets_fit(cls, offsets: dict[str, str | None]) -> dict[str, str | None]:
+        if len(offsets) > MAX_WATCH_ITEM_OFFSETS:
+            raise ValueError(f"an item keeps at most {MAX_WATCH_ITEM_OFFSETS} offsets")
+        for name, value in offsets.items():
+            if not name.strip() or len(name) > _WATCH_ITEM_OFFSET_NAME_MAX_CHARS:
+                raise ValueError(
+                    f"an offset name has 1 to {_WATCH_ITEM_OFFSET_NAME_MAX_CHARS} characters"
+                )
+            if value is not None and len(value) > _WATCH_ITEM_OFFSET_VALUE_MAX_CHARS:
+                raise ValueError(
+                    f"an offset value has at most {_WATCH_ITEM_OFFSET_VALUE_MAX_CHARS} characters"
+                )
+        return offsets
+
+    @field_validator("details")
+    @classmethod
+    def _details_fit(cls, details: dict[str, Any] | None) -> dict[str, Any] | None:
+        if details is not None and (
+            len(json.dumps(details, ensure_ascii=False)) > _WATCH_ITEM_DETAILS_MAX_CHARS
+        ):
+            raise ValueError(
+                f"details are at most {_WATCH_ITEM_DETAILS_MAX_CHARS} characters of JSON"
+            )
+        return details
+
+
+class ObserveWatchItemsRequest(BaseModel):
+    """What the calling watcher sees now, at most once per item in a call."""
+
+    items: list[WatchItemObservation] = Field(..., min_length=1, max_length=_WATCH_ITEMS_PER_CALL)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _each_item_once(self) -> Self:
+        keys = [(item.source, item.source_key) for item in self.items]
+        if len(set(keys)) != len(keys):
+            raise ValueError("observe each source and source_key once per call")
+        return self
+
+
+class WatchItemChange(BaseModel):
+    """One offset that changed, with its values before and after; null when absent."""
+
+    offset: str
+    before: str | None
+    after: str | None
+
+
+class WatchItemObservationResult(BaseModel):
+    """What an observation found for one item.
+
+    ``outcome`` is ``"new"`` for an item the watcher had not tracked,
+    ``"changed"`` when an offset changed, else ``"unchanged"``. ``event_id``
+    is the task event recorded for the change, or for an announced new item.
+    """
+
+    source: str
+    source_key: str
+    outcome: Literal["new", "changed", "unchanged"]
+    changes: list[WatchItemChange]
+    event_id: str | None
+
+
+class ObserveWatchItemsResponse(BaseModel):
+    """One result per observed item, in the order of the request."""
+
+    object: Literal["list"] = "list"
+    data: list[WatchItemObservationResult]
+
+
+class WatchItemKey(BaseModel):
+    """One item of the calling watcher, by its source and source key."""
+
+    source: _WatchItemSource
+    source_key: _WatchItemSourceKey
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class FinishWatchItemsRequest(BaseModel):
+    """Items the calling watcher stops checking, e.g. merged pull requests."""
+
+    items: list[WatchItemKey] = Field(..., min_length=1, max_length=_WATCH_ITEMS_PER_CALL)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class FinishWatchItemsResponse(BaseModel):
+    """How many items are now done; ``missing`` lists the keys the watcher does not track."""
+
+    done: int
+    missing: list[WatchItemKey]
+
+
+class WatchItemResponse(BaseModel):
+    """One item a watcher tracks, with the offsets it saw last.
+
+    ``changed_at`` is null before the first change, and ``done_at`` while the
+    item is active. A done item is deleted 30 days after it was marked done.
+    """
+
+    object: Literal["agent.task.watch_item"] = "agent.task.watch_item"
+    id: str
+    source: str
+    source_key: str
+    title: str
+    offsets: dict[str, str]
+    status: Literal["active", "done"]
+    task_id: str | None
+    created_at: int
+    checked_at: int
+    changed_at: int | None
+    done_at: int | None
+
+
+class WatchItemList(BaseModel):
+    """A page of a watcher's items, in the order the watcher started to track them.
+
+    While ``has_more`` is true, pass ``last_id`` as ``after`` for the next
+    page. ``total`` counts all of the watcher's items in the listed statuses.
+    """
+
+    object: Literal["list"] = "list"
+    data: list[WatchItemResponse]
+    first_id: str | None
+    last_id: str | None
+    has_more: bool
+    total: int
 
 
 AgentTaskState = Literal["active", "idle", "agent-resolved", "archived"]
