@@ -26,7 +26,7 @@ from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissi
 ROUTE = "/v1/settings/session-title-instructions"
 GLOBALHUB_ROUTE = "/v1/settings/globalhub"
 GLOBALHUB_UNSET = {"host_id": None, "workspace": None}
-GLOBALHUB_DEFAULTS = {**GLOBALHUB_UNSET, "report_new_sessions": True}
+GLOBALHUB_DEFAULTS = {**GLOBALHUB_UNSET, "report_new_sessions": True, "custodian_sweep": None}
 ROLE_PROFILES_ROUTE = "/v1/agent-tasks/roles/profiles"
 MANAGER_PROFILE_ROUTE = "/v1/agent-tasks/roles/manager:default/profile"
 CUSTODIAN_SESSION_ROUTE = "/v1/agent-tasks/roles/custodian/session"
@@ -141,6 +141,7 @@ async def test_globalhub_round_trip_stores_canonical_workspace(
         "host_id": "host_alice",
         "workspace": "/Users/alice/globalhub",
         "report_new_sessions": False,
+        "custodian_sweep": None,
     }
     assert saved.json() == placed
     assert (await client.get(GLOBALHUB_ROUTE)).json() == placed
@@ -151,10 +152,41 @@ async def test_globalhub_round_trip_stores_canonical_workspace(
 
     # A request without the switch leaves it as it is.
     cleared = await client.put(GLOBALHUB_ROUTE, json=GLOBALHUB_UNSET)
-    unset_and_off = {**GLOBALHUB_UNSET, "report_new_sessions": False}
+    unset_and_off = {**GLOBALHUB_DEFAULTS, "report_new_sessions": False}
     assert cleared.json() == unset_and_off
     assert (await client.get(GLOBALHUB_ROUTE)).json() == unset_and_off
     assert len(validations) == 1
+
+
+async def test_globalhub_saves_the_daily_cleanup_and_refuses_an_unknown_timezone(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(user_settings, "now_epoch", lambda: 1_800_000_000)
+    sweep = {"enabled": True, "time": "18:30", "timezone": "Europe/Berlin"}
+
+    saved = await client.put(GLOBALHUB_ROUTE, json={**GLOBALHUB_UNSET, "custodian_sweep": sweep})
+    off = await client.put(
+        GLOBALHUB_ROUTE, json={**GLOBALHUB_UNSET, "custodian_sweep": {**sweep, "enabled": False}}
+    )
+    refused = await client.put(
+        GLOBALHUB_ROUTE,
+        json={
+            **GLOBALHUB_UNSET,
+            "report_new_sessions": False,
+            "custodian_sweep": {**sweep, "timezone": "Mars/Olympus_Mons"},
+        },
+    )
+
+    # Now is 08:00 UTC on 2027-01-15, a winter day, so 18:30 in Berlin is 17:30 UTC.
+    assert saved.json()["custodian_sweep"] == {**sweep, "next_run_at": 1_800_034_200}
+    turned_off = {**sweep, "enabled": False, "next_run_at": None}
+    assert off.json()["custodian_sweep"] == turned_off
+    # The refused save changes nothing, also not the switch it carries.
+    assert refused.status_code == 400
+    assert (await client.get(GLOBALHUB_ROUTE)).json() == {
+        **GLOBALHUB_DEFAULTS,
+        "custodian_sweep": turned_off,
+    }
 
 
 async def test_globalhub_rejects_another_users_host(

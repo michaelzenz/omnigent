@@ -1,4 +1,4 @@
-"""Tests for the runner side of ``pmv2_api``."""
+"""Tests for the runner side of ``pmv2_api`` and ``pmv2_read``."""
 
 import json
 from typing import Any
@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from omnigent.runner.identity import ORCHESTRATION_SOURCE_HEADER
-from omnigent.runner.pmv2_api import execute_pmv2_api
+from omnigent.runner.pmv2_api import execute_pmv2_api, execute_pmv2_read
 
 SOURCE_ID = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
 
@@ -69,6 +69,28 @@ async def test_other_routes_are_refused_before_any_request(args: dict[str, Any])
 
     assert "error" in json.loads(output)
     assert requests == []
+
+
+async def test_pmv2_read_sends_only_gets_to_the_board_routes() -> None:
+    requests: list[httpx.Request] = []
+    client = _client(requests, httpx.Response(200, json={"data": []}))
+
+    board = await execute_pmv2_read(
+        {"method": "DELETE", "path": "/v1/agent-tasks/board", "query": {"limit": 1000}},
+        client,
+        SOURCE_ID,
+    )
+    outside = await execute_pmv2_read({"path": "/v1/sessions"}, client, SOURCE_ID)
+
+    assert (json.loads(board), "error" in json.loads(outside)) == ({"data": []}, True)
+    # A method in the arguments is ignored; the tool has no way to change anything.
+    [request] = requests
+    assert (request.method, request.url.path, request.url.params["limit"]) == (
+        "GET",
+        "/v1/agent-tasks/board",
+        "1000",
+    )
+    assert request.headers[ORCHESTRATION_SOURCE_HEADER] == SOURCE_ID
 
 
 async def test_host_reads_and_server_errors_reach_the_model() -> None:

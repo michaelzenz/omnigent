@@ -62,13 +62,13 @@ def _event(db_uri: str, owner: str = ALICE_ID, manager_id: str | None = None) ->
     return event_id
 
 
-def _click(db_uri: str, custodian: str) -> None:
+def _custodian_item(db_uri: str, custodian: str, kind: str = "notice_click") -> None:
     SqlAlchemyAgentQueueStore(db_uri).enqueue(
         uuid.uuid4().hex,
         owner_user_id=ALICE_ID,
         target_session_id=custodian,
-        kind="notice_click",
-        payload={"action_id": "confirm"},
+        kind=kind,
+        payload={"action_id": "confirm"} if kind == "notice_click" else {},
     )
 
 
@@ -86,7 +86,8 @@ async def test_the_rows_show_each_role_with_its_session_and_waiting_work(
     _event(db_uri)
     _event(db_uri, owner=BOB_ID)
     _event(db_uri, manager_id=storage)
-    _click(db_uri, custodian)
+    _custodian_item(db_uri, custodian)
+    _custodian_item(db_uri, custodian, "custodian_sweep")
 
     response = await auth_client.get("/v1/agent-tasks/board/roles", headers=ALICE)
 
@@ -96,7 +97,8 @@ async def test_the_rows_show_each_role_with_its_session_and_waiting_work(
         for row in rows
     ] == [
         ("broker", "Task broker", None, broker, 2),
-        ("custodian", "Task custodian", None, custodian, 1),
+        # A queued click and the queued daily cleanup.
+        ("custodian", "Task custodian", None, custodian, 2),
         ("manager:default", "Storage", storage, storage_session, 1),
         ("manager:default", "Docs", sessionless, None, 0),
     ]
@@ -117,7 +119,8 @@ async def test_dismissing_clears_only_that_roles_waiting_work(
     unrouted = [_event(db_uri), _event(db_uri)]
     bobs = _event(db_uri, owner=BOB_ID)
     to_storage, to_docs = _event(db_uri, manager_id=storage), _event(db_uri, manager_id=docs)
-    _click(db_uri, custodian)
+    _custodian_item(db_uri, custodian)
+    _custodian_item(db_uri, custodian, "custodian_sweep")
 
     dismissed = [
         (await auth_client.post(path, headers=ALICE)).json()["dismissed"]
@@ -147,7 +150,7 @@ async def test_dismissing_clears_only_that_roles_waiting_work(
         ]
         if (event := events.get(event_id, owner_user_id=owner)) is not None
     ]
-    assert (dismissed, refused) == ([2, 1, 1], [404, 404])
+    assert (dismissed, refused) == ([2, 1, 2], [404, 404])
     assert states == ["dismissed", "dismissed", "unrouted", "dismissed", "routed"]
     queue = SqlAlchemyAgentQueueStore(db_uri)
     assert queue.list(owner_user_id=ALICE_ID, target_session_id=custodian) == []

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
+from omnigent.stores.custodian_sweep_store import CustodianSweepStore
+from omnigent.stores.custodian_sweep_store.sqlalchemy_store import SqlAlchemyCustodianSweepStore
 from omnigent.stores.fyi_cluster_store import FyiClusterStore
 from omnigent.stores.fyi_cluster_store.sqlalchemy_store import SqlAlchemyFyiClusterStore
 from omnigent.stores.manager_store import ManagerStore
@@ -35,6 +37,7 @@ class BoardStores:
     :param assets: The links the tasks carry.
     :param system_notices: The notice pinned on each user's board.
     :param queue: The messages waiting for the role sessions.
+    :param custodian_sweeps: When each user's custodian gets its daily cleanup message.
     """
 
     tasks: TaskStore
@@ -45,6 +48,7 @@ class BoardStores:
     assets: TaskAssetStore
     system_notices: SystemNoticeStore
     queue: AgentQueueStore
+    custodian_sweeps: CustodianSweepStore
 
 
 def open_board_stores(conversation_store: object) -> BoardStores | None:
@@ -66,4 +70,5 @@ def open_board_stores(conversation_store: object) -> BoardStores | None:
         assets=SqlAlchemyTaskAssetStore(location),
         system_notices=SqlAlchemySystemNoticeStore(location),
         queue=SqlAlchemyAgentQueueStore(location),
+        custodian_sweeps=SqlAlchemyCustodianSweepStore(location),
     )

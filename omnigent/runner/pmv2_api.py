@@ -1,4 +1,4 @@
-"""Send ``pmv2_api`` calls to the server's GlobalHub board API."""
+"""Send ``pmv2_api`` and ``pmv2_read`` calls to the server's GlobalHub board API."""
 
 import json
 from typing import Any
@@ -44,6 +44,35 @@ async def execute_pmv2_api(
         source_id,
         tool_name="pmv2_api",
         json_body=body if isinstance(body, dict) and method in ("POST", "PATCH") else None,
+        params=query if isinstance(query, dict) and query else None,
+    )
+
+
+async def execute_pmv2_read(
+    args: dict[str, Any], client: httpx.AsyncClient | None, source_id: str | None
+) -> str:
+    """
+    Send one GET request to the board API as the calling session.
+
+    :param args: Tool arguments: ``path`` and an optional ``query`` object.
+    :param client: HTTP client pointed at the Omnigent server.
+    :param source_id: The calling session.
+    :returns: The server's JSON response, or JSON with an ``error``.
+    """
+    path = args.get("path")
+    if not isinstance(path, str) or not is_pmv2_api_request("GET", path):
+        return json.dumps(
+            {"error": "path must be a GlobalHub board route under /v1/, or /v1/hosts"}
+        )
+    if client is None or source_id is None:
+        return json.dumps({"error": "pmv2_read requires an authenticated runner"})
+    query = args.get("query")
+    return await send_board_request(
+        client,
+        "GET",
+        path,
+        source_id,
+        tool_name="pmv2_read",
         params=query if isinstance(query, dict) and query else None,
     )
 

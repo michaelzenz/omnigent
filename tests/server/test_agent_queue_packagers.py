@@ -14,20 +14,28 @@ from typing import Any
 import pytest
 
 from omnigent.agent_tasks.board_stores import BoardStores, open_board_stores
+from omnigent.agent_tasks.custodian_sweep import next_sweep_at
 from omnigent.agent_tasks.role_sessions import (
     RoleSessionStores,
     create_role_session,
     ensure_role_session,
 )
-from omnigent.agent_tasks.roles import BROKER_ROLE_KEY, MANAGER_ROLE_KEY, builtin_role
+from omnigent.agent_tasks.roles import (
+    BROKER_ROLE_KEY,
+    CUSTODIAN_ROLE_KEY,
+    MANAGER_ROLE_KEY,
+    builtin_role,
+)
 from omnigent.db.db_models import workspace_scope
 from omnigent.entities import AgentQueueItem, EventTag
 from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher
 from omnigent.server.agent_queue_packagers import (
     BrokerPackager,
+    CustodianSweepPackager,
     EventNoticeWriter,
     ManagerPackager,
     SpawnManagersWriter,
+    write_custodian_sweep,
     write_notice_click,
 )
 from omnigent.server.agent_task_delivery import SendResult, SessionSendDeps
@@ -326,6 +334,36 @@ async def test_a_manager_notice_lists_its_events_by_id_and_ends_with_the_roster(
     )
     dismissed = board.events.get(stale_turn, owner_user_id=ALICE)
     assert dismissed is not None and dismissed.state == "dismissed"
+
+
+async def test_a_due_cleanup_queues_one_message_for_the_custodian_and_skips_missed_days(
+    board: BoardStores, sessions: RoleSessionStores
+) -> None:
+    now = 1_800_000_000
+    sweeps = board.custodian_sweeps
+    sweeps.save(owner_user_id=ALICE, local_time="09:00", timezone="UTC", next_run_at=now - 60)
+    # Bob's server missed three days, and he has no GlobalHub host.
+    sweeps.save(
+        owner_user_id=BOB, local_time="09:00", timezone="UTC", next_run_at=now - 3 * 86_400
+    )
+    packager = CustodianSweepPackager(board=board, sessions=sessions)
+
+    await packager.package(now)
+    following = next_sweep_at("09:00", "UTC", after=now)
+    moved = [sweeps.get(owner_user_id=owner) for owner in (ALICE, BOB)]
+    # The next day's cleanup finds the first one still waiting for the custodian.
+    await packager.package(following)
+
+    custodian = sessions.user_settings_store.get_globalhub_role_session(
+        CUSTODIAN_ROLE_KEY, user_id=ALICE
+    )
+    items = board.queue.list(owner_user_id=ALICE)
+    assert [sweep.next_run_at if sweep else None for sweep in moved] == [following, following]
+    assert [(item.kind, item.target_session_id) for item in items] == [
+        ("custodian_sweep", custodian)
+    ]
+    assert write_custodian_sweep(items[0]).startswith("[System: daily session cleanup]\n")
+    assert board.queue.list(owner_user_id=BOB) == []
 
 
 def test_a_notice_click_is_written_for_the_custodian() -> None:

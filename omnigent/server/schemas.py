@@ -5837,18 +5837,39 @@ class SessionTitleInstructionsResponse(BaseModel):
     max_chars: int
 
 
+class CustodianSweepSettings(BaseModel):
+    """When the caller's custodian gets its daily session cleanup message.
+
+    ``time`` is a time of day on a 24-hour clock in ``timezone``, an IANA name.
+    """
+
+    enabled: bool
+    time: str = Field(..., pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    timezone: str = Field(..., min_length=1, max_length=64)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CustodianSweepSettingsResponse(CustodianSweepSettings):
+    """The caller's daily session cleanup and its next run, which is null while it is off."""
+
+    next_run_at: int | None
+
+
 class GlobalHubSettingsRequest(BaseModel):
     """Set where the caller's GlobalHub role sessions run; null for both clears it.
 
     The host must be one of the caller's own hosts and online, and the workspace
     an existing directory on it; the server stores the canonical path.
     ``report_new_sessions`` turns on or off the reports of the caller's
-    sessions on no task to the broker; omitted, it stays as it is.
+    sessions on no task to the broker, and ``custodian_sweep`` sets the daily
+    session cleanup; omitted, each stays as it is.
     """
 
     host_id: str | None = Field(..., min_length=1, max_length=GLOBALHUB_HOST_ID_MAX_CHARS)
     workspace: str | None = Field(..., min_length=1, max_length=GLOBALHUB_WORKSPACE_MAX_CHARS)
     report_new_sessions: bool | None = None
+    custodian_sweep: CustodianSweepSettings | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -5864,12 +5885,14 @@ class GlobalHubSettingsResponse(BaseModel):
 
     ``report_new_sessions`` says whether the caller's sessions on no task
     report their finished turns to the broker, which can add them to a task.
-    Sessions on a task always report to their managers.
+    Sessions on a task always report to their managers. ``custodian_sweep`` is
+    null until the caller saves the daily session cleanup.
     """
 
     host_id: str | None
     workspace: str | None
     report_new_sessions: bool
+    custodian_sweep: CustodianSweepSettingsResponse | None = None
 
 
 class GlobalHubRoleProfile(BaseModel):
@@ -6408,8 +6431,8 @@ class AgentTaskBoardRole(BaseModel):
 
     ``session`` is null when the role has no current session; a broker or
     custodian gets a new one when it has work. ``waiting`` counts the events
-    that wait for the broker or a manager, or the clicks queued for the
-    custodian.
+    that wait for the broker or a manager, or the clicks and the daily cleanup
+    queued for the custodian.
     """
 
     role: str

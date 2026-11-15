@@ -45,6 +45,7 @@ from omnigent.entities.session_resources import (
 from omnigent.entities.task import (
     LIVE_TASK_STATES,
     AgentQueueItem,
+    CustodianSweep,
     EventTag,
     FyiCluster,
     Manager,
@@ -70,6 +71,7 @@ __all__ = [
     "CompactionData",
     "Conversation",
     "ConversationItem",
+    "CustodianSweep",
     "DatabricksConnection",
     "DeviceGrant",
     "ErrorData",

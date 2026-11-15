@@ -1298,7 +1298,7 @@ class SqlAgentQueueItem(OmnigentBase):
     done_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
-        CheckConstraint("kind IN (1, 2, 3)", name="ck_agent_queue_items_kind"),
+        CheckConstraint("kind IN (1, 2, 3, 4)", name="ck_agent_queue_items_kind"),
         CheckConstraint("state IN (1, 2, 3, 4)", name="ck_agent_queue_items_state"),
         # Items in a state in arrival order across every workspace, e.g. the dispatcher's scan.
         Index("ix_agent_queue_items_state_seq", "state", "seq", "workspace_id"),
@@ -1310,6 +1310,51 @@ class SqlAgentQueueItem(OmnigentBase):
             "state",
             "seq",
         ),
+    )
+
+
+class SqlCustodianSweep(OmnigentBase):
+    """
+    SQLAlchemy model for the ``custodian_sweeps`` table: each user's daily session cleanup.
+
+    Each user has at most one row. At ``next_run_at`` the GlobalHub dispatcher
+    queues the cleanup message for the user's custodian and moves the time to
+    the next day. Ownership is stamped on the row; there are no foreign keys
+    (Rule R032).
+
+    :param id: Uuid16 primary key (bare 32-char hex in Python).
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param local_time: The time of day in ``timezone``, as ``"HH:MM"``.
+    :param timezone: The IANA timezone of ``local_time``.
+    :param next_run_at: Unix epoch seconds of the next message, or ``None``
+        while the sweep is off.
+    :param created_at: Unix epoch seconds at row creation.
+    :param updated_at: Unix epoch seconds of the last change, or ``None``.
+    """
+
+    __tablename__ = "custodian_sweeps"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    local_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    next_run_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        # One owner's sweep.
+        Index("ix_custodian_sweeps_owner", "workspace_id", "owner_user_id"),
+        # The sweeps due across every workspace, for the dispatcher's scan.
+        Index("ix_custodian_sweeps_due", "next_run_at", "workspace_id", "id"),
     )
 
 

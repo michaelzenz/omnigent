@@ -1,4 +1,4 @@
-"""Schema-only tool for calling the GlobalHub board API (``pmv2_api``)."""
+"""Schema-only tools for the GlobalHub board API: ``pmv2_api``, and the read-only ``pmv2_read``."""
 
 from typing import Any
 from urllib.parse import unquote
@@ -87,6 +87,51 @@ class Pmv2ApiTool(Tool):
                         },
                     },
                     "required": ["method", "path"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+
+
+class Pmv2ReadTool(Tool):
+    """Opt-in: ``pmv2_api`` limited to GET, for a role that only reads the board."""
+
+    @classmethod
+    def name(cls) -> str:
+        return "pmv2_read"
+
+    @classmethod
+    def description(cls) -> str:
+        return (
+            "Read the user's GlobalHub task board on the Omnigent server with a GET request. "
+            "Pass the API path starting with /v1/ and an optional query object; the result is "
+            "the server's JSON response. Only the board's /v1/agent-tasks, /v1/task-events, "
+            "/v1/task-workers and /v1/fyi-clusters routes and /v1/hosts are allowed. This tool "
+            "cannot change anything."
+        )
+
+    def get_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name(),
+                "description": self.description(),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": (
+                                'API path starting with /v1/, e.g. "/v1/agent-tasks/board". '
+                                "Do not include the server host or a query string."
+                            ),
+                        },
+                        "query": {
+                            "type": "object",
+                            "description": 'Optional query parameters, e.g. {"limit": 100}.',
+                        },
+                    },
+                    "required": ["path"],
                     "additionalProperties": False,
                 },
             },

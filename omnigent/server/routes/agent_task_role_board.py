@@ -63,13 +63,18 @@ def create_agent_task_role_board_router(
             return board.events.list(owner_user_id=user_id, states=["unrouted"])
         return board.events.list(owner_user_id=user_id, states=["routed"], manager_id=manager.id)
 
-    def queued_items(user_id: str | None, session: Conversation | None, kind: str) -> list[str]:
+    def queued_items(user_id: str | None, session: Conversation | None, *kinds: str) -> list[str]:
         if session is None:
             return []
         items = board.queue.list(
             owner_user_id=user_id, states=["queued"], target_session_id=session.id
         )
-        return [item.id for item in items if item.kind == kind]
+        return [item.id for item in items if item.kind in kinds]
+
+    def custodian_waiting(
+        user_id: str | None, custodian_session: Conversation | None
+    ) -> list[str]:
+        return queued_items(user_id, custodian_session, "notice_click", "custodian_sweep")
 
     def broker_waiting(user_id: str | None, broker_session: Conversation | None) -> int:
         requests = queued_items(user_id, broker_session, "spawn_managers")
@@ -93,7 +98,7 @@ def create_agent_task_role_board_router(
                     custodian,
                     None,
                     custodian_session,
-                    len(queued_items(user_id, custodian_session, "notice_click")),
+                    len(custodian_waiting(user_id, custodian_session)),
                 ),
             ]
             managers = board.managers.list(owner_user_id=user_id)
@@ -134,8 +139,9 @@ def create_agent_task_role_board_router(
         """Clear the waiting work of the caller's broker or custodian.
 
         For the broker, it dismisses the unrouted events and drops the queued
-        requests for managers; for the custodian, it drops the queued clicks.
-        A notice, request or click the role is already handling goes on.
+        requests for managers; for the custodian, it drops the queued clicks
+        and the queued daily cleanup. A message the role is already handling
+        goes on.
         """
         user_id = require_user(request, auth_provider)
         if role not in (BROKER_ROLE_KEY, CUSTODIAN_ROLE_KEY):
@@ -150,7 +156,7 @@ def create_agent_task_role_board_router(
                 requests = queued_items(user_id, session, "spawn_managers")
                 return events + _drop_items(board, requests, user_id)
             session = current_role_session(custodian, user_id=user_id, stores=sessions)
-            return _drop_items(board, queued_items(user_id, session, "notice_click"), user_id)
+            return _drop_items(board, custodian_waiting(user_id, session), user_id)
 
         dismissed = await asyncio.to_thread(dismiss)
         return AgentTaskRoleWaitingDismissed(role=role, manager_id=None, dismissed=dismissed)

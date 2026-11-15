@@ -17,6 +17,7 @@ skills: none
 
 tools:
   builtins:
+    - pmv2_read
     - search_conversations
     - sys_session_delete
     - system_notice
@@ -30,6 +31,7 @@ allowed_builtin_tools:
   - find
   - ls
   - mcp
+  - pmv2_read
   - search_conversations
   - sys_session_list
   - sys_session_get_info

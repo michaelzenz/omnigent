@@ -1456,7 +1456,7 @@
         "type": "object"
       },
       "AgentTaskBoardRole": {
-        "description": "A role that runs the caller's board, with its session and what waits for it.\n\n`session` is null when the role has no current session; a broker or\ncustodian gets a new one when it has work. `waiting` counts the events\nthat wait for the broker or a manager, or the clicks queued for the\ncustodian.",
+        "description": "A role that runs the caller's board, with its session and what waits for it.\n\n`session` is null when the role has no current session; a broker or\ncustodian gets a new one when it has work. `waiting` counts the events\nthat wait for the broker or a manager, or the clicks and the daily cleanup\nqueued for the custodian.",
         "properties": {
           "manager_id": {
             "anyOf": [
@@ -4199,6 +4199,75 @@
         "title": "CreatedEvent",
         "type": "object"
       },
+      "CustodianSweepSettings": {
+        "additionalProperties": false,
+        "description": "When the caller's custodian gets its daily session cleanup message.\n\n`time` is a time of day on a 24-hour clock in `timezone`, an IANA name.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "time": {
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+            "title": "Time",
+            "type": "string"
+          },
+          "timezone": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "time",
+          "timezone"
+        ],
+        "title": "CustodianSweepSettings",
+        "type": "object"
+      },
+      "CustodianSweepSettingsResponse": {
+        "additionalProperties": false,
+        "description": "The caller's daily session cleanup and its next run, which is null while it is off.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "next_run_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Run At"
+          },
+          "time": {
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+            "title": "Time",
+            "type": "string"
+          },
+          "timezone": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "time",
+          "timezone",
+          "next_run_at"
+        ],
+        "title": "CustodianSweepSettingsResponse",
+        "type": "object"
+      },
       "DailyCost": {
         "description": "One day's LLM spend for the daily timeline chart.",
         "properties": {
@@ -5553,8 +5622,18 @@
       },
       "GlobalHubSettingsRequest": {
         "additionalProperties": false,
-        "description": "Set where the caller's GlobalHub role sessions run; null for both clears it.\n\nThe host must be one of the caller's own hosts and online, and the workspace\nan existing directory on it; the server stores the canonical path.\n`report_new_sessions` turns on or off the reports of the caller's\nsessions on no task to the broker; omitted, it stays as it is.",
+        "description": "Set where the caller's GlobalHub role sessions run; null for both clears it.\n\nThe host must be one of the caller's own hosts and online, and the workspace\nan existing directory on it; the server stores the canonical path.\n`report_new_sessions` turns on or off the reports of the caller's\nsessions on no task to the broker, and `custodian_sweep` sets the daily\nsession cleanup; omitted, each stays as it is.",
         "properties": {
+          "custodian_sweep": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CustodianSweepSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "host_id": {
             "anyOf": [
               {
@@ -5601,8 +5680,18 @@
         "type": "object"
       },
       "GlobalHubSettingsResponse": {
-        "description": "Where the caller's GlobalHub role sessions run; both null until it is set.\n\n`report_new_sessions` says whether the caller's sessions on no task\nreport their finished turns to the broker, which can add them to a task.\nSessions on a task always report to their managers.",
+        "description": "Where the caller's GlobalHub role sessions run; both null until it is set.\n\n`report_new_sessions` says whether the caller's sessions on no task\nreport their finished turns to the broker, which can add them to a task.\nSessions on a task always report to their managers. `custodian_sweep` is\nnull until the caller saves the daily session cleanup.",
         "properties": {
+          "custodian_sweep": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CustodianSweepSettingsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "host_id": {
             "anyOf": [
               {
@@ -16667,7 +16756,7 @@
     },
     "/v1/agent-tasks/roles/{role}/dismiss-waiting": {
       "post": {
-        "description": "Clear the waiting work of the caller's broker or custodian.\n\nFor the broker, it dismisses the unrouted events and drops the queued\nrequests for managers; for the custodian, it drops the queued clicks.\nA notice, request or click the role is already handling goes on.",
+        "description": "Clear the waiting work of the caller's broker or custodian.\n\nFor the broker, it dismisses the unrouted events and drops the queued\nrequests for managers; for the custodian, it drops the queued clicks\nand the queued daily cleanup. A message the role is already handling\ngoes on.",
         "operationId": "dismiss_role_waiting_v1_agent_tasks_roles__role__dismiss_waiting_post",
         "parameters": [
           {
@@ -26715,7 +26804,7 @@
         ]
       },
       "put": {
-        "description": "Set or clear where the caller's GlobalHub role sessions run.\n\nThe host must be the caller's own and online, and the workspace an\nexisting directory on it. The canonical path is stored.",
+        "description": "Set or clear where the caller's GlobalHub role sessions run.\n\nThe host must be the caller's own and online, and the workspace an\nexisting directory on it. The canonical path is stored. A daily\nsession cleanup that is on runs next at its time after now.",
         "operationId": "save_globalhub_settings_v1_settings_globalhub_put",
         "requestBody": {
           "content": {

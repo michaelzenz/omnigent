@@ -182,6 +182,18 @@ def _create_pmv2_api(config: dict[str, str]) -> Tool:
     return Pmv2ApiTool()
 
 
+def _create_pmv2_read(config: dict[str, str]) -> Tool:
+    """
+    Lazy factory for Pmv2ReadTool.
+
+    :param config: Tool config (unused).
+    :returns: A Pmv2ReadTool instance.
+    """
+    from omnigent.tools.builtins.pmv2_api import Pmv2ReadTool
+
+    return Pmv2ReadTool()
+
+
 def _create_system_notice(config: dict[str, str]) -> Tool:
     """
     Lazy factory for SystemNoticeTool.
@@ -305,6 +317,7 @@ _BUILTIN_REGISTRY: dict[str, _BuiltinFactory | None] = {
     "search_conversations": _create_search_conversations,
     "sys_session_delete": _create_session_delete,
     "pmv2_api": _create_pmv2_api,
+    "pmv2_read": _create_pmv2_read,
     "system_notice": _create_system_notice,
     "export_agent": _create_export_agent,
     # Framework-owned: need runtime context. ``web_fetch`` is

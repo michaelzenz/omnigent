@@ -1,5 +1,6 @@
 """GlobalHub board entities, persisted in the ``tasks``, ``managers``, ``workers``,
-``task_events``, ``fyi_clusters``, ``task_assets`` and ``system_notices`` tables.
+``task_events``, ``fyi_clusters``, ``task_assets``, ``system_notices``,
+``agent_queue_items`` and ``custodian_sweeps`` tables.
 
 A :class:`Task` is a long-lived unit of work on one user's GlobalHub board,
 owned by one :class:`Manager`. Each :class:`Worker` attaches a session that
@@ -298,7 +299,8 @@ class AgentQueueItem:
     :param id: UUID primary key (bare 32-char hex string, no dashes).
     :param owner_user_id: Owning user, or ``None`` in single-user mode.
     :param target_session_id: The session the message goes to.
-    :param kind: ``"events"``, ``"notice_click"`` or ``"spawn_managers"``.
+    :param kind: ``"events"``, ``"notice_click"``, ``"spawn_managers"`` or
+        ``"custodian_sweep"``.
     :param state: ``"queued"``, ``"sending"``, ``"sent"`` or ``"done"``.
     :param seq: Arrival order; a session receives its items in this order.
     :param created_at: Unix epoch seconds at row creation.
@@ -327,3 +329,34 @@ class AgentQueueItem:
     sent_at: int | None = None
     done_at: int | None = None
     workspace_id: int = 0
+
+
+@dataclass
+class CustodianSweep:
+    """
+    When a user's custodian gets its daily session cleanup message.
+
+    :param id: UUID primary key (bare 32-char hex string, no dashes).
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param local_time: The time of day in ``timezone``, as ``"HH:MM"``.
+    :param timezone: The IANA timezone of ``local_time``, e.g. ``"America/Los_Angeles"``.
+    :param next_run_at: Unix epoch seconds of the next message, or ``None`` while
+        the sweep is off.
+    :param created_at: Unix epoch seconds at row creation.
+    :param updated_at: Unix epoch seconds of the last change.
+    :param workspace_id: Tenant partition key that owns this row.
+    """
+
+    id: str
+    owner_user_id: str | None
+    local_time: str
+    timezone: str
+    next_run_at: int | None
+    created_at: int
+    updated_at: int | None = None
+    workspace_id: int = 0
+
+    @property
+    def enabled(self) -> bool:
+        """Whether the custodian gets the message."""
+        return self.next_run_at is not None

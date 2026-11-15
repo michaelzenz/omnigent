@@ -91,9 +91,11 @@ from omnigent.server import (
 from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher
 from omnigent.server.agent_queue_packagers import (
     BrokerPackager,
+    CustodianSweepPackager,
     EventNoticeWriter,
     ManagerPackager,
     SpawnManagersWriter,
+    write_custodian_sweep,
     write_notice_click,
 )
 from omnigent.server.agent_task_session_events import (
@@ -4188,9 +4190,14 @@ def create_app(
         )
 
     role_session_stores: RoleSessionStores | None = None
+    board_stores = open_board_stores(conversation_store)
     if user_settings_store is not None:
         app.include_router(
-            create_user_settings_router(user_settings_store, auth_provider),
+            create_user_settings_router(
+                user_settings_store,
+                auth_provider,
+                custodian_sweeps=board_stores.custodian_sweeps if board_stores else None,
+            ),
             prefix="/v1",
             tags=["settings"],
         )
@@ -4206,7 +4213,6 @@ def create_app(
             prefix="/v1",
             tags=["agent-tasks"],
         )
-    board_stores = open_board_stores(conversation_store)
     if board_stores is not None:
         send_deps = agent_task_delivery.SessionSendDeps(
             conversation_store=conversation_store,
@@ -4287,6 +4293,7 @@ def create_app(
                     ).write,
                     "notice_click": write_notice_click,
                     "spawn_managers": SpawnManagersWriter(board=board_stores).write,
+                    "custodian_sweep": write_custodian_sweep,
                 },
                 packagers=[
                     BrokerPackager(
@@ -4295,6 +4302,7 @@ def create_app(
                     ManagerPackager(
                         board=board_stores, conversations=conversation_store, send_deps=send_deps
                     ),
+                    CustodianSweepPackager(board=board_stores, sessions=role_session_stores),
                 ],
             )
             app.state.session_event_reporter = SessionEventReporter(

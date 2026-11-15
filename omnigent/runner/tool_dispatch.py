@@ -87,7 +87,7 @@ from omnigent.tools.builtins.os_env import (
     SysOsShellTool,
     SysOsWriteTool,
 )
-from omnigent.tools.builtins.pmv2_api import Pmv2ApiTool
+from omnigent.tools.builtins.pmv2_api import Pmv2ApiTool, Pmv2ReadTool
 from omnigent.tools.builtins.search_conversations import SearchConversationsTool
 from omnigent.tools.builtins.session_delete import SysSessionDeleteTool
 from omnigent.tools.builtins.session_message import (
@@ -352,7 +352,7 @@ _CONVERSATION_SEARCH_TOOLS = frozenset({SearchConversationsTool.name()})
 # Opt-in owner-gated delete; only specs that declare it register it.
 _SESSION_DELETE_TOOLS = frozenset({SysSessionDeleteTool.name()})
 # Opt-in GlobalHub board API, called as the calling session.
-_PMV2_API_TOOLS = frozenset({Pmv2ApiTool.name()})
+_PMV2_API_TOOLS = frozenset({Pmv2ApiTool.name(), Pmv2ReadTool.name()})
 # Opt-in publisher of the GlobalHub board's system notice, called as the calling session.
 _SYSTEM_NOTICE_TOOLS = frozenset({SystemNoticeTool.name()})
 _UI_TOOLS = frozenset({UiOpenFileTool.name()})
@@ -7421,9 +7421,10 @@ async def execute_tool(
 
             output = await execute_session_delete(args, server_client, conversation_id)
         elif tool_name in _PMV2_API_TOOLS:
-            from omnigent.runner.pmv2_api import execute_pmv2_api
+            from omnigent.runner.pmv2_api import execute_pmv2_api, execute_pmv2_read
 
-            output = await execute_pmv2_api(args, server_client, conversation_id)
+            execute = execute_pmv2_read if tool_name == Pmv2ReadTool.name() else execute_pmv2_api
+            output = await execute(args, server_client, conversation_id)
         elif tool_name in _SYSTEM_NOTICE_TOOLS:
             from omnigent.runner.system_notice import execute_system_notice
 

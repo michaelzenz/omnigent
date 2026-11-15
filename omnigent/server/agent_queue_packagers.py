@@ -1,4 +1,8 @@
-"""Queue the task events waiting for each user's broker and managers, and write queue messages."""
+"""Queue the work waiting for each user's broker, managers and custodian, and write queue messages.
+
+Task events wait for the broker and the managers; the custodian gets a daily
+session cleanup message at the time its owner chose.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +15,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from omnigent.agent_tasks.board_stores import BoardStores
+from omnigent.agent_tasks.custodian_sweep import next_sweep_at
 from omnigent.agent_tasks.event_batches import (
     broker_batches,
     cluster_by_tags,
@@ -20,12 +25,20 @@ from omnigent.agent_tasks.event_batches import (
 from omnigent.agent_tasks.role_sessions import RoleSessionStores, ensure_role_session
 from omnigent.agent_tasks.roles import (
     BROKER_ROLE_KEY,
+    CUSTODIAN_ROLE_KEY,
     MANAGER_ROLE_KEY,
     builtin_role,
     session_role,
 )
 from omnigent.db.db_models import workspace_scope
-from omnigent.entities import LIVE_TASK_STATES, AgentQueueItem, Conversation, Task, TaskEvent
+from omnigent.entities import (
+    LIVE_TASK_STATES,
+    AgentQueueItem,
+    Conversation,
+    CustodianSweep,
+    Task,
+    TaskEvent,
+)
 from omnigent.server.agent_task_delivery import SessionSendDeps, session_has_live_turn
 
 _logger = logging.getLogger(__name__)
@@ -49,6 +62,13 @@ _SPAWN_ADVICE = (
     "Assign each task below to the best-fitting active manager, or create a manager "
     'when none fits. Follow "Assigning unmanaged tasks" in the Task broker manual.'
 )
+_SWEEP_PROMPT = (
+    "[System: daily session cleanup]\n"
+    "This is your daily maintenance notice. Follow the Custodian manual, and be "
+    "aggressive in suggesting session deletes."
+)
+# A cleanup message not yet handled covers the next day's too.
+_UNHANDLED_STATES = ("queued", "sending", "sent")
 
 
 class BrokerPackager:
@@ -102,6 +122,65 @@ class BrokerPackager:
                 kind="events",
                 event_ids=[event.id for event in batch],
             )
+
+
+class CustodianSweepPackager:
+    """Queues each user's daily session cleanup message for their custodian when it is due."""
+
+    def __init__(self, *, board: BoardStores, sessions: RoleSessionStores) -> None:
+        """
+        :param board: Holds the sweeps and the queue.
+        :param sessions: Where each user's custodian session lives.
+        """
+        role = builtin_role(CUSTODIAN_ROLE_KEY)
+        assert role is not None
+        self._role = role
+        self._board = board
+        self._sessions = sessions
+
+    async def package(self, now: int) -> None:
+        """Queue the cleanup messages due at ``now``, user by user in each workspace."""
+        due = await asyncio.to_thread(
+            self._board.custodian_sweeps.list_due_all_workspaces, now=now
+        )
+        for sweep in due:
+            try:
+                with workspace_scope(sweep.workspace_id):
+                    await self._package_for(sweep, now)
+            except Exception:
+                _logger.exception("GlobalHub custodian sweep failed for %s", sweep.owner_user_id)
+
+    async def _package_for(self, sweep: CustodianSweep, now: int) -> None:
+        assert sweep.next_run_at is not None
+        # Days the server missed are skipped; only the pass that moves the time queues.
+        moved = await asyncio.to_thread(
+            self._board.custodian_sweeps.advance,
+            sweep.id,
+            due_at=sweep.next_run_at,
+            next_run_at=next_sweep_at(sweep.local_time, sweep.timezone, after=now),
+        )
+        owner = sweep.owner_user_id
+        settings = self._sessions.user_settings_store
+        if not moved or (
+            await asyncio.to_thread(settings.get_globalhub_placement, user_id=owner) is None
+        ):
+            return
+        custodian, _ = await ensure_role_session(self._role, user_id=owner, stores=self._sessions)
+        unhandled = await asyncio.to_thread(
+            self._board.queue.list,
+            owner_user_id=owner,
+            states=_UNHANDLED_STATES,
+            target_session_id=custodian.id,
+        )
+        if any(item.kind == "custodian_sweep" for item in unhandled):
+            return
+        await asyncio.to_thread(
+            self._board.queue.enqueue,
+            uuid.uuid4().hex,
+            owner_user_id=owner,
+            target_session_id=custodian.id,
+            kind="custodian_sweep",
+        )
 
 
 class ManagerPackager:
@@ -274,6 +353,11 @@ class SpawnManagersWriter:
                     "after you assign these."
                 )
         return "\n".join(lines)
+
+
+def write_custodian_sweep(_item: AgentQueueItem) -> str:
+    """Write the custodian's daily session cleanup message; it is the same every day."""
+    return _SWEEP_PROMPT
 
 
 def write_notice_click(item: AgentQueueItem) -> str:
