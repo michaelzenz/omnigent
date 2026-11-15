@@ -124,6 +124,30 @@ class TaskStore(ABC):
         """
 
     @abstractmethod
+    def record_work(self, task_id: str, *, owner_user_id: str | None) -> Task | None:
+        """
+        Record work on the owner's task, e.g. a worker's finished turn.
+
+        An active or idle task becomes active, moves to the top of the board
+        and counts as changed now. A resolved or archived task stays as it is.
+
+        :returns: The task, or ``None`` when missing or someone else's.
+        """
+
+    @abstractmethod
+    def idle_quiet_tasks_all_workspaces(self, *, changed_before: int) -> int:
+        """
+        Turn idle each active task, in every workspace, unchanged since ``changed_before``.
+
+        The task keeps its place on the board and its ``updated_at``, so
+        turning idle does not count as a change. The next work makes it active.
+
+        :param changed_before: Unix epoch seconds; a task without a change
+            counts from its creation.
+        :returns: How many tasks became idle.
+        """
+
+    @abstractmethod
     def move_to_board_top(self, task_id: str, *, owner_user_id: str | None) -> Task | None:
         """Move the owner's task to the top of their board, or return ``None``."""
 

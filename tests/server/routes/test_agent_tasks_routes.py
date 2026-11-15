@@ -95,7 +95,7 @@ async def test_state_changes_move_the_card_and_updates_stay_owner_scoped(
 ) -> None:
     manager_id, _ = _manager(db_uri)
     bobs_manager, _ = _manager(db_uri, owner="bob@example.com")
-    await _create(auth_client, manager_id, "one")
+    one = await _create(auth_client, manager_id, "one")
     await _create(auth_client, manager_id, "two")
     three = await _create(auth_client, manager_id, "three")
 
@@ -104,6 +104,9 @@ async def test_state_changes_move_the_card_and_updates_stay_owner_scoped(
     await auth_client.patch(f"{ROUTE}/{three}", json={"description": "Done."}, headers=ALICE)
     assert await _board(auth_client) == ["two", "one", "three"]
     await auth_client.patch(f"{ROUTE}/{three}", json={"state": "active"}, headers=ALICE)
+    assert await _board(auth_client) == ["three", "two", "one"]
+    # The state it already has moves nothing.
+    await auth_client.patch(f"{ROUTE}/{one}", json={"state": "active"}, headers=ALICE)
     assert await _board(auth_client) == ["three", "two", "one"]
 
     unassigned = await auth_client.patch(

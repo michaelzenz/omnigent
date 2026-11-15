@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 
+from omnigent.db.db_models import workspace_scope
+from omnigent.stores.task_store import sqlalchemy_store as task_tables
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 
 ALICE = "alice@example.com"
@@ -115,6 +117,49 @@ def test_move_to_board_end_keeps_live_tasks_above_resolved_ones(
     store.move_to_board_end(middle, owner_user_id=ALICE)
     assert _board(store) == ["top", "middle", "resolved"]
     assert _rank(store, bob_task, BOB) == bob_rank
+
+
+def test_work_tops_an_open_task_and_wakes_an_idle_one(store: SqlAlchemyTaskStore) -> None:
+    resolved = _create(store, "resolved", state="agent-resolved")
+    idle = _create(store, "idle", state="idle")
+    _create(store, "newest")
+
+    woken = store.record_work(idle, owner_user_id=ALICE)
+    kept = store.record_work(resolved, owner_user_id=ALICE)
+
+    assert woken is not None and (woken.state, woken.updated_at is not None) == ("active", True)
+    assert kept is not None and (kept.state, kept.updated_at) == ("agent-resolved", None)
+    assert _board(store) == ["idle", "newest", "resolved"]
+    assert store.record_work(idle, owner_user_id=BOB) is None
+
+
+def test_quiet_active_tasks_turn_idle_in_every_workspace_and_keep_their_place(
+    store: SqlAlchemyTaskStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(task_tables, "now_epoch", lambda: 100)
+    quiet = _create(store, "quiet")
+    _create(store, "quiet resolved", state="agent-resolved")
+    with workspace_scope(7):
+        elsewhere = _create(store, "quiet elsewhere")
+    monkeypatch.setattr(task_tables, "now_epoch", lambda: 900)
+    recent = _create(store, "recent")
+    order = _board(store)
+
+    idled = store.idle_quiet_tasks_all_workspaces(changed_before=500)
+
+    states = {
+        title: task.state
+        for title, task in (
+            ("quiet", store.get(quiet, owner_user_id=ALICE)),
+            ("recent", store.get(recent, owner_user_id=ALICE)),
+        )
+        if task is not None
+    }
+    with workspace_scope(7):
+        other = store.get(elsewhere, owner_user_id=ALICE)
+    assert (idled, states) == (2, {"quiet": "idle", "recent": "active"})
+    assert other is not None and (other.state, other.updated_at) == ("idle", None)
+    assert _board(store) == order
 
 
 def test_board_moves_and_delete_are_owner_scoped(store: SqlAlchemyTaskStore) -> None:

@@ -61,7 +61,7 @@ class _Hub:
             uuid.uuid4().hex, owner_user_id=ALICE, title="Storage"
         ).id
 
-    def attach(self, session_id: str, *, manager_id: str, state: str = "active") -> None:
+    def attach(self, session_id: str, *, manager_id: str, state: str = "active") -> str:
         task = self.board.tasks.create(
             uuid.uuid4().hex,
             owner_user_id=ALICE,
@@ -73,6 +73,7 @@ class _Hub:
         self.board.workers.create(
             uuid.uuid4().hex, owner_user_id=ALICE, task_id=task.id, session_id=session_id
         )
+        return task.id
 
     def reports(self) -> list[TaskEvent]:
         return self.board.events.list(owner_user_id=ALICE, event_type="session.turn.finished")
@@ -130,6 +131,22 @@ def test_a_session_on_live_tasks_reports_to_each_of_their_managers_once(hub: _Hu
     reports = hub.reports()
     assert sorted(event.manager_id or "" for event in reports) == sorted([storage, compute])
     assert {(event.state, len(event.tags)) for event in reports} == {("routed", 0)}
+
+
+def test_a_finished_turn_tops_the_sessions_open_tasks_and_wakes_idle_ones(hub: _Hub) -> None:
+    session_id = hub.session()
+    manager = hub.manager()
+    idle = hub.attach(session_id, manager_id=manager, state="idle")
+    resolved = hub.attach(session_id, manager_id=manager, state="agent-resolved")
+    newest = hub.attach(hub.session(), manager_id=manager)
+
+    hub.reporter.report_turn_finished(session_id)
+
+    assert [(task.id, task.state) for task in hub.board.tasks.list(owner_user_id=ALICE)] == [
+        (idle, "active"),
+        (newest, "active"),
+        (resolved, "agent-resolved"),
+    ]
 
 
 def test_a_session_whose_tasks_are_all_finished_reports_to_the_broker(hub: _Hub) -> None:

@@ -138,8 +138,9 @@ def create_agent_tasks_router(
     ) -> AgentTaskResponse:
         """Change fields of one of the caller's tasks.
 
-        Setting ``state`` also moves the task on the board: ``agent-resolved``
-        to the end, any other state to the top so revived work surfaces.
+        A change of ``state`` also moves the task on the board: ``agent-resolved``
+        to the end, any other state to the top so revived work surfaces. A
+        ``state`` equal to the task's current state moves nothing.
         """
         user_id = require_user(request, auth_provider)
         reassigns = "manager_id" in body.model_fields_set
@@ -147,6 +148,7 @@ def create_agent_tasks_router(
             await require_owned_manager(body.manager_id, user_id)
 
         def update() -> Task | None:
+            before = tasks.get(task_id, owner_user_id=user_id)
             task = tasks.update(
                 task_id,
                 owner_user_id=user_id,
@@ -158,9 +160,9 @@ def create_agent_tasks_router(
                 state=body.state,
                 priority=body.priority,
             )
-            if task is None or body.state is None:
+            if task is None or before is None or task.state == before.state:
                 return task
-            if body.state == "agent-resolved":
+            if task.state == "agent-resolved":
                 return tasks.move_to_board_end(task_id, owner_user_id=user_id)
             return tasks.move_to_board_top(task_id, owner_user_id=user_id)
 

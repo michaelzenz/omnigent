@@ -4,7 +4,8 @@ A session that works on live tasks reports to those tasks' managers. Any other
 session reports its turns to the broker, whose chosen manager may attach it to
 a task, and its deletion to whoever holds its waiting turn report. Role
 sessions, sub-agents and side chats do not report, and a user without a
-GlobalHub host gets no turn reports.
+GlobalHub host gets no turn reports. A worker's finished turn also counts as
+work on its tasks, which moves an active or idle task to the top of the board.
 """
 
 from __future__ import annotations
@@ -75,6 +76,8 @@ class SessionEventReporter:
         if conv is None or not reports_to_globalhub(conv):
             return
         owner = conversations.get_session_owner(session_id, owner_only=True)
+        for worker in self._board.workers.list_for_session(session_id, owner_user_id=owner):
+            self._board.tasks.record_work(worker.task_id, owner_user_id=owner)
         settings = self._sessions.user_settings_store
         if settings.get_globalhub_placement(user_id=owner) is None:
             return

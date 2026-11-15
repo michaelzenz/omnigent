@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import builtins
 from collections.abc import Collection
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import ColumnElement, and_, delete, desc, func, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from omnigent.db.account_authority import require_active_account
@@ -22,6 +23,8 @@ from omnigent.entities import Task
 from omnigent.stores.task_store import UNSET, TaskStore
 
 _RESOLVED = "agent-resolved"
+_ACTIVE_CODE = encode_task_state("active")
+_IDLE_CODE = encode_task_state("idle")
 
 
 def _to_entity(row: SqlTask) -> Task:
@@ -229,6 +232,44 @@ class SqlAlchemyTaskStore(TaskStore):
             return _to_entity(row)
 
         return run_write_transaction(self._session_immediate, "update_task", write)
+
+    def record_work(self, task_id: str, *, owner_user_id: str | None) -> Task | None:
+        """Record work on the owner's task; a resolved or archived task stays as it is."""
+
+        def write(session: Session) -> Task | None:
+            require_active_account(session, owner_user_id)
+            row = _owned_row(session, task_id, owner_user_id)
+            if row is None:
+                return None
+            if row.state in (_ACTIVE_CODE, _IDLE_CODE):
+                row.state = _ACTIVE_CODE
+                row.queue_rank = _rank_above_all(session, owner_user_id)
+                row.updated_at = now_epoch()
+            return _to_entity(row)
+
+        return run_write_transaction(self._session_immediate, "record_task_work", write)
+
+    def idle_quiet_tasks_all_workspaces(self, *, changed_before: int) -> int:
+        """Turn idle each active task, in every workspace, unchanged since ``changed_before``."""
+
+        def write(session: Session) -> int:
+            result = cast(
+                CursorResult[tuple[object]],
+                session.execute(
+                    update(SqlTask)
+                    .where(
+                        SqlTask.state == _ACTIVE_CODE,
+                        func.coalesce(SqlTask.updated_at, SqlTask.created_at) < changed_before,
+                    )
+                    .values(state=_IDLE_CODE)
+                    .execution_options(synchronize_session=False)
+                ),
+            )
+            return result.rowcount
+
+        return run_write_transaction(
+            self._session_immediate, "idle_quiet_tasks_in_all_workspaces", write
+        )
 
     def move_to_board_top(self, task_id: str, *, owner_user_id: str | None) -> Task | None:
         """Move the owner's task to the top of their board, or return ``None``."""

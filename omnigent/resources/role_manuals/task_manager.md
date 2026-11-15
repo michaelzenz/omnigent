@@ -213,7 +213,12 @@ confirmation/proposal step.
 with a distinct badge. **Not final**: when a new relevant event lands,
 move it back to `active`. Prefer this over endless `active` — the
 board should show what needs attention.
-- `idle` — do not set manually; tasks auto-idle after a quiet week.
+- `idle` — set by the server, not by you: a task with no change and no
+worker turn for a week turns idle, and the next worker turn makes it active
+again.
+
+The board shows recent work first: a worker's finished turn moves its task
+to the top, and a `PATCH` moves a task only when its `state` changes.
 
 Typical flow: create task (active) → work → `agent-resolved` when
  done → revive to `active` on new events.

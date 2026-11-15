@@ -15,12 +15,17 @@ from omnigent.agent_tasks.role_sessions import RoleSessionStores, ensure_role_se
 from omnigent.agent_tasks.roles import BROKER_ROLE_KEY, builtin_role
 from omnigent.db.db_models import current_workspace_id, workspace_scope
 from omnigent.entities import AgentQueueItem, Conversation
-from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher, Packager
+from omnigent.server.agent_queue_dispatcher import (
+    TASK_IDLE_AFTER_S,
+    AgentQueueDispatcher,
+    Packager,
+)
 from omnigent.server.agent_task_delivery import SendResult, SessionSendDeps
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
+from omnigent.stores.task_store import sqlalchemy_store as task_tables
 from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
 
 ALICE = "alice@example.com"
@@ -229,6 +234,37 @@ async def test_packagers_run_every_five_seconds(db_uri: str) -> None:
         await harness.run()
 
     assert runs == [NOW, NOW + 5]
+
+
+async def test_once_an_hour_tasks_with_no_change_for_a_week_turn_idle(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def task(title: str, created_at: int) -> str:
+        monkeypatch.setattr(task_tables, "now_epoch", lambda: created_at)
+        return harness.board.tasks.create(
+            uuid.uuid4().hex, owner_user_id=ALICE, title=title, goal="Finish it"
+        ).id
+
+    def state(task_id: str) -> str | None:
+        found = harness.board.tasks.get(task_id, owner_user_id=ALICE)
+        return found.state if found is not None else None
+
+    quiet = task("Quiet", NOW - TASK_IDLE_AFTER_S - 1)
+    recent = task("Recent", NOW - 60)
+    await harness.run()
+    later_quiet = task("Quiet later", NOW - TASK_IDLE_AFTER_S - 1)
+    harness.now = NOW + 59 * 60
+    await harness.run()
+    within_the_hour = state(later_quiet)
+    harness.now = NOW + 60 * 60
+    await harness.run()
+
+    assert (state(quiet), state(recent), within_the_hour, state(later_quiet)) == (
+        "idle",
+        "active",
+        "active",
+        "idle",
+    )
 
 
 async def test_a_claim_left_by_a_crashed_send_goes_back_after_ten_minutes(

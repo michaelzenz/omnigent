@@ -8,6 +8,7 @@ a session idle for a minute after the send counts too. A turn whose runner died
 in a crash ends the next time the dispatcher reads the session, which settles
 the turn the way main's session list does. The loop runs outside a request, so
 it reads every workspace and acts on each item inside that item's workspace.
+Once an hour it also turns idle the tasks with no change for a week.
 """
 
 from __future__ import annotations
@@ -42,6 +43,9 @@ IDLE_FALLBACK_S = 60
 # Longer than any runner wake, so only a claim left by a crashed send is this old.
 STALE_CLAIM_S = 10 * 60
 BUSY_RECHECK_S = 5
+# An active task with no change or work for this long turns idle.
+TASK_IDLE_AFTER_S = 7 * 24 * 60 * 60
+_IDLE_SWEEP_INTERVAL_S = 60 * 60
 _STALE_SWEEP_INTERVAL_S = 60
 _BASE_RETRY_DELAY_S = 30
 _MAX_RETRY_DELAY_S = 5 * 60
@@ -94,6 +98,7 @@ class AgentQueueDispatcher:
         """
         self._queue = board.queue
         self._managers = board.managers
+        self._task_store = board.tasks
         self._sessions = sessions
         self._send_deps = send_deps
         self._renderers = dict(renderers)
@@ -109,6 +114,7 @@ class AgentQueueDispatcher:
         # When each sent item's session was first seen idle after the send.
         self._idle_since: dict[str, int] = {}
         self._last_stale_sweep: int | None = None
+        self._last_idle_sweep: int | None = None
 
     async def start(self) -> None:
         """Put back the claims a stopped server left, then start the delivery loop."""
@@ -157,6 +163,15 @@ class AgentQueueDispatcher:
                 self._queue.release_stale_claims_all_workspaces,
                 claimed_before=now - STALE_CLAIM_S,
             )
+        if self._last_idle_sweep is None or now - self._last_idle_sweep >= _IDLE_SWEEP_INTERVAL_S:
+            self._last_idle_sweep = now
+            try:
+                await asyncio.to_thread(
+                    self._task_store.idle_quiet_tasks_all_workspaces,
+                    changed_before=now - TASK_IDLE_AFTER_S,
+                )
+            except Exception:
+                _logger.exception("GlobalHub could not turn quiet tasks idle")
         if self._last_package is None or now - self._last_package >= PACKAGE_INTERVAL_S:
             self._last_package = now
             for packager in self._packagers:
