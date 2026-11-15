@@ -1,3 +1,4 @@
+import type { FyiCluster, FyiEvent } from "@/hooks/useGlobalHubFyi";
 import type { SystemNotice, SystemNoticeInput } from "@/hooks/useGlobalHubNotice";
 import type {
   AgentTaskAsset,
@@ -97,6 +98,30 @@ export function noticeInput(
     placeholder: null,
     default: null,
     required: null,
+    ...fields,
+  };
+}
+
+/** A pending FYI cluster with no events; ``fields`` override the defaults. */
+export function fyiCluster(id: string, fields: Partial<FyiCluster> = {}): FyiCluster {
+  return {
+    id,
+    headline: `Cluster ${id}`,
+    rationale: null,
+    created_at: 1_800_000_000,
+    events: [],
+    ...fields,
+  };
+}
+
+/** A finished turn of session ``s-<id>``; ``fields`` override the defaults. */
+export function fyiEvent(id: string, fields: Partial<FyiEvent> = {}): FyiEvent {
+  return {
+    id,
+    event_type: "session.turn.finished",
+    title: `Session turn finished: Session ${id}`,
+    source_session_id: `s-${id}`,
+    created_at: 1_800_000_000,
     ...fields,
   };
 }

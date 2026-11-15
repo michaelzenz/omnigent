@@ -13,6 +13,7 @@ vi.mock("@/globalhub/TaskBoard", () => ({
   TaskBoard: () => <div data-testid="globalhub-task-board" />,
 }));
 vi.mock("@/globalhub/SystemNoticeCard", () => ({ SystemNoticeCard: () => null }));
+vi.mock("@/globalhub/FyiStream", () => ({ FyiStream: () => null }));
 
 function renderPage(data: GlobalHubSettings) {
   vi.mocked(useGlobalHubSettings).mockReturnValue({

@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { SettingsIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { FyiStream } from "@/globalhub/FyiStream";
 import { GlobalHubSettingsDialog } from "@/globalhub/GlobalHubSettingsDialog";
 import { SystemNoticeCard } from "@/globalhub/SystemNoticeCard";
 import { TaskBoard } from "@/globalhub/TaskBoard";
@@ -54,6 +55,7 @@ export function GlobalHubPage() {
               </div>
             )}
             <SystemNoticeCard />
+            <FyiStream />
             <TaskBoard scrollRoot={boardRef} />
           </>
         )}

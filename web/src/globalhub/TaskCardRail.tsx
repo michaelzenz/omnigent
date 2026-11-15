@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowUpRightIcon, ChevronRightIcon, UnlinkIcon, UsersIcon, XIcon } from "lucide-react";
+import { ChevronRightIcon, UnlinkIcon, UsersIcon, XIcon } from "lucide-react";
 import { SessionStateBadge } from "@/components/SessionStateBadge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -10,10 +10,10 @@ import {
   useUntrackWorker,
 } from "@/hooks/useGlobalHubTasks";
 import { getSessionState } from "@/hooks/useSessionState";
-import { Link } from "@/lib/routing";
 import { cn } from "@/lib/utils";
 import { groupAssets } from "./assetGroups";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { OpenSessionLink } from "./OpenSessionLink";
 
 /**
  * A card's panel with the task's assets and workers, one tab each. Beside the
@@ -145,7 +145,7 @@ function RelatedSessions({
                 <span className="min-w-0 flex-1 text-xs font-medium break-words">
                   {workerLabel(worker)}
                 </span>
-                <OpenSessionLink worker={worker} />
+                <WorkerSessionLink worker={worker} />
               </div>
               <span className="font-mono text-[10.5px] text-muted-foreground">
                 worker {shortId(worker.id)} · session {shortId(worker.session_id)}
@@ -181,7 +181,7 @@ function WorkerList({ workers }: { workers: AgentTaskWorker[] }) {
               <div className="flex min-w-0 items-center justify-between gap-2">
                 {state ? <SessionStateBadge state={state} /> : <span />}
                 <div className="flex shrink-0 items-center gap-1">
-                  <OpenSessionLink worker={worker} />
+                  <WorkerSessionLink worker={worker} />
                   <Button
                     variant="outline"
                     size="icon-sm"
@@ -216,18 +216,8 @@ function WorkerList({ workers }: { workers: AgentTaskWorker[] }) {
   );
 }
 
-function OpenSessionLink({ worker }: { worker: AgentTaskWorker }) {
-  return (
-    <Button asChild variant="outline" size="icon-sm" className="text-muted-foreground">
-      <Link
-        to={`/c/${encodeURIComponent(worker.session_id)}`}
-        aria-label={`Open ${workerLabel(worker)}`}
-        title="Open session"
-      >
-        <ArrowUpRightIcon aria-hidden />
-      </Link>
-    </Button>
-  );
+function WorkerSessionLink({ worker }: { worker: AgentTaskWorker }) {
+  return <OpenSessionLink sessionId={worker.session_id} label={`Open ${workerLabel(worker)}`} />;
 }
 
 function workerLabel(worker: AgentTaskWorker): string {
