@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -12,9 +12,11 @@ import { authenticatedFetch } from "@/lib/identity";
 import type * as IdentityModule from "@/lib/identity";
 import { jsonResponse, systemNotice } from "@/test/globalHubFixtures";
 
+const identity = vi.hoisted(() => ({ userId: "alice@example.com" }));
 vi.mock("@/lib/identity", async (importOriginal) => ({
   ...(await importOriginal<typeof IdentityModule>()),
   authenticatedFetch: vi.fn(),
+  getCurrentUserId: () => identity.userId,
 }));
 
 /** Marks the page once the notice has loaded, so a missing dot is not a pending fetch. */
@@ -32,6 +34,10 @@ function renderDot(notice: SystemNotice | null): void {
     </QueryClientProvider>,
   );
 }
+
+beforeEach(() => {
+  identity.userId = "alice@example.com";
+});
 
 afterEach(() => {
   cleanup();
@@ -55,6 +61,20 @@ describe("SystemNoticeDot", () => {
 
     renderDot(notice);
 
+    expect(await screen.findByTestId("notice-loaded")).toBeInTheDocument();
+    expect(screen.queryByTestId("globalhub-notice-dot")).toBeNull();
+  });
+
+  it("keeps each account's seen notice apart in one browser", async () => {
+    markSystemNoticeSeen("n12");
+    identity.userId = "bob@example.com";
+
+    renderDot(systemNotice("n12"));
+    expect(await screen.findByTestId("globalhub-notice-dot")).toBeInTheDocument();
+
+    cleanup();
+    identity.userId = "alice@example.com";
+    renderDot(systemNotice("n12"));
     expect(await screen.findByTestId("notice-loaded")).toBeInTheDocument();
     expect(screen.queryByTestId("globalhub-notice-dot")).toBeNull();
   });

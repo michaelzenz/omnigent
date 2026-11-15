@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { authenticatedFetch } from "@/lib/identity";
+import { globalHubStorageKey } from "@/lib/globalHubStorage";
+import { authenticatedFetch, subscribeIdentity } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 
 /** A control the user sets before clicking an action: a toggle or a text box. */
@@ -44,7 +45,6 @@ export type SystemNoticeValues = Record<string, boolean | string>;
 
 const NOTICE_PATH = "/v1/agent-tasks/system-notice";
 const SYSTEM_NOTICE_QUERY_KEY = ["globalhub-system-notice"] as const;
-const SEEN_NOTICE_STORAGE_KEY = "omnigent.globalhub.seen-notice-id";
 
 async function sendNoticeRequest(path: string, body?: unknown): Promise<Response> {
   const res = await authenticatedFetch(path, {
@@ -96,50 +96,60 @@ export function useDismissSystemNotice() {
   });
 }
 
-// The id of the last notice the user saw on the board, kept in this browser.
-let seenNoticeId = readSeenNoticeId();
+// The id of the last notice the signed-in user saw on the board, kept in this
+// browser under that user's key; ``key`` is ``null`` until the user is known.
+let seenNotice: { key: string | null; id: string | null } = { key: null, id: null };
 const seenListeners = new Set<() => void>();
 
-function readSeenNoticeId(): string | null {
+function readSeenNoticeId(key: string | null): string | null {
+  if (key === null) return null;
   try {
-    return localStorage.getItem(SEEN_NOTICE_STORAGE_KEY);
+    return localStorage.getItem(key);
   } catch {
     return null;
   }
 }
 
+/** The signed-in user's last seen notice, read again when the user changes. */
+function currentSeenNoticeId(): string | null {
+  const key = globalHubStorageKey("seen-notice-id");
+  if (seenNotice.key !== key) seenNotice = { key, id: readSeenNoticeId(key) };
+  return seenNotice.id;
+}
+
 function subscribeToSeenNotice(listener: () => void): () => void {
   // Another tab that opens the board marks the notice seen here too.
   const onStorage = (event: StorageEvent) => {
-    if (event.key !== SEEN_NOTICE_STORAGE_KEY) return;
-    seenNoticeId = event.newValue;
+    if (event.key === null || event.key !== seenNotice.key) return;
+    seenNotice = { key: event.key, id: event.newValue };
     listener();
   };
   seenListeners.add(listener);
   window.addEventListener("storage", onStorage);
+  const unsubscribeIdentity = subscribeIdentity(listener);
   return () => {
     seenListeners.delete(listener);
     window.removeEventListener("storage", onStorage);
+    unsubscribeIdentity();
   };
 }
 
 /** Record that the user saw a notice on the board, which clears the sidebar dot. */
 export function markSystemNoticeSeen(noticeId: string): void {
-  if (seenNoticeId === noticeId) return;
-  seenNoticeId = noticeId;
-  try {
-    localStorage.setItem(SEEN_NOTICE_STORAGE_KEY, noticeId);
-  } catch {
-    // The dot still clears for this page when storage is unavailable.
+  if (currentSeenNoticeId() === noticeId) return;
+  const { key } = seenNotice;
+  seenNotice = { key, id: noticeId };
+  if (key !== null) {
+    try {
+      localStorage.setItem(key, noticeId);
+    } catch {
+      // The dot still clears for this page when storage is unavailable.
+    }
   }
   seenListeners.forEach((listener) => listener());
 }
 
 /** The id of the last notice the user saw on the board, or ``null``. */
 export function useSeenSystemNoticeId(): string | null {
-  return useSyncExternalStore(
-    subscribeToSeenNotice,
-    () => seenNoticeId,
-    () => seenNoticeId,
-  );
+  return useSyncExternalStore(subscribeToSeenNotice, currentSeenNoticeId, currentSeenNoticeId);
 }

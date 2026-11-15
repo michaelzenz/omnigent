@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SystemNoticeCard } from "./SystemNoticeCard";
 import type * as NoticeBridgeModule from "./noticeBridge";
 import type { SystemNotice } from "@/hooks/useGlobalHubNotice";
+import { globalHubStorageKey } from "@/lib/globalHubStorage";
 import { authenticatedFetch } from "@/lib/identity";
 import type * as IdentityModule from "@/lib/identity";
 import { HTML_PREVIEW_SANDBOX } from "@/shell/codeViewerHelpers";
@@ -13,6 +14,7 @@ import { jsonResponse, noticeInput, systemNotice } from "@/test/globalHubFixture
 vi.mock("@/lib/identity", async (importOriginal) => ({
   ...(await importOriginal<typeof IdentityModule>()),
   authenticatedFetch: vi.fn(),
+  getCurrentUserId: () => "alice@example.com",
 }));
 
 // jsdom does not run the frame's script, so the test relays the frame's clicks.
@@ -91,7 +93,7 @@ describe("SystemNoticeCard", () => {
     expect(screen.getByText("Published by Custodian")).toBeInTheDocument();
     expect(screen.getByText("ones")).toBeInTheDocument();
     expect(screen.queryByText(/\*\*/)).toBeNull();
-    expect(localStorage.getItem("omnigent.globalhub.seen-notice-id")).toBe("n1");
+    expect(localStorage.getItem(globalHubStorageKey("seen-notice-id") ?? "")).toBe("n1");
   });
 
   it("switches a group's toggles, or all of an action's, together", async () => {
