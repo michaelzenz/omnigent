@@ -76,14 +76,18 @@ def create_agent_task_board_router(
     ) -> AgentTaskBoard:
         """Read the first ``limit`` live tasks on the caller's board as cards, in board order.
 
-        A worker whose session no longer exists is left off its card.
+        A worker whose session no longer exists is left off its card. The
+        count of tasks without a manager covers the whole board.
         """
         user_id = require_user(request, auth_provider)
         tasks, has_more = await asyncio.to_thread(_live_tasks, board.tasks, user_id, limit)
         task_ids = [task.id for task in tasks]
-        workers, assets = await asyncio.gather(
+        workers, assets, unmanaged_count = await asyncio.gather(
             asyncio.to_thread(board.workers.list_for_tasks, task_ids, owner_user_id=user_id),
             asyncio.to_thread(board.assets.list_for_tasks, task_ids, owner_user_id=user_id),
+            asyncio.to_thread(
+                board.tasks.count, owner_user_id=user_id, states=LIVE_TASK_STATES, unmanaged=True
+            ),
         )
         worker_sessions = await read_sessions(workers, user_id)
         workers_by_task: dict[str, list[AgentTaskBoardWorker]] = defaultdict(list)
@@ -101,6 +105,7 @@ def create_agent_task_board_router(
                 _card(task, workers_by_task[task.id], assets_by_task[task.id]) for task in tasks
             ],
             has_more=has_more,
+            unmanaged_count=unmanaged_count,
         )
 
     return router

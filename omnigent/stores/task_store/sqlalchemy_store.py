@@ -49,6 +49,17 @@ def _owned(owner_user_id: str | None) -> ColumnElement[bool]:
     )
 
 
+def _matching(
+    owner_user_id: str | None, states: Collection[str] | None, unmanaged: bool
+) -> list[ColumnElement[bool]]:
+    clauses = [_owned(owner_user_id)]
+    if states is not None:
+        clauses.append(SqlTask.state.in_([encode_task_state(state) for state in states]))
+    if unmanaged:
+        clauses.append(SqlTask.manager_id.is_(None))
+    return clauses
+
+
 def _owned_row(session: Session, task_id: str, owner_user_id: str | None) -> SqlTask | None:
     row = session.get(SqlTask, (current_workspace_id(), task_id))
     return row if row is not None and row.owner_user_id == owner_user_id else None
@@ -140,12 +151,11 @@ class SqlAlchemyTaskStore(TaskStore):
         owner_user_id: str | None,
         states: Collection[str] | None = None,
         manager_id: str | None = None,
+        unmanaged: bool = False,
         limit: int | None = None,
     ) -> builtins.list[Task]:
         """List the owner's tasks in board order (highest rank first)."""
-        stmt = select(SqlTask).where(_owned(owner_user_id))
-        if states is not None:
-            stmt = stmt.where(SqlTask.state.in_([encode_task_state(state) for state in states]))
+        stmt = select(SqlTask).where(*_matching(owner_user_id, states, unmanaged))
         if manager_id is not None:
             stmt = stmt.where(SqlTask.manager_id == manager_id)
         stmt = stmt.order_by(desc(SqlTask.queue_rank), desc(SqlTask.id))
@@ -153,6 +163,22 @@ class SqlAlchemyTaskStore(TaskStore):
             stmt = stmt.limit(limit)
         with self._session("list_tasks") as session:
             return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
+
+    def count(
+        self,
+        *,
+        owner_user_id: str | None,
+        states: Collection[str] | None = None,
+        unmanaged: bool = False,
+    ) -> int:
+        """Count the owner's tasks."""
+        stmt = (
+            select(func.count())
+            .select_from(SqlTask)
+            .where(*_matching(owner_user_id, states, unmanaged))
+        )
+        with self._session("count_tasks") as session:
+            return int(session.scalar(stmt) or 0)
 
     def update(
         self,

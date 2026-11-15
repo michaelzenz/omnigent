@@ -41,6 +41,13 @@ _TURN_FINISHED_ADVICE = (
     "Update the task overview and stamp all assets."
 )
 _CLICK_TEXT_SHOWN_CHARS = 500
+#: The most tasks one request for managers lists.
+MAX_SPAWN_TASKS = 100
+_SPAWN_PROMPT = "[System: assign these unmanaged tasks to managers]"
+_SPAWN_ADVICE = (
+    "Assign each task below to the best-fitting active manager, or create a manager "
+    'when none fits. Follow "Assigning unmanaged tasks" in the Task broker manual.'
+)
 
 
 class BrokerPackager:
@@ -226,6 +233,41 @@ class EventNoticeWriter:
         )
 
 
+class SpawnManagersWriter:
+    """Writes the broker's message for a ``spawn_managers`` queue item when it is sent."""
+
+    def __init__(self, *, board: BoardStores) -> None:
+        """
+        :param board: Holds the tasks the message lists.
+        """
+        self._board = board
+
+    def write(self, item: AgentQueueItem) -> str | None:
+        """
+        Return the message that lists the owner's live tasks without a manager. Blocking.
+
+        :returns: The message, with the tasks in board order, or ``None`` when
+            every live task has a manager.
+        """
+        owner = item.owner_user_id
+        tasks = self._board.tasks.list(
+            owner_user_id=owner, states=LIVE_TASK_STATES, unmanaged=True, limit=MAX_SPAWN_TASKS
+        )
+        if not tasks:
+            return None
+        lines = [_SPAWN_PROMPT, _SPAWN_ADVICE, *(_task_line(task) for task in tasks)]
+        if len(tasks) == MAX_SPAWN_TASKS:
+            total = self._board.tasks.count(
+                owner_user_id=owner, states=LIVE_TASK_STATES, unmanaged=True
+            )
+            if total > len(tasks):
+                lines.append(
+                    f"… and {total - len(tasks)} more. The user can send a new request "
+                    "after you assign these."
+                )
+        return "\n".join(lines)
+
+
 def write_notice_click(item: AgentQueueItem) -> str:
     """Write the custodian's message for a ``notice_click`` queue item, from its payload."""
     click = item.payload
@@ -345,7 +387,7 @@ def _roster_text(tasks: Sequence[Task]) -> str:
     lines = ["[Task roster]"]
     used = 0
     for index, task in enumerate(tasks):
-        line = f"{task.id} — {task.title} ({task.state})"
+        line = _task_line(task)
         if index and used + len(line) > _ROSTER_MAX_CHARS:
             lines.append(
                 f"… and {len(tasks) - index} more; list them with "
@@ -357,3 +399,7 @@ def _roster_text(tasks: Sequence[Task]) -> str:
     if not tasks:
         lines.append("(no tasks yet)")
     return "\n".join(lines)
+
+
+def _task_line(task: Task) -> str:
+    return f"{task.id} — {task.title} ({task.state})"

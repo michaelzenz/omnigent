@@ -93,6 +93,7 @@ from omnigent.server.agent_queue_packagers import (
     BrokerPackager,
     EventNoticeWriter,
     ManagerPackager,
+    SpawnManagersWriter,
     write_notice_click,
 )
 from omnigent.server.agent_task_session_events import (
@@ -4285,6 +4286,7 @@ def create_app(
                         board=board_stores, conversations=conversation_store
                     ).write,
                     "notice_click": write_notice_click,
+                    "spawn_managers": SpawnManagersWriter(board=board_stores).write,
                 },
                 packagers=[
                     BrokerPackager(

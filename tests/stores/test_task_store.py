@@ -51,11 +51,12 @@ def test_new_tasks_top_their_owners_board(store: SqlAlchemyTaskStore) -> None:
     assert store.get(first, owner_user_id=None) is None
 
 
-def test_list_filters_by_state_and_manager(store: SqlAlchemyTaskStore) -> None:
+def test_list_and_count_filter_by_state_and_manager(store: SqlAlchemyTaskStore) -> None:
     manager_id = uuid.uuid4().hex
     _create(store, "managed", manager_id=manager_id)
     _create(store, "idle", state="idle")
     _create(store, "archived", state="archived")
+    _create(store, "bob's", owner=BOB)
 
     def titles(**filters: Any) -> list[str]:
         return [task.title for task in store.list(owner_user_id=ALICE, **filters)]
@@ -63,6 +64,10 @@ def test_list_filters_by_state_and_manager(store: SqlAlchemyTaskStore) -> None:
     assert titles(states=["active"]) == ["managed"]
     assert titles(states=["idle", "archived"]) == ["archived", "idle"]
     assert titles(manager_id=manager_id) == ["managed"]
+    assert titles(unmanaged=True) == ["archived", "idle"]
+    assert store.count(owner_user_id=ALICE) == 3
+    assert store.count(owner_user_id=ALICE, states=["active", "idle"], unmanaged=True) == 1
+    assert store.count(owner_user_id=BOB, unmanaged=True) == 1
 
 
 def test_update_changes_fields_and_tracks_resolution(store: SqlAlchemyTaskStore) -> None:

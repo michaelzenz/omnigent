@@ -6367,11 +6367,14 @@ class AgentTaskBoard(BaseModel):
     """The first live tasks on the caller's board, in board order, as cards.
 
     ``has_more`` says the board has more live tasks than ``data`` holds.
+    ``unmanaged_count`` counts the live tasks on the whole board that have no
+    manager.
     """
 
     object: Literal["agent.task.board.cards"] = "agent.task.board.cards"
     data: list[AgentTaskBoardCard]
     has_more: bool
+    unmanaged_count: int
 
 
 class AgentTaskBoardRole(BaseModel):
@@ -6405,6 +6408,17 @@ class AgentTaskRoleWaitingDismissed(BaseModel):
     role: str
     manager_id: str | None
     dismissed: int
+
+
+class AgentTaskSpawnManagersRequested(BaseModel):
+    """Whether a request for managers now waits for the caller's broker.
+
+    ``queued`` is false when every live task has a manager; then nothing waits.
+    """
+
+    object: Literal["agent.task.spawn_managers.requested"] = "agent.task.spawn_managers.requested"
+    unmanaged_count: int
+    queued: bool
 
 
 AgentSystemNoticeState = Literal["active", "resolved"]

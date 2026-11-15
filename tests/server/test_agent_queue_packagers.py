@@ -26,6 +26,7 @@ from omnigent.server.agent_queue_packagers import (
     BrokerPackager,
     EventNoticeWriter,
     ManagerPackager,
+    SpawnManagersWriter,
     write_notice_click,
 )
 from omnigent.server.agent_task_delivery import SendResult, SessionSendDeps
@@ -332,6 +333,61 @@ def test_a_notice_click_is_written_for_the_custodian() -> None:
             'notice itself with system_notice(action="get") if you need its full body.',
         ]
     )
+
+
+def test_a_request_for_managers_lists_the_live_tasks_without_one(
+    board: BoardStores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def task(title: str, owner: str = ALICE, **fields: Any) -> str:
+        task_id = next(_ids)
+        board.tasks.create(task_id, owner_user_id=owner, title=title, goal="Finish it", **fields)
+        return task_id
+
+    task("Managed", manager_id=next(_ids))
+    task("Archived", state="archived")
+    task("Bob's", owner=BOB, manager_id=next(_ids))
+    resolved = task("Resolved", state="agent-resolved")
+    idle = task("Idle", state="idle")
+    active = task("Active")
+    item = AgentQueueItem(
+        id=next(_ids),
+        owner_user_id=ALICE,
+        target_session_id=next(_ids),
+        kind="spawn_managers",
+        state="sending",
+        seq=1,
+        created_at=0,
+        payload={},
+    )
+    writer = SpawnManagersWriter(board=board)
+    header = [
+        "[System: assign these unmanaged tasks to managers]",
+        "Assign each task below to the best-fitting active manager, or create a manager "
+        'when none fits. Follow "Assigning unmanaged tasks" in the Task broker manual.',
+    ]
+
+    whole = writer.write(item)
+    monkeypatch.setattr("omnigent.server.agent_queue_packagers.MAX_SPAWN_TASKS", 2)
+    capped = writer.write(item)
+
+    assert whole == "\n".join(
+        [
+            *header,
+            f"{active} — Active (active)",
+            f"{idle} — Idle (idle)",
+            f"{resolved} — Resolved (agent-resolved)",
+        ]
+    )
+    assert capped == "\n".join(
+        [
+            *header,
+            f"{active} — Active (active)",
+            f"{idle} — Idle (idle)",
+            "… and 1 more. The user can send a new request after you assign these.",
+        ]
+    )
+    # Every live task of Bob's has a manager, so his request sends nothing.
+    assert writer.write(dataclasses.replace(item, owner_user_id=BOB)) is None
 
 
 async def test_a_waiting_event_reaches_the_broker_as_a_notice(

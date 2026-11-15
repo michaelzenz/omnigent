@@ -1246,7 +1246,7 @@
         "type": "object"
       },
       "AgentTaskBoard": {
-        "description": "The first live tasks on the caller's board, in board order, as cards.\n\n`has_more` says the board has more live tasks than `data` holds.",
+        "description": "The first live tasks on the caller's board, in board order, as cards.\n\n`has_more` says the board has more live tasks than `data` holds.\n`unmanaged_count` counts the live tasks on the whole board that have no\nmanager.",
         "properties": {
           "data": {
             "items": {
@@ -1264,11 +1264,17 @@
             "default": "agent.task.board.cards",
             "title": "Object",
             "type": "string"
+          },
+          "unmanaged_count": {
+            "format": "int64",
+            "title": "Unmanaged Count",
+            "type": "integer"
           }
         },
         "required": [
           "data",
-          "has_more"
+          "has_more",
+          "unmanaged_count"
         ],
         "title": "AgentTaskBoard",
         "type": "object"
@@ -2119,6 +2125,32 @@
           "already_bound"
         ],
         "title": "AgentTaskSessionAdoption",
+        "type": "object"
+      },
+      "AgentTaskSpawnManagersRequested": {
+        "description": "Whether a request for managers now waits for the caller's broker.\n\n`queued` is false when every live task has a manager; then nothing waits.",
+        "properties": {
+          "object": {
+            "const": "agent.task.spawn_managers.requested",
+            "default": "agent.task.spawn_managers.requested",
+            "title": "Object",
+            "type": "string"
+          },
+          "queued": {
+            "title": "Queued",
+            "type": "boolean"
+          },
+          "unmanaged_count": {
+            "format": "int64",
+            "title": "Unmanaged Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unmanaged_count",
+          "queued"
+        ],
+        "title": "AgentTaskSpawnManagersRequested",
         "type": "object"
       },
       "AgentTaskWorkerDeletedResponse": {
@@ -16226,7 +16258,7 @@
     },
     "/v1/agent-tasks/board": {
       "get": {
-        "description": "Read the first `limit` live tasks on the caller's board as cards, in board order.\n\nA worker whose session no longer exists is left off its card.",
+        "description": "Read the first `limit` live tasks on the caller's board as cards, in board order.\n\nA worker whose session no longer exists is left off its card. The\ncount of tasks without a manager covers the whole board.",
         "operationId": "read_board_v1_agent_tasks_board_get",
         "parameters": [
           {
@@ -16556,7 +16588,7 @@
     },
     "/v1/agent-tasks/roles/{role}/dismiss-waiting": {
       "post": {
-        "description": "Dismiss the broker's unrouted events, or drop the custodian's queued clicks.\n\nA notice or click the role is already handling goes on.",
+        "description": "Clear the waiting work of the caller's broker or custodian.\n\nFor the broker, it dismisses the unrouted events and drops the queued\nrequests for managers; for the custodian, it drops the queued clicks.\nA notice, request or click the role is already handling goes on.",
         "operationId": "dismiss_role_waiting_v1_agent_tasks_roles__role__dismiss_waiting_post",
         "parameters": [
           {
@@ -16782,6 +16814,28 @@
           }
         },
         "summary": "Adopt Session",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/spawn-managers": {
+      "post": {
+        "description": "Ask the caller's broker to give a manager to each live task that has none.\n\nThe request waits in the queue until the broker is between turns. Its\nmessage lists the tasks that still have no manager at that time.",
+        "operationId": "request_managers_v1_agent_tasks_spawn_managers_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskSpawnManagersRequested"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Request Managers",
         "tags": [
           "agent-tasks"
         ]

@@ -1,17 +1,22 @@
 """The roles that run the caller's GlobalHub board, and the work waiting for them.
 
-The broker waits on unrouted events, each manager on the events routed to it,
-and the custodian on queued notice clicks.
+The broker waits on unrouted events and on queued requests for managers, each
+manager on the events routed to it, and the custodian on queued notice clicks.
 """
 
 from __future__ import annotations
 
 import asyncio
+import uuid
 
 from fastapi import APIRouter, Request
 
 from omnigent.agent_tasks.board_stores import BoardStores
-from omnigent.agent_tasks.role_sessions import RoleSessionStores, current_role_session
+from omnigent.agent_tasks.role_sessions import (
+    RoleSessionStores,
+    current_role_session,
+    ensure_role_session,
+)
 from omnigent.agent_tasks.roles import (
     BROKER_ROLE_KEY,
     CUSTODIAN_ROLE_KEY,
@@ -19,7 +24,7 @@ from omnigent.agent_tasks.roles import (
     BuiltinRole,
     builtin_role,
 )
-from omnigent.entities import Conversation, Manager, TaskEvent
+from omnigent.entities import LIVE_TASK_STATES, Conversation, Manager, TaskEvent
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.agent_task_delivery import SessionSendDeps
 from omnigent.server.agent_task_session_states import read_session_states
@@ -29,6 +34,7 @@ from omnigent.server.schemas import (
     AgentTaskBoardRole,
     AgentTaskBoardRoles,
     AgentTaskRoleWaitingDismissed,
+    AgentTaskSpawnManagersRequested,
 )
 
 
@@ -40,7 +46,7 @@ def create_agent_task_role_board_router(
 ) -> APIRouter:
     """Build the router for the roles that run the caller's board.
 
-    :param board: The board's managers, events and queue.
+    :param board: The board's tasks, managers, events and queue.
     :param sessions: Where the role sessions and the GlobalHub placement live.
     :param session_deps: Reads runner liveness, so a role's turn whose runner is
         gone settles before its row shows it.
@@ -57,13 +63,17 @@ def create_agent_task_role_board_router(
             return board.events.list(owner_user_id=user_id, states=["unrouted"])
         return board.events.list(owner_user_id=user_id, states=["routed"], manager_id=manager.id)
 
-    def queued_clicks(user_id: str | None, custodian_session: Conversation | None) -> list[str]:
-        if custodian_session is None:
+    def queued_items(user_id: str | None, session: Conversation | None, kind: str) -> list[str]:
+        if session is None:
             return []
         items = board.queue.list(
-            owner_user_id=user_id, states=["queued"], target_session_id=custodian_session.id
+            owner_user_id=user_id, states=["queued"], target_session_id=session.id
         )
-        return [item.id for item in items if item.kind == "notice_click"]
+        return [item.id for item in items if item.kind == kind]
+
+    def broker_waiting(user_id: str | None, broker_session: Conversation | None) -> int:
+        requests = queued_items(user_id, broker_session, "spawn_managers")
+        return len(waiting_events(user_id, None)) + len(requests)
 
     @router.get("/agent-tasks/board/roles", response_model=AgentTaskBoardRoles)
     async def read_roles(request: Request) -> AgentTaskBoardRoles:
@@ -78,12 +88,12 @@ def create_agent_task_role_board_router(
             broker_session = current_role_session(broker, user_id=user_id, stores=sessions)
             custodian_session = current_role_session(custodian, user_id=user_id, stores=sessions)
             rows: list[tuple[BuiltinRole, Manager | None, Conversation | None, int]] = [
-                (broker, None, broker_session, len(waiting_events(user_id, None))),
+                (broker, None, broker_session, broker_waiting(user_id, broker_session)),
                 (
                     custodian,
                     None,
                     custodian_session,
-                    len(queued_clicks(user_id, custodian_session)),
+                    len(queued_items(user_id, custodian_session, "notice_click")),
                 ),
             ]
             managers = board.managers.list(owner_user_id=user_id)
@@ -121,9 +131,11 @@ def create_agent_task_role_board_router(
         "/agent-tasks/roles/{role}/dismiss-waiting", response_model=AgentTaskRoleWaitingDismissed
     )
     async def dismiss_role_waiting(request: Request, role: str) -> AgentTaskRoleWaitingDismissed:
-        """Dismiss the broker's unrouted events, or drop the custodian's queued clicks.
+        """Clear the waiting work of the caller's broker or custodian.
 
-        A notice or click the role is already handling goes on.
+        For the broker, it dismisses the unrouted events and drops the queued
+        requests for managers; for the custodian, it drops the queued clicks.
+        A notice, request or click the role is already handling goes on.
         """
         user_id = require_user(request, auth_provider)
         if role not in (BROKER_ROLE_KEY, CUSTODIAN_ROLE_KEY):
@@ -133,12 +145,12 @@ def create_agent_task_role_board_router(
 
         def dismiss() -> int:
             if role == BROKER_ROLE_KEY:
-                return _dismiss_events(board, waiting_events(user_id, None), user_id)
+                session = current_role_session(broker, user_id=user_id, stores=sessions)
+                events = _dismiss_events(board, waiting_events(user_id, None), user_id)
+                requests = queued_items(user_id, session, "spawn_managers")
+                return events + _drop_items(board, requests, user_id)
             session = current_role_session(custodian, user_id=user_id, stores=sessions)
-            return sum(
-                board.queue.delete(item_id, owner_user_id=user_id)
-                for item_id in queued_clicks(user_id, session)
-            )
+            return _drop_items(board, queued_items(user_id, session, "notice_click"), user_id)
 
         dismissed = await asyncio.to_thread(dismiss)
         return AgentTaskRoleWaitingDismissed(role=role, manager_id=None, dismissed=dismissed)
@@ -169,6 +181,29 @@ def create_agent_task_role_board_router(
             role=MANAGER_ROLE_KEY, manager_id=manager_id, dismissed=dismissed
         )
 
+    @router.post("/agent-tasks/spawn-managers", response_model=AgentTaskSpawnManagersRequested)
+    async def request_managers(request: Request) -> AgentTaskSpawnManagersRequested:
+        """Ask the caller's broker to give a manager to each live task that has none.
+
+        The request waits in the queue until the broker is between turns. Its
+        message lists the tasks that still have no manager at that time.
+        """
+        user_id = require_user(request, auth_provider)
+        unmanaged = await asyncio.to_thread(
+            board.tasks.count, owner_user_id=user_id, states=LIVE_TASK_STATES, unmanaged=True
+        )
+        if not unmanaged:
+            return AgentTaskSpawnManagersRequested(unmanaged_count=0, queued=False)
+        broker_session, _ = await ensure_role_session(broker, user_id=user_id, stores=sessions)
+        await asyncio.to_thread(
+            board.queue.enqueue,
+            uuid.uuid4().hex,
+            owner_user_id=user_id,
+            target_session_id=broker_session.id,
+            kind="spawn_managers",
+        )
+        return AgentTaskSpawnManagersRequested(unmanaged_count=unmanaged, queued=True)
+
     return router
 
 
@@ -183,3 +218,7 @@ def _dismiss_events(board: BoardStores, events: list[TaskEvent], user_id: str | 
     for event in events:
         board.events.dismiss(event.id, owner_user_id=user_id)
     return len(events)
+
+
+def _drop_items(board: BoardStores, item_ids: list[str], user_id: str | None) -> int:
+    return sum(board.queue.delete(item_id, owner_user_id=user_id) for item_id in item_ids)

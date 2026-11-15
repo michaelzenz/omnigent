@@ -23,10 +23,22 @@ ALICE = {"X-Forwarded-Email": ALICE_ID}
 BOB = {"X-Forwarded-Email": BOB_ID}
 
 
-def _task(db_uri: str, title: str, *, state: str = "active", owner: str = ALICE_ID) -> str:
+def _task(
+    db_uri: str,
+    title: str,
+    *,
+    state: str = "active",
+    owner: str = ALICE_ID,
+    manager_id: str | None = None,
+) -> str:
     task_id = uuid.uuid4().hex
     SqlAlchemyTaskStore(db_uri).create(
-        task_id, owner_user_id=owner, title=title, goal=f"Finish {title}", state=state
+        task_id,
+        owner_user_id=owner,
+        title=title,
+        goal=f"Finish {title}",
+        state=state,
+        manager_id=manager_id,
     )
     return task_id
 
@@ -63,7 +75,7 @@ async def test_the_board_reads_the_live_tasks_in_board_order_a_window_at_a_time(
     resolved = _task(db_uri, "Resolved", state="agent-resolved")
     _task(db_uri, "Archived", state="archived")
     idle = _task(db_uri, "Idle", state="idle")
-    active = _task(db_uri, "Active")
+    active = _task(db_uri, "Active", manager_id=uuid.uuid4().hex)
     _task(db_uri, "Bob's", owner=BOB_ID)
 
     window = await _board(auth_client, limit=2)
@@ -80,6 +92,8 @@ async def test_the_board_reads_the_live_tasks_in_board_order_a_window_at_a_time(
     )
     assert "internal_note" not in whole["data"][0]
     assert [card["title"] for card in bobs["data"]] == ["Bob's"]
+    # The count covers the whole board, not only the window.
+    assert [board["unmanaged_count"] for board in (window, whole, bobs)] == [2, 2, 1]
 
 
 async def test_a_card_lists_its_workers_busy_first_then_most_recent_and_its_assets(

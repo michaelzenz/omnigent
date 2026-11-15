@@ -67,6 +67,7 @@ class TaskStore(ABC):
         owner_user_id: str | None,
         states: Collection[str] | None = None,
         manager_id: str | None = None,
+        unmanaged: bool = False,
         limit: int | None = None,
     ) -> builtins.list[Task]:
         """
@@ -75,8 +76,26 @@ class TaskStore(ABC):
         :param owner_user_id: The owner whose board to read.
         :param states: Only tasks in these states, or every state when ``None``.
         :param manager_id: Only this manager's tasks, when set.
+        :param unmanaged: Only tasks without a manager, when true.
         :param limit: At most this many tasks, or all when ``None``.
         :returns: The matching tasks.
+        """
+
+    @abstractmethod
+    def count(
+        self,
+        *,
+        owner_user_id: str | None,
+        states: Collection[str] | None = None,
+        unmanaged: bool = False,
+    ) -> int:
+        """
+        Count the owner's tasks.
+
+        :param owner_user_id: The owner whose board to read.
+        :param states: Only tasks in these states, or every state when ``None``.
+        :param unmanaged: Only tasks without a manager, when true.
+        :returns: How many tasks match.
         """
 
     @abstractmethod

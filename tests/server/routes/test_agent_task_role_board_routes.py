@@ -14,6 +14,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConver
 from omnigent.stores.manager_store import sqlalchemy_store as manager_tables
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
+from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
 
 ALICE_ID = "alice@example.com"
@@ -150,3 +151,46 @@ async def test_dismissing_clears_only_that_roles_waiting_work(
     assert states == ["dismissed", "dismissed", "unrouted", "dismissed", "routed"]
     queue = SqlAlchemyAgentQueueStore(db_uri)
     assert queue.list(owner_user_id=ALICE_ID, target_session_id=custodian) == []
+
+
+async def test_a_request_for_managers_waits_for_the_broker_until_dismissed(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    broker, _custodian = _place_role_sessions(db_uri)
+    tasks = SqlAlchemyTaskStore(db_uri)
+
+    def task(owner: str, manager_id: str | None = None) -> None:
+        tasks.create(
+            uuid.uuid4().hex,
+            owner_user_id=owner,
+            title="A task",
+            goal="Finish it",
+            manager_id=manager_id,
+        )
+
+    spawn = "/v1/agent-tasks/spawn-managers"
+    nothing_to_assign = await auth_client.post(spawn, headers=ALICE)
+    task(ALICE_ID)
+    task(ALICE_ID, manager_id=uuid.uuid4().hex)
+    task(BOB_ID)
+    _event(db_uri)
+
+    requested = await auth_client.post(spawn, headers=ALICE)
+    # Bob has no GlobalHub host, so he has no broker.
+    no_broker = await auth_client.post(spawn, headers=BOB)
+    queue = SqlAlchemyAgentQueueStore(db_uri)
+    queued = [item.kind for item in queue.list(owner_user_id=ALICE_ID, target_session_id=broker)]
+    roles = await auth_client.get("/v1/agent-tasks/board/roles", headers=ALICE)
+    dismissed = await auth_client.post(
+        "/v1/agent-tasks/roles/broker/dismiss-waiting", headers=ALICE
+    )
+
+    assert [
+        (response.json()["unmanaged_count"], response.json()["queued"])
+        for response in (nothing_to_assign, requested)
+    ] == [(0, False), (1, True)]
+    assert no_broker.status_code == 400
+    assert queued == ["spawn_managers"]
+    # The broker waits on the unrouted event and the request.
+    assert (roles.json()["data"][0]["waiting"], dismissed.json()["dismissed"]) == (2, 2)
+    assert queue.list(owner_user_id=ALICE_ID, target_session_id=broker) == []
