@@ -13,13 +13,14 @@ import weakref
 from dataclasses import dataclass
 from typing import Any
 
-from omnigent.agent_tasks.roles import BuiltinRole, role_definition, session_role
+from omnigent.agent_tasks.roles import WATCHER_ROLE, BuiltinRole, role_definition, session_role
 from omnigent.agent_tasks.session_labels import ROLE_LABEL
-from omnigent.entities import Conversation
+from omnigent.entities import WATCHER_ROLE_KEY_PREFIX, Conversation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import LEVEL_OWNER
 from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
+from omnigent.stores.watcher_store import WatcherStore
 
 GLOBALHUB_PROJECT_NAME = "GlobalHub"
 
@@ -75,6 +76,7 @@ def create_role_session(
     placement: GlobalHubPlacement,
     title: str,
     stores: RoleSessionStores,
+    model: str | None = None,
 ) -> Conversation:
     """Create a session for ``role`` owned by the user. Blocking.
 
@@ -83,8 +85,9 @@ def create_role_session(
     :param placement: The host and workspace the session runs on.
     :param title: The session title, e.g. ``"Task broker"``.
     :param stores: Where the session and its metadata live.
-    :returns: The new session, labeled with the role and running the user's
-        model for it.
+    :param model: The session's model, e.g. a watcher's own; ``None`` uses the
+        user's model for the role, else the role agent's own model.
+    :returns: The new session, labeled with the role.
     :raises OmnigentError: ``INTERNAL_ERROR`` when the role's agent is missing.
     """
     agent = stores.agent_store.get_by_name(role.agent_name)
@@ -101,7 +104,7 @@ def create_role_session(
         workspace=placement.workspace,
         project_id=ensure_globalhub_project(stores.project_store, user_id),
         labels={ROLE_LABEL: role.session_label},
-        model_override=role_definition(role, overrides).model,
+        model_override=model or role_definition(role, overrides).model,
     )
     if stores.permission_store is not None and user_id is not None:
         stores.permission_store.ensure_user(user_id)
@@ -129,6 +132,31 @@ async def ensure_role_session(
     lock = _ensure_locks.setdefault((user_id, role.key), asyncio.Lock())
     async with lock:
         return await asyncio.to_thread(_ensure_role_session, role, user_id, stores)
+
+
+async def ensure_watcher_session(
+    watcher_id: str, *, user_id: str | None, stores: RoleSessionStores, watchers: WatcherStore
+) -> tuple[Conversation, bool]:
+    """Return a watcher's session, creating it when needed.
+
+    A new session replaces the recorded one under the same rules as a
+    singleton role's: when it was deleted or archived, or when the user moved
+    GlobalHub to another host or workspace.
+
+    :param watcher_id: One of the user's watchers.
+    :param user_id: The owner, or ``None`` in single-user mode.
+    :param stores: Where the session and its metadata live.
+    :param watchers: Holds the watcher, which records its session.
+    :returns: The session, and whether this call created it.
+    :raises OmnigentError: ``NOT_FOUND`` when the watcher is missing or someone
+        else's; ``INVALID_INPUT`` without a GlobalHub placement.
+    """
+    key = f"{WATCHER_ROLE_KEY_PREFIX}{watcher_id}"
+    lock = _ensure_locks.setdefault((user_id, key), asyncio.Lock())
+    async with lock:
+        return await asyncio.to_thread(
+            _ensure_watcher_session, watcher_id, user_id, stores, watchers
+        )
 
 
 def ensure_globalhub_project(project_store: Any | None, user_id: str | None) -> str | None:
@@ -163,15 +191,22 @@ def is_role_session_current(
     user_id: str | None,
     stores: RoleSessionStores,
     managers: ManagerStore,
+    watchers: WatcherStore | None = None,
 ) -> bool:
     """Whether ``session`` still serves its role, so messages for the role may go to it. Blocking.
 
     A broker or custodian session must be the user's current one for that role;
-    a manager session must belong to one of the user's managers.
+    a manager session must belong to one of the user's managers, and a watcher
+    session to one of the user's watchers.
     """
     role = session_role(session.labels)
     if role is None or session.archived:
         return False
+    if role is WATCHER_ROLE:
+        return (
+            watchers is not None
+            and watchers.get_by_conversation_id(session.id, owner_user_id=user_id) is not None
+        )
     if not role.singleton:
         return managers.get_by_conversation_id(session.id, owner_user_id=user_id) is not None
     current = current_role_session(role, user_id=user_id, stores=stores)
@@ -202,6 +237,13 @@ def _current_role_session(
     user moved GlobalHub to another host or workspace.
     """
     session_id = stores.user_settings_store.get_globalhub_role_session(role.key, user_id=user_id)
+    return _usable_session(session_id, stores, placement)
+
+
+def _usable_session(
+    session_id: str | None, stores: RoleSessionStores, placement: GlobalHubPlacement
+) -> Conversation | None:
+    """Return the session unless it is gone, archived, or off the GlobalHub host and workspace."""
     current = stores.conversation_store.get_conversation(session_id) if session_id else None
     if (
         current is not None
@@ -225,6 +267,28 @@ def _ensure_role_session(
         role, user_id=user_id, placement=placement, title=role.title, stores=stores
     )
     settings.save_globalhub_role_session(role.key, created.id, user_id=user_id)
+    return created, True
+
+
+def _ensure_watcher_session(
+    watcher_id: str, user_id: str | None, stores: RoleSessionStores, watchers: WatcherStore
+) -> tuple[Conversation, bool]:
+    watcher = watchers.get(watcher_id, owner_user_id=user_id)
+    if watcher is None:
+        raise OmnigentError("watcher not found", code=ErrorCode.NOT_FOUND)
+    placement = require_globalhub_placement(stores.user_settings_store, user_id)
+    current = _usable_session(watcher.conversation_id, stores, placement)
+    if current is not None:
+        return current, False
+    created = create_role_session(
+        WATCHER_ROLE,
+        user_id=user_id,
+        placement=placement,
+        title=watcher.name,
+        stores=stores,
+        model=watcher.model,
+    )
+    watchers.update(watcher.id, owner_user_id=user_id, conversation_id=created.id)
     return created, True
 
 

@@ -1,0 +1,45 @@
+spec_version: 1
+name: onih-watcher
+description: >-
+  Onih Pi profile for GlobalHub watchers, which check outside systems on a
+  schedule and report what changed. Internal: New Chat does not offer it.
+
+executor:
+  type: omnigent
+  # Role sessions start headless, so the profile pins its model.
+  model: databricks-glm-5-3-flash
+  config:
+    harness: pi
+    system_prompt_mode: replace
+    history_window_turns: 5
+
+skills: none
+
+tools:
+  builtins:
+    - pmv2_read
+    - search_conversations
+
+# No Pi shell or file-edit tools. `mcp` reaches the host's MCP servers through
+# the pi-mcp-adapter extension, which is how a watcher reads GitHub, Jira or
+# Slack. Some of those servers can change things, so the instructions keep the
+# watcher read-only. No pmv2_api: a watcher reads the board but does not change it.
+allowed_builtin_tools:
+  - read
+  - grep
+  - find
+  - ls
+  - mcp
+  - pmv2_read
+  - search_conversations
+  - sys_session_list
+  - sys_session_get_info
+  - sys_session_get_history
+
+# system_prompt_mode: replace requires non-empty instructions.
+instructions: |
+  You are an Omnigent GlobalHub watcher. Follow the manual that accompanies
+  these instructions. Act only through the tools you have, and keep replies
+  brief. Work read-only: look things up, but do not create, change, or delete
+  anything (files, sessions, tickets, messages, or anything else). Report
+  what changed only in the way your manual says.

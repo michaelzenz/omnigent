@@ -13,6 +13,7 @@ from omnigent.agent_tasks.role_sessions import (
     create_role_session,
     ensure_globalhub_project,
     ensure_role_session,
+    ensure_watcher_session,
     is_role_session_current,
 )
 from omnigent.agent_tasks.roles import (
@@ -21,7 +22,7 @@ from omnigent.agent_tasks.roles import (
     BuiltinRole,
     builtin_role,
 )
-from omnigent.agent_tasks.session_labels import BROKER_ROLE_VALUE, ROLE_LABEL
+from omnigent.agent_tasks.session_labels import BROKER_ROLE_VALUE, ROLE_LABEL, WATCHER_ROLE_VALUE
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -29,6 +30,7 @@ from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStor
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
 from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
+from omnigent.stores.watcher_store.sqlalchemy_store import SqlAlchemyWatcherStore
 
 ALICE = "alice@example.com"
 PLACEMENT = GlobalHubPlacement(
@@ -39,7 +41,7 @@ PLACEMENT = GlobalHubPlacement(
 @pytest.fixture()
 def stores(db_uri: str) -> RoleSessionStores:
     agent_store = SqlAlchemyAgentStore(db_uri)
-    for name in ("onih-pmv2", "onih-custodian"):
+    for name in ("onih-pmv2", "onih-custodian", "onih-watcher"):
         agent_store.create(uuid.uuid4().hex, name, f"bundles/{name}.tar.gz")
     return RoleSessionStores(
         conversation_store=SqlAlchemyConversationStore(db_uri),
@@ -144,6 +146,66 @@ async def test_only_a_roles_current_session_takes_its_messages(
     assert before == [True, True, False, False]
     assert for_bob is False
     assert (current(broker.id), current(owned.id)) == (False, False)
+
+
+async def test_a_watcher_gets_its_own_session_until_it_is_archived(
+    stores: RoleSessionStores, db_uri: str
+) -> None:
+    watchers = SqlAlchemyWatcherStore(db_uri)
+    watcher = watchers.create(
+        uuid.uuid4().hex, owner_user_id=ALICE, name="PR watcher", model="example-model"
+    )
+    stores.user_settings_store.save_globalhub_placement(PLACEMENT, user_id=ALICE)
+
+    first, second = await asyncio.gather(
+        ensure_watcher_session(watcher.id, user_id=ALICE, stores=stores, watchers=watchers),
+        ensure_watcher_session(watcher.id, user_id=ALICE, stores=stores, watchers=watchers),
+    )
+    (session, _), (same_session, _) = first, second
+    stores.conversation_store.update_conversation(session.id, archived=True)
+    replaced, created = await ensure_watcher_session(
+        watcher.id, user_id=ALICE, stores=stores, watchers=watchers
+    )
+    with pytest.raises(OmnigentError) as missing:
+        await ensure_watcher_session(
+            watcher.id, user_id="bob@example.com", stores=stores, watchers=watchers
+        )
+
+    assert same_session.id == session.id
+    assert sorted([first[1], second[1]]) == [False, True]
+    assert (session.title, session.labels[ROLE_LABEL], session.model_override) == (
+        "PR watcher",
+        WATCHER_ROLE_VALUE,
+        "example-model",
+    )
+    assert created is True and replaced.id != session.id
+    recorded = watchers.get(watcher.id, owner_user_id=ALICE)
+    assert recorded is not None and recorded.conversation_id == replaced.id
+    assert missing.value.code == ErrorCode.NOT_FOUND
+
+
+async def test_only_a_watchers_current_session_takes_its_runs(
+    stores: RoleSessionStores, db_uri: str
+) -> None:
+    watchers = SqlAlchemyWatcherStore(db_uri)
+    managers = SqlAlchemyManagerStore(db_uri)
+    watcher = watchers.create(uuid.uuid4().hex, owner_user_id=ALICE, name="PR watcher")
+    stores.user_settings_store.save_globalhub_placement(PLACEMENT, user_id=ALICE)
+    session, _ = await ensure_watcher_session(
+        watcher.id, user_id=ALICE, stores=stores, watchers=watchers
+    )
+
+    def current(store: SqlAlchemyWatcherStore | None) -> bool:
+        loaded = stores.conversation_store.get_conversation(session.id)
+        assert loaded is not None
+        return is_role_session_current(
+            loaded, user_id=ALICE, stores=stores, managers=managers, watchers=store
+        )
+
+    before, without_store = current(watchers), current(None)
+    watchers.delete(watcher.id, owner_user_id=ALICE)
+
+    assert (before, without_store, current(watchers)) == (True, False, False)
 
 
 async def test_ensure_requires_a_placement_and_a_singleton_role(

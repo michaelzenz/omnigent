@@ -1361,6 +1361,55 @@ class SqlRoleSchedule(OmnigentBase):
     )
 
 
+class SqlWatcher(OmnigentBase):
+    """
+    SQLAlchemy model for the ``watchers`` table: GlobalHub watchers.
+
+    A watcher is the durable identity behind one watcher session, like a
+    manager, so the session can be recreated without losing the watcher. Its
+    schedule is the ``role_schedules`` row keyed ``"watcher:<id>"``. Ownership
+    is stamped on the row; there are no foreign keys (Rule R032).
+
+    :param id: Uuid16 primary key (bare 32-char hex in Python).
+    :param conversation_id: The watcher's current session, or ``None`` before
+        its first run.
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param name: The watcher's name, also the title of its session.
+    :param description: What the watcher watches; may be empty.
+    :param manual: The user's manual, or ``None`` for the packaged template.
+    :param model: Model for the watcher's session, or ``None`` for the agent's own.
+    :param created_at: Unix epoch seconds at row creation.
+    :param updated_at: Unix epoch seconds of the last change.
+    """
+
+    __tablename__ = "watchers"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    conversation_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    manual: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        # One owner's watchers in creation order.
+        Index("ix_watchers_owner", "workspace_id", "owner_user_id", "created_at", "id"),
+        # The watcher behind a session, for the dispatcher and the turn manual.
+        Index("ix_watchers_conversation", "workspace_id", "conversation_id"),
+    )
+
+
 class SqlConversation(ConversationBase):
     """
     SQLAlchemy model for the ``conversations`` table.

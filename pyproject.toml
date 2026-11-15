@@ -477,6 +477,7 @@ include = ["omnigent*"]
     "polly/**/*",
     "onih-pmv2/**/*",
     "onih-custodian/**/*",
+    "onih-watcher/**/*",
 ]
 "omnigent.resources.pi" = ["*.cjs"]
 "omnigent.resources.pi_native" = ["*.js", "*.cjs"]

@@ -8,11 +8,13 @@ from omnigent.agent_tasks.role_manuals import role_turn_instructions
 from omnigent.agent_tasks.roles import (
     BROKER_ROLE_KEY,
     MANAGER_ROLE_KEY,
+    WATCHER_ROLE,
     BuiltinRole,
     builtin_role,
 )
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.user_settings_store import UserSettingsStore
+from omnigent.stores.watcher_store.sqlalchemy_store import SqlAlchemyWatcherStore
 
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
@@ -84,3 +86,32 @@ def test_a_managers_turns_name_its_session_and_manager_ids(db_uri: str) -> None:
     # Another user's manager row, and other roles, add no ids.
     assert instructions(_manager(), BOB) == manual
     assert instructions(broker, ALICE) == broker.default_manual()
+
+
+def test_a_watchers_turns_carry_its_own_manual_else_the_template(db_uri: str) -> None:
+    watchers = SqlAlchemyWatcherStore(db_uri)
+    watcher = watchers.create(
+        "1e2d3c4b5a69788796a5b4c3d2e1f00f",
+        owner_user_id=ALICE,
+        name="PR watcher",
+        manual="Watch the release.",
+    )
+    watchers.update(watcher.id, owner_user_id=ALICE, conversation_id=SESSION_ID)
+    template = WATCHER_ROLE.default_manual()
+    ids = f"You are the watcher 'PR watcher'. Your watcher id is {watcher.id}."
+
+    def instructions(owner: str) -> str:
+        return role_turn_instructions(
+            WATCHER_ROLE, SESSION_ID, _conversation_store(db_uri, owner), None
+        )
+
+    custom = instructions(ALICE)
+    watchers.update(watcher.id, owner_user_id=ALICE, manual=None)
+    default = instructions(ALICE)
+
+    assert custom == f"Watch the release.\n\n{ids}"
+    assert default == f"{template}\n\n{ids}"
+    # Another user's session, or a deleted watcher's, gets the template alone.
+    assert instructions(BOB) == template
+    watchers.delete(watcher.id, owner_user_id=ALICE)
+    assert instructions(ALICE) == template

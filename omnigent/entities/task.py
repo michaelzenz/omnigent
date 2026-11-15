@@ -1,13 +1,14 @@
 """GlobalHub board entities, persisted in the ``tasks``, ``managers``, ``workers``,
 ``task_events``, ``fyi_clusters``, ``task_assets``, ``system_notices``,
-``agent_queue_items`` and ``role_schedules`` tables.
+``agent_queue_items``, ``role_schedules`` and ``watchers`` tables.
 
 A :class:`Task` is a long-lived unit of work on one user's GlobalHub board,
 owned by one :class:`Manager`. Each :class:`Worker` attaches a session that
 works on the task, and each :class:`TaskAsset` is a link the task carries. A
 :class:`TaskEvent` is a signal the broker routes to a manager, which can file
 it into an :class:`FyiCluster` for the user. A :class:`SystemNotice` is pinned
-on the board for the user to act on.
+on the board for the user to act on. A :class:`Watcher` runs on its schedule
+and reports what changed in the things it watches.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from typing import Any
 
 # The task states in a manager's portfolio; an archived task is no longer in it.
 LIVE_TASK_STATES = ("active", "idle", "agent-resolved")
+#: Starts a watcher's role key, which names its schedule, e.g. ``"watcher:<id>"``.
+WATCHER_ROLE_KEY_PREFIX = "watcher:"
 
 
 @dataclass
@@ -364,3 +367,40 @@ class RoleSchedule:
     def enabled(self) -> bool:
         """Whether the role gets its runs."""
         return self.next_run_at is not None
+
+
+@dataclass
+class Watcher:
+    """
+    A watcher on a user's GlobalHub board: a role session that runs on its schedule.
+
+    On each run it checks the things its manual names and reports what changed.
+    Its schedule is the :class:`RoleSchedule` whose key is :attr:`role_key`.
+
+    :param id: UUID primary key (bare 32-char hex string, no dashes).
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param name: The watcher's name, also the title of its session.
+    :param description: What the watcher watches, in a line or two; may be empty.
+    :param created_at: Unix epoch seconds at row creation.
+    :param updated_at: Unix epoch seconds of the last change.
+    :param manual: The user's manual, or ``None`` for the packaged watcher template.
+    :param model: Model for the watcher's session, or ``None`` for the watcher
+        agent's own model.
+    :param conversation_id: The watcher's current session, or ``None`` before
+        its first run.
+    """
+
+    id: str
+    owner_user_id: str | None
+    name: str
+    description: str
+    created_at: int
+    updated_at: int
+    manual: str | None = None
+    model: str | None = None
+    conversation_id: str | None = None
+
+    @property
+    def role_key(self) -> str:
+        """The key of the watcher's schedule, e.g. ``"watcher:<id>"``."""
+        return f"{WATCHER_ROLE_KEY_PREFIX}{self.id}"

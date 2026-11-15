@@ -5944,9 +5944,6 @@ class GlobalHubRoleSessionResponse(BaseModel):
     created: bool
 
 
-AgentTaskState = Literal["active", "idle", "agent-resolved", "archived"]
-
-
 def _strip_required_text(value: str) -> str:
     stripped = value.strip()
     if not stripped:
@@ -5954,6 +5951,114 @@ def _strip_required_text(value: str) -> str:
     return stripped
 
 
+_GlobalHubWatcherName = Annotated[str, Field(max_length=200), AfterValidator(_strip_required_text)]
+
+
+class GlobalHubWatcher(BaseModel):
+    """One of the caller's GlobalHub watchers, without its manual.
+
+    A watcher is a role session that runs on its schedule and reports what
+    changed in the things its manual names. ``model`` is null while its session
+    uses the watcher agent's own model. ``customized`` is ``["manual"]`` when
+    the caller replaced the packaged template. ``schedule`` is null when the
+    watcher has none and so never runs. ``session_id`` is its current session,
+    null before its first run.
+    """
+
+    object: Literal["agent.task.watcher"] = "agent.task.watcher"
+    id: str
+    name: str
+    description: str
+    model: str | None
+    customized: list[Literal["manual"]]
+    schedule: GlobalHubRoleScheduleResponse | None
+    session_id: str | None
+    created_at: int
+    updated_at: int
+
+
+class GlobalHubWatcherDetail(GlobalHubWatcher):
+    """A watcher with the manual attached to every turn of its session.
+
+    ``default_manual`` is the packaged watcher template, which a reset restores.
+    """
+
+    manual: str
+    default_manual: str
+
+
+class GlobalHubWatcherList(BaseModel):
+    """The caller's watchers in creation order."""
+
+    object: Literal["list"] = "list"
+    data: list[GlobalHubWatcher]
+
+
+class GlobalHubWatcherDefaults(BaseModel):
+    """What a new watcher starts from: the packaged manual template and a schedule rule."""
+
+    object: Literal["agent.task.watcher_defaults"] = "agent.task.watcher_defaults"
+    manual: str
+    rrule: str
+
+
+class CreateGlobalHubWatcherRequest(BaseModel):
+    """Create a watcher for the caller.
+
+    A null or blank ``manual`` uses the packaged template, and a null or blank
+    ``model`` the watcher agent's own model. Without ``schedule``, the watcher
+    runs every 30 minutes. Its session starts with its first run.
+    """
+
+    name: _GlobalHubWatcherName
+    description: str = Field(default="", max_length=GLOBALHUB_ROLE_DESCRIPTION_MAX_CHARS)
+    model: str | None = Field(default=None, max_length=GLOBALHUB_ROLE_MODEL_MAX_CHARS)
+    manual: str | None = Field(default=None, max_length=GLOBALHUB_ROLE_MANUAL_MAX_CHARS)
+    schedule: GlobalHubRoleSchedule | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class UpdateGlobalHubWatcherRequest(BaseModel):
+    """Change fields of one of the caller's watchers.
+
+    Omitted fields keep their value. A null or blank ``manual`` restores the
+    packaged template, a null or blank ``model`` the watcher agent's own model,
+    and a null or blank ``description`` empties it. A null ``schedule`` deletes
+    the schedule, so the watcher no longer runs.
+    """
+
+    name: _GlobalHubWatcherName | None = None
+    description: str | None = Field(default=None, max_length=GLOBALHUB_ROLE_DESCRIPTION_MAX_CHARS)
+    model: str | None = Field(default=None, max_length=GLOBALHUB_ROLE_MODEL_MAX_CHARS)
+    manual: str | None = Field(default=None, max_length=GLOBALHUB_ROLE_MANUAL_MAX_CHARS)
+    schedule: GlobalHubRoleSchedule | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GlobalHubWatcherDeleted(BaseModel):
+    """A deleted watcher, whose schedule was deleted with it.
+
+    ``conversation_id`` is the watcher's session, left as an ordinary session;
+    ``DELETE /v1/sessions/{id}`` deletes it.
+    """
+
+    object: Literal["agent.task.watcher"] = "agent.task.watcher"
+    id: str
+    deleted: Literal[True] = True
+    conversation_id: str | None
+
+
+class GlobalHubWatcherSessionResponse(BaseModel):
+    """A watcher's session; ``created`` is true when this request created it."""
+
+    watcher_id: str
+    session_id: str
+    created: bool
+
+
+AgentTaskState = Literal["active", "idle", "agent-resolved", "archived"]
 _AgentTaskTitle = Annotated[str, Field(max_length=256), AfterValidator(_strip_required_text)]
 _AgentTaskGoal = Annotated[str, Field(max_length=4_000), AfterValidator(_strip_required_text)]
 _AgentManagerTitle = Annotated[str, Field(max_length=200), AfterValidator(_strip_required_text)]

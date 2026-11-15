@@ -1,7 +1,7 @@
 """Queue the work waiting for each user's broker, managers and custodian, and write queue messages.
 
 Task events wait for the broker and the managers; a role with a schedule, such
-as the custodian, gets its run message when its owner's schedule comes due.
+as the custodian or a watcher, gets its run message when its schedule comes due.
 """
 
 from __future__ import annotations
@@ -23,7 +23,11 @@ from omnigent.agent_tasks.event_batches import (
     manager_batches,
 )
 from omnigent.agent_tasks.role_schedules import next_run_at
-from omnigent.agent_tasks.role_sessions import RoleSessionStores, ensure_role_session
+from omnigent.agent_tasks.role_sessions import (
+    RoleSessionStores,
+    ensure_role_session,
+    ensure_watcher_session,
+)
 from omnigent.agent_tasks.roles import (
     BROKER_ROLE_KEY,
     CUSTODIAN_ROLE_KEY,
@@ -34,12 +38,14 @@ from omnigent.agent_tasks.roles import (
 from omnigent.db.db_models import workspace_scope
 from omnigent.entities import (
     LIVE_TASK_STATES,
+    WATCHER_ROLE_KEY_PREFIX,
     AgentQueueItem,
     Conversation,
     RoleSchedule,
     Task,
     TaskEvent,
 )
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.agent_task_delivery import SessionSendDeps, session_has_live_turn
 
 _logger = logging.getLogger(__name__)
@@ -67,6 +73,11 @@ _CUSTODIAN_RUN_PROMPT = (
     "[System: session cleanup]\n"
     "This is your scheduled maintenance notice. Follow the Custodian manual, and be "
     "aggressive in suggesting session deletes."
+)
+_WATCHER_RUN_PROMPT = (
+    "[System: scheduled watcher run]\n"
+    "Follow your manual: check what it says to watch, and report what changed. "
+    "Do not start sessions."
 )
 # A run message not yet handled covers the next run too.
 _UNHANDLED_STATES = ("queued", "sending", "sent")
@@ -159,17 +170,15 @@ class RoleSchedulePackager:
             due_at=schedule.next_run_at,
             next_run_at=_next_run_or_off(schedule, now),
         )
-        role = builtin_role(schedule.role_key)
         owner = schedule.owner_user_id
         settings = self._sessions.user_settings_store
-        if (
-            not moved
-            or role is None
-            or not role.singleton
-            or await asyncio.to_thread(settings.get_globalhub_placement, user_id=owner) is None
+        if not moved or (
+            await asyncio.to_thread(settings.get_globalhub_placement, user_id=owner) is None
         ):
             return
-        session, _ = await ensure_role_session(role, user_id=owner, stores=self._sessions)
+        session = await self._session_for(schedule)
+        if session is None:
+            return
         unhandled = await asyncio.to_thread(
             self._board.queue.list,
             owner_user_id=owner,
@@ -189,6 +198,30 @@ class RoleSchedulePackager:
             kind="scheduled_run",
             payload={"role_key": schedule.role_key},
         )
+
+    async def _session_for(self, schedule: RoleSchedule) -> Conversation | None:
+        """Return the session that gets the schedule's run, or ``None`` when its role is gone."""
+        owner = schedule.owner_user_id
+        if schedule.role_key.startswith(WATCHER_ROLE_KEY_PREFIX):
+            watcher_id = schedule.role_key.removeprefix(WATCHER_ROLE_KEY_PREFIX)
+            try:
+                session, _ = await ensure_watcher_session(
+                    watcher_id, user_id=owner, stores=self._sessions, watchers=self._board.watchers
+                )
+            except OmnigentError as exc:
+                if exc.code != ErrorCode.NOT_FOUND:
+                    raise
+                # The watcher is gone, so its schedule goes too.
+                await asyncio.to_thread(
+                    self._board.role_schedules.delete, schedule.role_key, owner_user_id=owner
+                )
+                return None
+            return session
+        role = builtin_role(schedule.role_key)
+        if role is None or not role.singleton:
+            return None
+        session, _ = await ensure_role_session(role, user_id=owner, stores=self._sessions)
+        return session
 
 
 def _next_run_or_off(schedule: RoleSchedule, now: int) -> int | None:
@@ -381,11 +414,30 @@ class SpawnManagersWriter:
         return "\n".join(lines)
 
 
-def write_scheduled_run(item: AgentQueueItem) -> str | None:
-    """Write a role's scheduled run message, or ``None`` for a role that has none."""
-    if item.payload.get("role_key") == CUSTODIAN_ROLE_KEY:
-        return _CUSTODIAN_RUN_PROMPT
-    return None
+class ScheduledRunWriter:
+    """Writes the message for a ``scheduled_run`` queue item when it is sent."""
+
+    def __init__(self, *, board: BoardStores) -> None:
+        """
+        :param board: Holds the watchers that scheduled runs go to.
+        """
+        self._board = board
+
+    def write(self, item: AgentQueueItem) -> str | None:
+        """
+        Return the run message for the role the item names. Blocking.
+
+        :returns: The message, or ``None`` for a role without one or a watcher
+            that was deleted after the run was queued.
+        """
+        role_key = item.payload.get("role_key")
+        if role_key == CUSTODIAN_ROLE_KEY:
+            return _CUSTODIAN_RUN_PROMPT
+        if isinstance(role_key, str) and role_key.startswith(WATCHER_ROLE_KEY_PREFIX):
+            watcher_id = role_key.removeprefix(WATCHER_ROLE_KEY_PREFIX)
+            if self._board.watchers.get(watcher_id, owner_user_id=item.owner_user_id) is not None:
+                return _WATCHER_RUN_PROMPT
+        return None
 
 
 def write_notice_click(item: AgentQueueItem) -> str:

@@ -6,7 +6,7 @@ import asyncio
 
 from fastapi import APIRouter, Request
 
-from omnigent.agent_tasks.role_schedules import next_run_at, require_role_schedule
+from omnigent.agent_tasks.role_schedules import require_role_schedule, save_role_schedule
 from omnigent.agent_tasks.role_sessions import RoleSessionStores, ensure_role_session
 from omnigent.agent_tasks.roles import (
     BUILTIN_ROLES,
@@ -66,25 +66,14 @@ def create_agent_task_roles_router(
         if schedule is None:
             schedules.delete(role.key, owner_user_id=user_id)
             return
-        now = now_epoch()
-        saved = schedules.get(role.key, owner_user_id=user_id)
-        rrule = schedule.rrule.strip()
-        upcoming = (
-            next_run_at(
-                rrule,
-                schedule.timezone,
-                after=now,
-                anchor=saved.created_at if saved is not None else now,
-            )
-            if schedule.enabled
-            else None
-        )
-        schedules.save(
+        save_role_schedule(
+            schedules,
             role.key,
             owner_user_id=user_id,
-            rrule=rrule,
+            rrule=schedule.rrule.strip(),
             timezone=schedule.timezone,
-            next_run_at=upcoming,
+            enabled=schedule.enabled,
+            now=now_epoch(),
         )
 
     @router.get("/agent-tasks/roles/profiles", response_model=GlobalHubRoleProfileList)
@@ -221,14 +210,19 @@ def _profile_detail(
         default_description=definition.role.description,
         default_manual=definition.role.default_manual(),
         schedulable=schedulable,
-        schedule=(
-            GlobalHubRoleScheduleResponse(
-                enabled=schedule.enabled,
-                rrule=schedule.rrule,
-                timezone=schedule.timezone,
-                next_run_at=schedule.next_run_at,
-            )
-            if schedule is not None
-            else None
-        ),
+        schedule=role_schedule_response(schedule),
+    )
+
+
+def role_schedule_response(
+    schedule: RoleSchedule | None,
+) -> GlobalHubRoleScheduleResponse | None:
+    """Return the API form of a role's schedule, or ``None`` when it has none."""
+    if schedule is None:
+        return None
+    return GlobalHubRoleScheduleResponse(
+        enabled=schedule.enabled,
+        rrule=schedule.rrule,
+        timezone=schedule.timezone,
+        next_run_at=schedule.next_run_at,
     )

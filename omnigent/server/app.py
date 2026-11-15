@@ -94,9 +94,9 @@ from omnigent.server.agent_queue_packagers import (
     EventNoticeWriter,
     ManagerPackager,
     RoleSchedulePackager,
+    ScheduledRunWriter,
     SpawnManagersWriter,
     write_notice_click,
-    write_scheduled_run,
 )
 from omnigent.server.agent_task_session_events import (
     SessionEventReporter,
@@ -145,6 +145,7 @@ from omnigent.server.routes.agent_task_roles import create_agent_task_roles_rout
 from omnigent.server.routes.agent_task_system_notice import (
     create_agent_task_system_notice_router,
 )
+from omnigent.server.routes.agent_task_watchers import create_agent_task_watchers_router
 from omnigent.server.routes.agent_task_workers import create_agent_task_workers_router
 from omnigent.server.routes.agent_tasks import create_agent_tasks_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
@@ -752,7 +753,7 @@ _POLLY_BUNDLE_SOURCE = resolve_repo_symlink(Path(_examples_resources.__file__).p
 # omnigent.resources.examples, so no symlink resolution is needed.
 _ONIH_BUNDLE_SOURCES = {
     name: Path(_examples_resources.__file__).parent / name
-    for name in ("onih-pmv2", "onih-custodian")
+    for name in ("onih-pmv2", "onih-custodian", "onih-watcher")
 }
 
 
@@ -4223,8 +4224,8 @@ def create_app(
             artifact_store=artifact_store,
             liveness_lookup=_bulk_session_liveness,
         )
-        # The board, managers and system notice routers go before the tasks
-        # router, whose /agent-tasks/{task_id} matches their literal paths.
+        # The board, managers, watchers and system notice routers go before the
+        # tasks router, whose /agent-tasks/{task_id} matches their literal paths.
         app.include_router(
             create_agent_task_board_router(
                 board_stores, conversation_store, send_deps, auth_provider
@@ -4242,6 +4243,13 @@ def create_app(
             )
             app.include_router(
                 create_agent_task_managers_router(
+                    board_stores, role_session_stores, auth_provider
+                ),
+                prefix="/v1",
+                tags=["agent-tasks"],
+            )
+            app.include_router(
+                create_agent_task_watchers_router(
                     board_stores, role_session_stores, auth_provider
                 ),
                 prefix="/v1",
@@ -4293,7 +4301,7 @@ def create_app(
                     ).write,
                     "notice_click": write_notice_click,
                     "spawn_managers": SpawnManagersWriter(board=board_stores).write,
-                    "scheduled_run": write_scheduled_run,
+                    "scheduled_run": ScheduledRunWriter(board=board_stores).write,
                 },
                 packagers=[
                     BrokerPackager(

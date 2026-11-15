@@ -20,6 +20,8 @@ from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+from omnigent.stores.watcher_store import WatcherStore
+from omnigent.stores.watcher_store.sqlalchemy_store import SqlAlchemyWatcherStore
 from omnigent.stores.worker_store import WorkerStore
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
@@ -38,6 +40,7 @@ class BoardStores:
     :param system_notices: The notice pinned on each user's board.
     :param queue: The messages waiting for the role sessions.
     :param role_schedules: When each user's role sessions get their scheduled runs.
+    :param watchers: The watchers that report changes in the things they watch.
     """
 
     tasks: TaskStore
@@ -49,6 +52,7 @@ class BoardStores:
     system_notices: SystemNoticeStore
     queue: AgentQueueStore
     role_schedules: RoleScheduleStore
+    watchers: WatcherStore
 
 
 def open_board_stores(conversation_store: object) -> BoardStores | None:
@@ -71,4 +75,5 @@ def open_board_stores(conversation_store: object) -> BoardStores | None:
         system_notices=SqlAlchemySystemNoticeStore(location),
         queue=SqlAlchemyAgentQueueStore(location),
         role_schedules=SqlAlchemyRoleScheduleStore(location),
+        watchers=SqlAlchemyWatcherStore(location),
     )

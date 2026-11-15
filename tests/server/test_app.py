@@ -1677,7 +1677,12 @@ def test_ensure_default_agents_includes_antigravity(seed_stores: _SeedStores) ->
 
 
 @pytest.mark.parametrize(
-    ("name", "board_tool"), [("onih-pmv2", "pmv2_api"), ("onih-custodian", "system_notice")]
+    ("name", "board_tool"),
+    [
+        ("onih-pmv2", "pmv2_api"),
+        ("onih-custodian", "system_notice"),
+        ("onih-watcher", "pmv2_read"),
+    ],
 )
 def test_ensure_default_agents_seeds_onih_role_profiles(
     seed_stores: _SeedStores, monkeypatch: pytest.MonkeyPatch, name: str, board_tool: str

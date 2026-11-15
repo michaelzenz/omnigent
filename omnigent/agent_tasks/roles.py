@@ -12,6 +12,7 @@ from omnigent.agent_tasks.session_labels import (
     CUSTODIAN_ROLE_VALUE,
     MANAGER_ROLE_VALUE,
     ROLE_LABEL,
+    WATCHER_ROLE_VALUE,
 )
 
 BROKER_ROLE_KEY = "broker"
@@ -106,8 +107,20 @@ BUILTIN_ROLES = (
         schedulable=True,
     ),
 )
+#: The role behind every watcher session. Not in ``BUILTIN_ROLES``: each watcher
+#: has its own manual, model and schedule, kept with the watcher.
+WATCHER_ROLE = BuiltinRole(
+    key="watcher",
+    kind="watcher",
+    title="Watcher",
+    description="Checks outside systems on a schedule and reports what changed.",
+    session_label=WATCHER_ROLE_VALUE,
+    manual_file="task_watcher.md",
+    agent_name="onih-watcher",
+    singleton=False,
+)
 _ROLES_BY_KEY = {role.key: role for role in BUILTIN_ROLES}
-_ROLES_BY_SESSION_LABEL = {role.session_label: role for role in BUILTIN_ROLES}
+_ROLES_BY_SESSION_LABEL = {role.session_label: role for role in (*BUILTIN_ROLES, WATCHER_ROLE)}
 
 
 def builtin_role(key: str) -> BuiltinRole | None:
@@ -116,7 +129,10 @@ def builtin_role(key: str) -> BuiltinRole | None:
 
 
 def session_role(labels: Mapping[str, str] | None) -> BuiltinRole | None:
-    """Return the role a session's ``ROLE_LABEL`` names, or ``None`` for other sessions."""
+    """Return the role a session's ``ROLE_LABEL`` names, or ``None`` for other sessions.
+
+    A watcher session's role is :data:`WATCHER_ROLE`.
+    """
     value = labels.get(ROLE_LABEL) if labels else None
     return _ROLES_BY_SESSION_LABEL.get(value) if value is not None else None
 

@@ -3936,6 +3936,62 @@
         "title": "CreateDirectoryRequest",
         "type": "object"
       },
+      "CreateGlobalHubWatcherRequest": {
+        "additionalProperties": false,
+        "description": "Create a watcher for the caller.\n\nA null or blank `manual` uses the packaged template, and a null or blank\n`model` the watcher agent's own model. Without `schedule`, the watcher\nruns every 30 minutes. Its session starts with its first run.",
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "manual": {
+            "anyOf": [
+              {
+                "maxLength": 64000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manual"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "name": {
+            "maxLength": 200,
+            "title": "Name",
+            "type": "string"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GlobalHubRoleSchedule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CreateGlobalHubWatcherRequest",
+        "type": "object"
+      },
       "CreateProjectRequest": {
         "additionalProperties": false,
         "description": "Request body for `POST /v1/projects`.",
@@ -5722,6 +5778,298 @@
           "report_new_sessions"
         ],
         "title": "GlobalHubSettingsResponse",
+        "type": "object"
+      },
+      "GlobalHubWatcher": {
+        "description": "One of the caller's GlobalHub watchers, without its manual.\n\nA watcher is a role session that runs on its schedule and reports what\nchanged in the things its manual names. `model` is null while its session\nuses the watcher agent's own model. `customized` is `[\"manual\"]` when\nthe caller replaced the packaged template. `schedule` is null when the\nwatcher has none and so never runs. `session_id` is its current session,\nnull before its first run.",
+        "properties": {
+          "created_at": {
+            "format": "int64",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "customized": {
+            "items": {
+              "const": "manual",
+              "type": "string"
+            },
+            "title": "Customized",
+            "type": "array"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.task.watcher",
+            "default": "agent.task.watcher",
+            "title": "Object",
+            "type": "string"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GlobalHubRoleScheduleResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "updated_at": {
+            "format": "int64",
+            "title": "Updated At",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "model",
+          "customized",
+          "schedule",
+          "session_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "GlobalHubWatcher",
+        "type": "object"
+      },
+      "GlobalHubWatcherDefaults": {
+        "description": "What a new watcher starts from: the packaged manual template and a schedule rule.",
+        "properties": {
+          "manual": {
+            "title": "Manual",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.task.watcher_defaults",
+            "default": "agent.task.watcher_defaults",
+            "title": "Object",
+            "type": "string"
+          },
+          "rrule": {
+            "title": "Rrule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "manual",
+          "rrule"
+        ],
+        "title": "GlobalHubWatcherDefaults",
+        "type": "object"
+      },
+      "GlobalHubWatcherDeleted": {
+        "description": "A deleted watcher, whose schedule was deleted with it.\n\n`conversation_id` is the watcher's session, left as an ordinary session;\n`DELETE /v1/sessions/{id}` deletes it.",
+        "properties": {
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "deleted": {
+            "const": true,
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.task.watcher",
+            "default": "agent.task.watcher",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id"
+        ],
+        "title": "GlobalHubWatcherDeleted",
+        "type": "object"
+      },
+      "GlobalHubWatcherDetail": {
+        "description": "A watcher with the manual attached to every turn of its session.\n\n`default_manual` is the packaged watcher template, which a reset restores.",
+        "properties": {
+          "created_at": {
+            "format": "int64",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "customized": {
+            "items": {
+              "const": "manual",
+              "type": "string"
+            },
+            "title": "Customized",
+            "type": "array"
+          },
+          "default_manual": {
+            "title": "Default Manual",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "manual": {
+            "title": "Manual",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.task.watcher",
+            "default": "agent.task.watcher",
+            "title": "Object",
+            "type": "string"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GlobalHubRoleScheduleResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "updated_at": {
+            "format": "int64",
+            "title": "Updated At",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "model",
+          "customized",
+          "schedule",
+          "session_id",
+          "created_at",
+          "updated_at",
+          "manual",
+          "default_manual"
+        ],
+        "title": "GlobalHubWatcherDetail",
+        "type": "object"
+      },
+      "GlobalHubWatcherList": {
+        "description": "The caller's watchers in creation order.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/GlobalHubWatcher"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "object": {
+            "const": "list",
+            "default": "list",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "GlobalHubWatcherList",
+        "type": "object"
+      },
+      "GlobalHubWatcherSessionResponse": {
+        "description": "A watcher's session; `created` is true when this request created it.",
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "watcher_id": {
+            "title": "Watcher Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "watcher_id",
+          "session_id",
+          "created"
+        ],
+        "title": "GlobalHubWatcherSessionResponse",
         "type": "object"
       },
       "GrantPermissionRequest": {
@@ -15314,6 +15662,72 @@
         "title": "UpdateGlobalHubRoleProfileRequest",
         "type": "object"
       },
+      "UpdateGlobalHubWatcherRequest": {
+        "additionalProperties": false,
+        "description": "Change fields of one of the caller's watchers.\n\nOmitted fields keep their value. A null or blank `manual` restores the\npackaged template, a null or blank `model` the watcher agent's own model,\nand a null or blank `description` empties it. A null `schedule` deletes\nthe schedule, so the watcher no longer runs.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "manual": {
+            "anyOf": [
+              {
+                "maxLength": 64000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manual"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GlobalHubRoleSchedule"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "UpdateGlobalHubWatcherRequest",
+        "type": "object"
+      },
       "UpdateProjectRequest": {
         "additionalProperties": false,
         "description": "Request body for `PATCH /v1/projects/{project_id}`.\n\nAll fields optional; `None` leaves a field unchanged.",
@@ -17148,6 +17562,268 @@
           }
         },
         "summary": "Dismiss System Notice",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/watchers": {
+      "get": {
+        "description": "List the caller's watchers in creation order, each with its schedule.",
+        "operationId": "list_watchers_v1_agent_tasks_watchers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalHubWatcherList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Watchers",
+        "tags": [
+          "agent-tasks"
+        ]
+      },
+      "post": {
+        "description": "Create a watcher and its schedule; its session starts with its first run.\n\nThe model and the schedule are checked before anything is saved.",
+        "operationId": "create_watcher_v1_agent_tasks_watchers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGlobalHubWatcherRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalHubWatcherDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Watcher",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/watchers/defaults": {
+      "get": {
+        "description": "Return what a new watcher starts from: the manual template and a schedule rule.",
+        "operationId": "get_watcher_defaults_v1_agent_tasks_watchers_defaults_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalHubWatcherDefaults"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Watcher Defaults",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/watchers/{watcher_id}": {
+      "delete": {
+        "description": "Delete one of the caller's watchers and its schedule.\n\nThe watcher's session is left as an ordinary session, and a run already\nqueued for it is dropped when its turn would start.",
+        "operationId": "delete_watcher_v1_agent_tasks_watchers__watcher_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "watcher_id",
+            "required": true,
+            "schema": {
+              "title": "Watcher Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalHubWatcherDeleted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Watcher",
+        "tags": [
+          "agent-tasks"
+        ]
+      },
+      "get": {
+        "description": "Read one of the caller's watchers, including its manual and schedule.",
+        "operationId": "get_watcher_v1_agent_tasks_watchers__watcher_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "watcher_id",
+            "required": true,
+            "schema": {
+              "title": "Watcher Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalHubWatcherDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Watcher",
+        "tags": [
+          "agent-tasks"
+        ]
+      },
+      "patch": {
+        "description": "Change fields of one of the caller's watchers, or its schedule.\n\nOmitted fields keep their value. The model and the schedule are checked\nbefore anything is saved, so a refused request changes nothing. A new\nmodel applies to the next session; the web switches the running one.",
+        "operationId": "update_watcher_v1_agent_tasks_watchers__watcher_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "watcher_id",
+            "required": true,
+            "schema": {
+              "title": "Watcher Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGlobalHubWatcherRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalHubWatcherDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Watcher",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/watchers/{watcher_id}/session": {
+      "post": {
+        "description": "Return a watcher's session on the caller's GlobalHub host, creating it when needed.",
+        "operationId": "ensure_caller_watcher_session_v1_agent_tasks_watchers__watcher_id__session_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "watcher_id",
+            "required": true,
+            "schema": {
+              "title": "Watcher Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlobalHubWatcherSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ensure Caller Watcher Session",
         "tags": [
           "agent-tasks"
         ]

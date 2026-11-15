@@ -34,9 +34,9 @@ from omnigent.server.agent_queue_packagers import (
     EventNoticeWriter,
     ManagerPackager,
     RoleSchedulePackager,
+    ScheduledRunWriter,
     SpawnManagersWriter,
     write_notice_click,
-    write_scheduled_run,
 )
 from omnigent.server.agent_task_delivery import SendResult, SessionSendDeps
 from omnigent.server.routes._sessions.helpers import SessionLiveness
@@ -59,7 +59,7 @@ _ids = (f"{n:032x}" for n in itertools.count(1))
 @pytest.fixture()
 def sessions(db_uri: str) -> RoleSessionStores:
     agents = SqlAlchemyAgentStore(db_uri)
-    for name in ("onih-pmv2", "onih-custodian"):
+    for name in ("onih-pmv2", "onih-custodian", "onih-watcher"):
         agents.create(uuid.uuid4().hex, name, f"bundles/{name}.tar.gz")
     stores = RoleSessionStores(
         conversation_store=SqlAlchemyConversationStore(db_uri),
@@ -369,8 +369,64 @@ async def test_a_due_cleanup_queues_one_message_for_the_custodian_and_skips_miss
     assert [(item.kind, item.target_session_id, item.payload) for item in items] == [
         ("scheduled_run", custodian, {"role_key": CUSTODIAN_ROLE_KEY})
     ]
-    assert (write_scheduled_run(items[0]) or "").startswith("[System: session cleanup]\n")
+    written = ScheduledRunWriter(board=board).write(items[0])
+    assert (written or "").startswith("[System: session cleanup]\n")
     assert board.queue.list(owner_user_id=BOB) == []
+
+
+async def test_the_custodian_and_a_watcher_due_together_each_get_one_run_in_their_session(
+    board: BoardStores, sessions: RoleSessionStores
+) -> None:
+    now = 1_800_000_000
+    watcher = board.watchers.create(uuid.uuid4().hex, owner_user_id=ALICE, name="PR watcher")
+    for role_key in (CUSTODIAN_ROLE_KEY, watcher.role_key):
+        board.role_schedules.save(
+            role_key,
+            owner_user_id=ALICE,
+            rrule="FREQ=HOURLY;BYMINUTE=0",
+            timezone="UTC",
+            next_run_at=now - 60,
+        )
+    packager = RoleSchedulePackager(board=board, sessions=sessions)
+
+    await packager.package(now)
+    # A pass an hour later finds both runs still waiting, so it adds none.
+    await packager.package(now + 3_600)
+
+    custodian = sessions.user_settings_store.get_globalhub_role_session(
+        CUSTODIAN_ROLE_KEY, user_id=ALICE
+    )
+    recorded = board.watchers.get(watcher.id, owner_user_id=ALICE)
+    assert recorded is not None and recorded.conversation_id is not None
+    items = board.queue.list(owner_user_id=ALICE)
+    assert sorted((item.payload["role_key"], item.target_session_id) for item in items) == sorted(
+        [(CUSTODIAN_ROLE_KEY, custodian), (watcher.role_key, recorded.conversation_id)]
+    )
+    watcher_session = sessions.conversation_store.get_conversation(recorded.conversation_id)
+    assert watcher_session is not None and watcher_session.title == "PR watcher"
+    writer = ScheduledRunWriter(board=board)
+    texts = {item.payload["role_key"]: writer.write(item) for item in items}
+    assert (texts[watcher.role_key] or "").startswith("[System: scheduled watcher run]\n")
+    assert (texts[CUSTODIAN_ROLE_KEY] or "").startswith("[System: session cleanup]\n")
+    # A run queued for a watcher that was deleted has nothing left to say.
+    board.watchers.delete(watcher.id, owner_user_id=ALICE)
+    watcher_item = next(item for item in items if item.payload["role_key"] == watcher.role_key)
+    assert writer.write(watcher_item) is None
+
+
+async def test_the_schedule_of_a_deleted_watcher_goes_away_without_a_run(
+    board: BoardStores, sessions: RoleSessionStores
+) -> None:
+    now = 1_800_000_000
+    role_key = f"watcher:{uuid.uuid4().hex}"
+    board.role_schedules.save(
+        role_key, owner_user_id=ALICE, rrule="FREQ=HOURLY", timezone="UTC", next_run_at=now - 60
+    )
+
+    await RoleSchedulePackager(board=board, sessions=sessions).package(now)
+
+    assert board.role_schedules.get(role_key, owner_user_id=ALICE) is None
+    assert board.queue.list(owner_user_id=ALICE) == []
 
 
 async def test_a_waiting_run_of_another_role_does_not_hold_back_a_due_run(

@@ -98,6 +98,7 @@ class AgentQueueDispatcher:
         """
         self._queue = board.queue
         self._managers = board.managers
+        self._watchers = board.watchers
         self._task_store = board.tasks
         self._sessions = sessions
         self._send_deps = send_deps
@@ -270,7 +271,11 @@ class AgentQueueDispatcher:
     def _target_is_current(self, item: AgentQueueItem) -> bool:
         conv = self._send_deps.conversation_store.get_conversation(item.target_session_id)
         return conv is not None and is_role_session_current(
-            conv, user_id=item.owner_user_id, stores=self._sessions, managers=self._managers
+            conv,
+            user_id=item.owner_user_id,
+            stores=self._sessions,
+            managers=self._managers,
+            watchers=self._watchers,
         )
 
     def _settle(self, item: AgentQueueItem, result: SendResult | None) -> None:
