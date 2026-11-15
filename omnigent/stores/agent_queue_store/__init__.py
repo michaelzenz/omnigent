@@ -64,13 +64,16 @@ class AgentQueueStore(ABC):
         """List the owner's items in arrival order."""
 
     @abstractmethod
-    def claim_due(self, *, now: int, limit: int = 100) -> builtins.list[AgentQueueItem]:
+    def claim_due_all_workspaces(
+        self, *, now: int, limit: int = 100
+    ) -> builtins.list[AgentQueueItem]:
         """
-        Claim the items ready to send, for the dispatcher, and mark them ``sending``.
+        Claim the items ready to send in every workspace, and mark them ``sending``.
 
         An item is ready when it is queued, its retry time has passed, it is
         its session's oldest queued item, and no item to that session is
-        being sent or waiting for its turn to end.
+        being sent or waiting for its turn to end. The dispatcher runs outside
+        a request, so it acts on each item inside the item's ``workspace_scope``.
 
         :param now: Current Unix epoch seconds.
         :param limit: At most this many items.
@@ -78,9 +81,9 @@ class AgentQueueStore(ABC):
         """
 
     @abstractmethod
-    def release_stale_claims(self, *, claimed_before: int) -> int:
+    def release_stale_claims_all_workspaces(self, *, claimed_before: int) -> int:
         """
-        Put back every owner's items claimed before ``claimed_before`` and never settled.
+        Put back the items in every workspace claimed before ``claimed_before`` and never settled.
 
         A dispatcher that crashed mid-send leaves its claim behind; putting it
         back lets the item be sent again.
@@ -89,8 +92,8 @@ class AgentQueueStore(ABC):
         """
 
     @abstractmethod
-    def list_sent(self) -> builtins.list[AgentQueueItem]:
-        """List every owner's ``sent`` items in arrival order, for the dispatcher."""
+    def list_sent_all_workspaces(self) -> builtins.list[AgentQueueItem]:
+        """List the ``sent`` items in every workspace in arrival order, for the dispatcher."""
 
     @abstractmethod
     def mark_done_for_session(self, session_id: str) -> int:

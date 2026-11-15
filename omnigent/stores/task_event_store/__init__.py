@@ -102,13 +102,17 @@ class TaskEventStore(ABC):
         """
 
     @abstractmethod
-    def list_waiting(self, *, state: str, max_deliveries: int) -> builtins.list[TaskEvent]:
+    def list_waiting_all_workspaces(
+        self, *, state: str, max_deliveries: int
+    ) -> builtins.list[TaskEvent]:
         """
-        List every owner's events in ``state`` that wait to be queued, oldest first.
+        List the events in ``state`` in every workspace that wait to be queued, oldest first.
 
-        For the background packagers. An event waits when no queue item holds
-        it, or its last item is done, and fewer than ``max_deliveries`` sent
-        items carried it since it last passed to another role.
+        For the background packagers, which run outside a request and act on
+        each event inside its ``workspace_scope``. An event waits when no queue
+        item holds it, or its last item is done, and fewer than
+        ``max_deliveries`` sent items carried it since it last passed to
+        another role.
         """
 
     @abstractmethod

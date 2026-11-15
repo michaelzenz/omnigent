@@ -13,6 +13,7 @@ import pytest
 from omnigent.agent_tasks.board_stores import open_board_stores
 from omnigent.agent_tasks.role_sessions import RoleSessionStores, ensure_role_session
 from omnigent.agent_tasks.roles import BROKER_ROLE_KEY, builtin_role
+from omnigent.db.db_models import current_workspace_id, workspace_scope
 from omnigent.entities import AgentQueueItem, Conversation
 from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher, Packager
 from omnigent.server.agent_task_delivery import SendResult, SessionSendDeps
@@ -35,8 +36,8 @@ class _Harness:
     def __init__(self, db_uri: str, packagers: Sequence[Packager] = ()) -> None:
         conversations = SqlAlchemyConversationStore(db_uri)
         agents = SqlAlchemyAgentStore(db_uri)
-        for name in ("onih-pmv2", "onih-custodian"):
-            agents.create(uuid.uuid4().hex, name, f"bundles/{name}.tar.gz")
+        self.agents = agents
+        self.install_agents()
         self.sessions = RoleSessionStores(
             conversation_store=conversations,
             agent_store=agents,
@@ -51,6 +52,8 @@ class _Harness:
         self.now = NOW
         self.replies: list[SendResult] = []
         self.sent: list[tuple[str, str, str | None]] = []
+        # The workspace each send ran in.
+        self.sent_workspaces: list[int] = []
         # Sessions whose turn lost its runner.
         self.lost_turns: set[str] = set()
         self.dispatcher = AgentQueueDispatcher(
@@ -70,7 +73,13 @@ class _Harness:
         self, session_id: str, text: str, *, created_by: str | None, deps: Any
     ) -> SendResult:
         self.sent.append((session_id, text, created_by))
+        self.sent_workspaces.append(current_workspace_id())
         return self.replies.pop(0) if self.replies else SendResult("sent")
+
+    def install_agents(self) -> None:
+        """Install the GlobalHub role agents in the current workspace."""
+        for name in ("onih-pmv2", "onih-custodian"):
+            self.agents.create(uuid.uuid4().hex, name, f"bundles/{name}.tar.gz")
 
     async def _settle_orphans(
         self, conversations: Iterable[Conversation], *, deps: Any
@@ -227,7 +236,7 @@ async def test_a_claim_left_by_a_crashed_send_goes_back_after_ten_minutes(
 ) -> None:
     broker = await harness.broker()
     harness.enqueue(broker)
-    harness.board.queue.claim_due(now=NOW)
+    harness.board.queue.claim_due_all_workspaces(now=NOW)
 
     harness.now = NOW + 599
     await harness.run()
@@ -239,12 +248,35 @@ async def test_a_claim_left_by_a_crashed_send_goes_back_after_ten_minutes(
     assert harness.sent == [(broker, "2 new events", ALICE)]
 
 
+async def test_an_item_in_another_workspace_is_sent_and_settled_in_that_workspace(
+    harness: _Harness,
+) -> None:
+    with workspace_scope(7):
+        harness.install_agents()
+        harness.sessions.user_settings_store.save_globalhub_placement(PLACEMENT, user_id=ALICE)
+        broker = await harness.broker()
+        item_id = harness.enqueue(broker, "from workspace 7")
+
+    # The loop itself runs outside any workspace, as it does in the server.
+    await harness.run()
+    with workspace_scope(7):
+        sent = harness.state(item_id)
+    harness.now = NOW + 30
+    await harness.run()
+    harness.now = NOW + 90
+    await harness.run()
+
+    assert (harness.sent, harness.sent_workspaces) == ([(broker, "from workspace 7", ALICE)], [7])
+    with workspace_scope(7):
+        assert (sent, harness.state(item_id)) == ("sent", "done")
+
+
 async def test_a_claim_left_by_a_stopped_server_goes_back_when_the_dispatcher_starts(
     harness: _Harness,
 ) -> None:
     broker = await harness.broker()
     harness.enqueue(broker)
-    harness.board.queue.claim_due(now=NOW)
+    harness.board.queue.claim_due_all_workspaces(now=NOW)
 
     await harness.dispatcher.start()
     await harness.dispatcher.stop()

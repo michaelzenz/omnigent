@@ -55,6 +55,7 @@ def _to_entity(row: SqlTaskEvent) -> TaskEvent:
         updated_at=row.updated_at,
         routed_at=row.routed_at,
         processed_at=row.processed_at,
+        workspace_id=row.workspace_id,
     )
 
 
@@ -210,27 +211,25 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         with self._session("list_task_events") as session:
             return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
 
-    def list_waiting(self, *, state: str, max_deliveries: int) -> builtins.list[TaskEvent]:
-        """List every owner's events in ``state`` that wait to be queued, oldest first."""
-        workspace_id = current_workspace_id()
-        done_items = select(SqlAgentQueueItem.id).where(
-            SqlAgentQueueItem.workspace_id == workspace_id,
+    def list_waiting_all_workspaces(
+        self, *, state: str, max_deliveries: int
+    ) -> builtins.list[TaskEvent]:
+        """List the events in ``state`` in every workspace that wait to be queued, oldest first."""
+        done_item = select(SqlAgentQueueItem.id).where(
+            SqlAgentQueueItem.workspace_id == SqlTaskEvent.workspace_id,
+            SqlAgentQueueItem.id == SqlTaskEvent.queue_item_id,
             SqlAgentQueueItem.state == _DONE_ITEM,
         )
         stmt = (
             select(SqlTaskEvent)
             .where(
-                SqlTaskEvent.workspace_id == workspace_id,
                 SqlTaskEvent.state == encode_task_event_state(state),
                 SqlTaskEvent.delivery_count < max_deliveries,
-                or_(
-                    SqlTaskEvent.queue_item_id.is_(None),
-                    SqlTaskEvent.queue_item_id.in_(done_items),
-                ),
+                or_(SqlTaskEvent.queue_item_id.is_(None), done_item.exists()),
             )
             .order_by(asc(SqlTaskEvent.created_at), asc(SqlTaskEvent.id))
         )
-        with self._session("list_task_events_waiting_for_queue") as session:
+        with self._session("list_task_events_waiting_for_queue_in_all_workspaces") as session:
             return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
 
     def route_to_manager(

@@ -1094,6 +1094,8 @@ class SqlTaskEvent(OmnigentBase):
         Index("ix_task_events_fyi_cluster", "workspace_id", "fyi_cluster_id"),
         # The events a queue item carries.
         Index("ix_task_events_queue_item", "workspace_id", "queue_item_id"),
+        # Events in a state across every workspace, oldest first, e.g. the packagers' scan.
+        Index("ix_task_events_state", "state", "created_at", "workspace_id", "id"),
     )
 
 
@@ -1298,8 +1300,8 @@ class SqlAgentQueueItem(OmnigentBase):
     __table_args__ = (
         CheckConstraint("kind IN (1, 2, 3)", name="ck_agent_queue_items_kind"),
         CheckConstraint("state IN (1, 2, 3, 4)", name="ck_agent_queue_items_state"),
-        # Items in a state in arrival order, e.g. the dispatcher's scan.
-        Index("ix_agent_queue_items_state_seq", "workspace_id", "state", "seq"),
+        # Items in a state in arrival order across every workspace, e.g. the dispatcher's scan.
+        Index("ix_agent_queue_items_state_seq", "state", "seq", "workspace_id"),
         # One session's items in a state, e.g. whether one is in flight.
         Index(
             "ix_agent_queue_items_target_state",

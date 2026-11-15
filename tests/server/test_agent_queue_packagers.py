@@ -20,6 +20,7 @@ from omnigent.agent_tasks.role_sessions import (
     ensure_role_session,
 )
 from omnigent.agent_tasks.roles import BROKER_ROLE_KEY, MANAGER_ROLE_KEY, builtin_role
+from omnigent.db.db_models import workspace_scope
 from omnigent.entities import AgentQueueItem, EventTag
 from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher
 from omnigent.server.agent_queue_packagers import (
@@ -150,6 +151,33 @@ async def test_waiting_events_become_items_for_each_users_broker(
     assert board.queue.list(owner_user_id=BOB) == []
     bobs_event = board.events.get(bobs, owner_user_id=BOB)
     assert bobs_event is not None and bobs_event.queue_item_id is None
+
+
+async def test_events_in_another_workspace_are_queued_in_that_workspace(
+    board: BoardStores, sessions: RoleSessionStores, send_deps: SessionSendDeps
+) -> None:
+    with workspace_scope(7):
+        for name in ("onih-pmv2", "onih-custodian"):
+            sessions.agent_store.create(uuid.uuid4().hex, name, f"bundles/{name}.tar.gz")
+        sessions.user_settings_store.save_globalhub_placement(PLACEMENT, user_id=ALICE)
+        comment = _event(board, ALICE, "host:h1")
+    packager = BrokerPackager(board=board, sessions=sessions, send_deps=send_deps)
+
+    # The packager runs outside any workspace, as it does in the server.
+    await packager.package(int(time.time()) + 31)
+
+    assert board.queue.list(owner_user_id=ALICE) == []
+    with workspace_scope(7):
+        broker = sessions.user_settings_store.get_globalhub_role_session(
+            BROKER_ROLE_KEY, user_id=ALICE
+        )
+        items = board.queue.list(owner_user_id=ALICE)
+        carried = [
+            event.id
+            for item in items
+            for event in board.events.list(owner_user_id=ALICE, queue_item_ids=[item.id])
+        ]
+    assert ([item.target_session_id for item in items], carried) == ([broker], [comment])
 
 
 async def test_the_notice_carries_the_items_waiting_events_in_tag_clusters(

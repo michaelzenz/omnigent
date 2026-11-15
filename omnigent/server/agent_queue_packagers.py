@@ -24,6 +24,7 @@ from omnigent.agent_tasks.roles import (
     builtin_role,
     session_role,
 )
+from omnigent.db.db_models import workspace_scope
 from omnigent.entities import LIVE_TASK_STATES, AgentQueueItem, Conversation, Task, TaskEvent
 from omnigent.server.agent_task_delivery import SessionSendDeps, session_has_live_turn
 
@@ -69,16 +70,19 @@ class BrokerPackager:
         self._send_deps = send_deps
 
     async def package(self, now: int) -> None:
-        """Queue the batches due at ``now``, user by user."""
+        """Queue the batches due at ``now``, user by user in each workspace."""
         waiting = await asyncio.to_thread(
-            self._board.events.list_waiting, state="unrouted", max_deliveries=MAX_DELIVERIES
+            self._board.events.list_waiting_all_workspaces,
+            state="unrouted",
+            max_deliveries=MAX_DELIVERIES,
         )
-        by_owner: defaultdict[str | None, list[TaskEvent]] = defaultdict(list)
+        by_owner: defaultdict[tuple[int, str | None], list[TaskEvent]] = defaultdict(list)
         for event in waiting:
-            by_owner[event.owner_user_id].append(event)
-        for owner, events in by_owner.items():
+            by_owner[(event.workspace_id, event.owner_user_id)].append(event)
+        for (workspace_id, owner), events in by_owner.items():
             try:
-                await self._package_for(owner, events, now)
+                with workspace_scope(workspace_id):
+                    await self._package_for(owner, events, now)
             except Exception:
                 _logger.exception("GlobalHub broker packaging failed for %s", owner)
 
@@ -116,17 +120,21 @@ class ManagerPackager:
         self._send_deps = send_deps
 
     async def package(self, now: int) -> None:
-        """Queue the batches due at ``now``, manager by manager."""
+        """Queue the batches due at ``now``, manager by manager in each workspace."""
         waiting = await asyncio.to_thread(
-            self._board.events.list_waiting, state="routed", max_deliveries=MAX_DELIVERIES
+            self._board.events.list_waiting_all_workspaces,
+            state="routed",
+            max_deliveries=MAX_DELIVERIES,
         )
-        by_manager: defaultdict[tuple[str | None, str], list[TaskEvent]] = defaultdict(list)
+        by_manager: defaultdict[tuple[int, str | None, str], list[TaskEvent]] = defaultdict(list)
         for event in waiting:
             if event.manager_id is not None:
-                by_manager[(event.owner_user_id, event.manager_id)].append(event)
-        for (owner, manager_id), events in by_manager.items():
+                key = (event.workspace_id, event.owner_user_id, event.manager_id)
+                by_manager[key].append(event)
+        for (workspace_id, owner, manager_id), events in by_manager.items():
             try:
-                await self._package_for(owner, manager_id, events, now)
+                with workspace_scope(workspace_id):
+                    await self._package_for(owner, manager_id, events, now)
             except Exception:
                 _logger.exception("GlobalHub packaging failed for manager %s", manager_id)
 

@@ -6,7 +6,8 @@ its role, writes the message text and sends it. A sent item holds its session
 until the turn handling it ends: main's status hook reports the turn end, and
 a session idle for a minute after the send counts too. A turn whose runner died
 in a crash ends the next time the dispatcher reads the session, which settles
-the turn the way main's session list does.
+the turn the way main's session list does. The loop runs outside a request, so
+it reads every workspace and acts on each item inside that item's workspace.
 """
 
 from __future__ import annotations
@@ -14,11 +15,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import defaultdict
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from omnigent.agent_tasks.board_stores import BoardStores
 from omnigent.agent_tasks.role_sessions import RoleSessionStores, is_role_session_current
+from omnigent.db.db_models import workspace_scope
 from omnigent.entities import AgentQueueItem
 from omnigent.server.agent_task_delivery import (
     SendResult,
@@ -113,7 +116,8 @@ class AgentQueueDispatcher:
             # GlobalHub runs on one server, so a claim found at start is from a stopped process.
             try:
                 await asyncio.to_thread(
-                    self._queue.release_stale_claims, claimed_before=int(self._clock()) + 1
+                    self._queue.release_stale_claims_all_workspaces,
+                    claimed_before=int(self._clock()) + 1,
                 )
             except Exception:
                 _logger.exception("GlobalHub could not put back the claims a stopped server left")
@@ -150,7 +154,8 @@ class AgentQueueDispatcher:
         ):
             self._last_stale_sweep = now
             await asyncio.to_thread(
-                self._queue.release_stale_claims, claimed_before=now - STALE_CLAIM_S
+                self._queue.release_stale_claims_all_workspaces,
+                claimed_before=now - STALE_CLAIM_S,
             )
         if self._last_package is None or now - self._last_package >= PACKAGE_INTERVAL_S:
             self._last_package = now
@@ -160,8 +165,10 @@ class AgentQueueDispatcher:
                 except Exception:
                     _logger.exception("GlobalHub packager %r failed", packager)
         await self._settle_sent(now)
-        claimed = await asyncio.to_thread(self._queue.claim_due, now=now)
-        return [self._track(asyncio.create_task(self._deliver(item))) for item in claimed]
+        claimed = await asyncio.to_thread(self._queue.claim_due_all_workspaces, now=now)
+        return [
+            self._track(asyncio.create_task(self._deliver_in_workspace(item))) for item in claimed
+        ]
 
     async def _run_forever(self) -> None:
         while True:
@@ -173,11 +180,21 @@ class AgentQueueDispatcher:
 
     async def _settle_sent(self, now: int) -> None:
         """Mark done the sent items whose turn lost its runner, or whose session stayed idle."""
-        sent = await asyncio.to_thread(self._queue.list_sent)
+        sent = await asyncio.to_thread(self._queue.list_sent_all_workspaces)
         self._in_flight = {item.target_session_id for item in sent}
-        if not sent:
-            self._idle_since = {}
-            return
+        by_workspace: defaultdict[int, list[AgentQueueItem]] = defaultdict(list)
+        for item in sent:
+            by_workspace[item.workspace_id].append(item)
+        idle_since: dict[str, int] = {}
+        for workspace_id, items in by_workspace.items():
+            with workspace_scope(workspace_id):
+                idle_since.update(await self._settle_sent_in_workspace(items, now))
+        self._idle_since = idle_since
+
+    async def _settle_sent_in_workspace(
+        self, sent: list[AgentQueueItem], now: int
+    ) -> dict[str, int]:
+        """Settle one workspace's sent items; return when each item still idle was first idle."""
         targets = await asyncio.to_thread(
             self._send_deps.conversation_store.get_conversations,
             [item.target_session_id for item in sent],
@@ -202,7 +219,11 @@ class AgentQueueDispatcher:
                 self._queue.mark_done, item.id, owner_user_id=item.owner_user_id
             )
             self._in_flight.discard(item.target_session_id)
-        self._idle_since = idle_since
+        return idle_since
+
+    async def _deliver_in_workspace(self, item: AgentQueueItem) -> None:
+        with workspace_scope(item.workspace_id):
+            await self._deliver(item)
 
     async def _deliver(self, item: AgentQueueItem) -> None:
         try:

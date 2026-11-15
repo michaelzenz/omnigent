@@ -6,6 +6,7 @@ import itertools
 
 import pytest
 
+from omnigent.db.db_models import workspace_scope
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
@@ -101,7 +102,7 @@ def test_each_session_gets_one_item_at_a_time_in_arrival_order(
     manager_item = _enqueue(queue, MANAGER_SESSION)
 
     def claim() -> list[str]:
-        return [item.id for item in queue.claim_due(now=NOW)]
+        return [item.id for item in queue.claim_due_all_workspaces(now=NOW)]
 
     claimed = claim()
     while_sending = claim()
@@ -124,14 +125,14 @@ def test_a_failed_send_waits_for_its_retry_time_and_keeps_its_place(
     queue: SqlAlchemyAgentQueueStore,
 ) -> None:
     failing = _enqueue(queue, BROKER_SESSION)
-    queue.claim_due(now=NOW)
+    queue.claim_due_all_workspaces(now=NOW)
     later = _enqueue(queue, BROKER_SESSION)
 
     retried = queue.retry_later(
         failing, owner_user_id=ALICE, error="host offline", not_before=NOW + 30
     )
-    before_retry_time = queue.claim_due(now=NOW)
-    at_retry_time = queue.claim_due(now=NOW + 30)
+    before_retry_time = queue.claim_due_all_workspaces(now=NOW)
+    at_retry_time = queue.claim_due_all_workspaces(now=NOW + 30)
 
     assert retried is not None
     assert (retried.state, retried.attempts, retried.last_error, retried.not_before) == (
@@ -150,14 +151,14 @@ def test_crashed_claims_go_back_and_a_turn_end_settles_its_session(
 ) -> None:
     broker_item = _enqueue(queue, BROKER_SESSION)
     manager_item = _enqueue(queue, MANAGER_SESSION)
-    queue.claim_due(now=NOW)
+    queue.claim_due_all_workspaces(now=NOW)
 
-    not_yet = queue.release_stale_claims(claimed_before=NOW)
-    released = queue.release_stale_claims(claimed_before=NOW + 1)
-    queue.claim_due(now=NOW + 1)
+    not_yet = queue.release_stale_claims_all_workspaces(claimed_before=NOW)
+    released = queue.release_stale_claims_all_workspaces(claimed_before=NOW + 1)
+    queue.claim_due_all_workspaces(now=NOW + 1)
     queue.mark_sent(broker_item, owner_user_id=ALICE)
     deferred = queue.defer(manager_item, owner_user_id=ALICE, not_before=NOW + 6)
-    sent = [item.id for item in queue.list_sent()]
+    sent = [item.id for item in queue.list_sent_all_workspaces()]
     settled = queue.mark_done_for_session(BROKER_SESSION)
 
     assert (not_yet, released) == (0, 2)
@@ -165,7 +166,7 @@ def test_crashed_claims_go_back_and_a_turn_end_settles_its_session(
     assert (deferred.state, deferred.attempts, deferred.not_before) == ("queued", 0, NOW + 6)
     assert sent == [broker_item]
     assert (settled, queue.mark_done_for_session(BROKER_SESSION)) == (1, 0)
-    assert queue.list_sent() == []
+    assert queue.list_sent_all_workspaces() == []
 
 
 def test_an_event_left_waiting_is_offered_again_until_its_delivery_cap(
@@ -175,10 +176,13 @@ def test_an_event_left_waiting_is_offered_again_until_its_delivery_cap(
     bobs = _event(events, owner=BOB)
 
     def waiting() -> list[str]:
-        return [event.id for event in events.list_waiting(state="unrouted", max_deliveries=2)]
+        return [
+            event.id
+            for event in events.list_waiting_all_workspaces(state="unrouted", max_deliveries=2)
+        ]
 
     def deliver(item_id: str, now: int) -> None:
-        queue.claim_due(now=now)
+        queue.claim_due_all_workspaces(now=now)
         queue.mark_sent(item_id, owner_user_id=ALICE)
         queue.mark_done(item_id, owner_user_id=ALICE)
 
@@ -242,3 +246,31 @@ def test_an_event_leaves_its_item_when_it_changes_hands(
     returned = events.get(unrouted, owner_user_id=ALICE)
     assert returned is not None
     assert (returned.state, returned.queue_item_id) == ("unrouted", None)
+
+
+def test_the_background_scans_cover_every_workspace(
+    queue: SqlAlchemyAgentQueueStore, events: SqlAlchemyTaskEventStore
+) -> None:
+    default_event, default_item = _event(events), _enqueue(queue, BROKER_SESSION)
+    with workspace_scope(7):
+        other_event, other_item = _event(events), _enqueue(queue, BROKER_SESSION)
+
+    waiting = events.list_waiting_all_workspaces(state="unrouted", max_deliveries=2)
+    # The same session id in two workspaces names two sessions, so both items go out.
+    claimed = queue.claim_due_all_workspaces(now=NOW)
+    queue.mark_sent(default_item, owner_user_id=ALICE)
+    released = queue.release_stale_claims_all_workspaces(claimed_before=NOW + 1)
+
+    assert [(event.id, event.workspace_id) for event in waiting] == [
+        (default_event, 0),
+        (other_event, 7),
+    ]
+    assert [(item.id, item.workspace_id) for item in claimed] == [
+        (default_item, 0),
+        (other_item, 7),
+    ]
+    assert released == 1
+    assert [item.id for item in queue.list_sent_all_workspaces()] == [default_item]
+    with workspace_scope(7):
+        put_back = queue.get(other_item, owner_user_id=ALICE)
+    assert put_back is not None and put_back.state == "queued"

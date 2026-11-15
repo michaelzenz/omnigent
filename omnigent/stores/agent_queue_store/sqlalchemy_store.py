@@ -64,6 +64,7 @@ def _to_entity(row: SqlAgentQueueItem) -> AgentQueueItem:
         updated_at=row.updated_at,
         sent_at=row.sent_at,
         done_at=row.done_at,
+        workspace_id=row.workspace_id,
     )
 
 
@@ -85,8 +86,8 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
     """
     SQLAlchemy-backed implementation of :class:`AgentQueueStore`.
 
-    Every query is scoped by ``workspace_id``, and all but the dispatcher's
-    claim by ``owner_user_id``.
+    Every query is scoped by ``workspace_id`` and ``owner_user_id``, except the
+    dispatcher's scans of every workspace and its turn-end update.
     """
 
     def __init__(self, storage_location: str) -> None:
@@ -196,13 +197,14 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
         with self._session("list_agent_queue_items") as session:
             return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
 
-    def claim_due(self, *, now: int, limit: int = 100) -> builtins.list[AgentQueueItem]:
-        """Claim the items ready to send, for the dispatcher, and mark them ``sending``."""
+    def claim_due_all_workspaces(
+        self, *, now: int, limit: int = 100
+    ) -> builtins.list[AgentQueueItem]:
+        """Claim the items ready to send in every workspace, and mark them ``sending``."""
         item = SqlAgentQueueItem
         other = aliased(SqlAgentQueueItem)
-        workspace_id = current_workspace_id()
         same_session = and_(
-            other.workspace_id == workspace_id,
+            other.workspace_id == item.workspace_id,
             other.target_session_id == item.target_session_id,
         )
         in_flight = select(other.id).where(same_session, other.state.in_((_SENDING, _SENT)))
@@ -212,7 +214,6 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
         due = (
             select(item)
             .where(
-                item.workspace_id == workspace_id,
                 item.state == _QUEUED,
                 or_(item.not_before.is_(None), item.not_before <= now),
                 ~in_flight.exists(),
@@ -230,13 +231,15 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
             return [_to_entity(row) for row in rows]
 
         # Most passes find nothing; check without taking SQLite's write lock.
-        with self._session("find_due_agent_queue_items") as session:
+        with self._session("find_due_agent_queue_items_in_all_workspaces") as session:
             if session.execute(due.with_only_columns(item.id).limit(1)).first() is None:
                 return []
-        return run_write_transaction(self._session_immediate, "claim_due_agent_queue_items", write)
+        return run_write_transaction(
+            self._session_immediate, "claim_due_agent_queue_items_in_all_workspaces", write
+        )
 
-    def release_stale_claims(self, *, claimed_before: int) -> int:
-        """Put back every owner's items claimed before ``claimed_before`` and never settled."""
+    def release_stale_claims_all_workspaces(self, *, claimed_before: int) -> int:
+        """Put back the items in every workspace claimed before ``claimed_before``."""
         now = now_epoch()
 
         def write(session: Session) -> int:
@@ -245,7 +248,6 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
                 session.execute(
                     update(SqlAgentQueueItem)
                     .where(
-                        SqlAgentQueueItem.workspace_id == current_workspace_id(),
                         SqlAgentQueueItem.state == _SENDING,
                         SqlAgentQueueItem.updated_at < claimed_before,
                     )
@@ -256,20 +258,17 @@ class SqlAlchemyAgentQueueStore(AgentQueueStore):
             return result.rowcount
 
         return run_write_transaction(
-            self._session_immediate, "release_stale_agent_queue_claims", write
+            self._session_immediate, "release_stale_agent_queue_claims_in_all_workspaces", write
         )
 
-    def list_sent(self) -> builtins.list[AgentQueueItem]:
-        """List every owner's ``sent`` items in arrival order, for the dispatcher."""
+    def list_sent_all_workspaces(self) -> builtins.list[AgentQueueItem]:
+        """List the ``sent`` items in every workspace in arrival order, for the dispatcher."""
         stmt = (
             select(SqlAgentQueueItem)
-            .where(
-                SqlAgentQueueItem.workspace_id == current_workspace_id(),
-                SqlAgentQueueItem.state == _SENT,
-            )
+            .where(SqlAgentQueueItem.state == _SENT)
             .order_by(asc(SqlAgentQueueItem.seq), asc(SqlAgentQueueItem.id))
         )
-        with self._session("list_sent_agent_queue_items") as session:
+        with self._session("list_sent_agent_queue_items_in_all_workspaces") as session:
             return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
 
     def mark_done_for_session(self, session_id: str) -> int:

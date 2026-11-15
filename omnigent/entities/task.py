@@ -165,6 +165,7 @@ class TaskEvent:
     :param updated_at: Unix epoch seconds of the last change.
     :param routed_at: When the event was routed to a manager.
     :param processed_at: When the event was dismissed or filed.
+    :param workspace_id: Tenant partition key that owns this row.
     """
 
     id: str
@@ -187,6 +188,7 @@ class TaskEvent:
     updated_at: int | None = None
     routed_at: int | None = None
     processed_at: int | None = None
+    workspace_id: int = 0
 
 
 @dataclass
@@ -307,6 +309,7 @@ class AgentQueueItem:
     :param updated_at: Unix epoch seconds of the last change.
     :param sent_at: When the send succeeded.
     :param done_at: When the turn that handled the item ended.
+    :param workspace_id: Tenant partition key that owns this row.
     """
 
     id: str
@@ -323,3 +326,4 @@ class AgentQueueItem:
     updated_at: int | None = None
     sent_at: int | None = None
     done_at: int | None = None
+    workspace_id: int = 0
