@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { XIcon } from "lucide-react";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   markSystemNoticeSeen,
+  type SystemNotice,
   type SystemNoticeAction,
   type SystemNoticeInput,
   type SystemNoticeValues,
@@ -14,6 +15,7 @@ import {
   useDismissSystemNotice,
   useSystemNotice,
 } from "@/hooks/useGlobalHubNotice";
+import { HtmlNoticeBody } from "./HtmlNoticeBody";
 
 /** The notice pinned at the top of the board, e.g. the custodian's cleanup proposal. */
 export function SystemNoticeCard() {
@@ -60,17 +62,62 @@ export function SystemNoticeCard() {
               {dismiss.error.message}
             </p>
           )}
-          {notice.body && (
-            <div className="text-ui break-words">
-              <MessageResponse allowGitHubAttachmentImages>{notice.body}</MessageResponse>
-            </div>
+          {notice.body_kind === "html" && notice.body ? (
+            // A new notice gets a fresh frame and forgets the clicks already sent.
+            <HtmlNotice key={notice.id} notice={notice} html={notice.body} />
+          ) : (
+            <>
+              {notice.body && (
+                <div className="text-ui break-words">
+                  <MessageResponse allowGitHubAttachmentImages>{notice.body}</MessageResponse>
+                </div>
+              )}
+              {notice.actions.map((action) => (
+                // A new notice gets fresh forms, so its buttons start enabled.
+                <ActionForm key={`${notice.id}:${action.id}`} action={action} />
+              ))}
+            </>
           )}
-          {notice.actions.map((action) => (
-            // A new notice gets fresh forms, so its buttons start enabled.
-            <ActionForm key={`${notice.id}:${action.id}`} action={action} />
-          ))}
         </div>
       </article>
+    </div>
+  );
+}
+
+/** An HTML notice: its buttons are in the frame, and each action is sent once. */
+function HtmlNotice({ notice, html }: { notice: SystemNotice; html: string }) {
+  const click = useClickSystemNoticeAction();
+  const [sentIds, setSentIds] = useState<string[]>([]);
+  // The actions sent or being sent; the frame can relay a click again before a render.
+  const handled = useRef(new Set<string>());
+  const labels = new Map(notice.actions.map((action) => [action.id, action.label ?? action.id]));
+  const send = (actionId: string, inputs: SystemNoticeValues) => {
+    if (handled.current.has(actionId)) return;
+    handled.current.add(actionId);
+    void click.mutateAsync({ actionId, inputs }).then(
+      () => setSentIds((ids) => [...ids, actionId]),
+      () => handled.current.delete(actionId),
+    );
+  };
+
+  return (
+    <div className="space-y-2">
+      <HtmlNoticeBody html={html} actionIds={new Set(labels.keys())} onAction={send} />
+      {labels.size > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Buttons inside the notice send their action to the custodian.
+        </p>
+      )}
+      {sentIds.map((actionId) => (
+        <p key={actionId} role="status" className="text-xs text-muted-foreground">
+          Sent to the custodian: {labels.get(actionId)}.
+        </p>
+      ))}
+      {click.error && (
+        <p role="alert" className="text-xs text-destructive">
+          {click.error.message}
+        </p>
+      )}
     </div>
   );
 }

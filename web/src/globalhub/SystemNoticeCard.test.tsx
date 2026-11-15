@@ -1,16 +1,37 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { SystemNoticeCard } from "./SystemNoticeCard";
+import type * as NoticeBridgeModule from "./noticeBridge";
 import type { SystemNotice } from "@/hooks/useGlobalHubNotice";
 import { authenticatedFetch } from "@/lib/identity";
 import type * as IdentityModule from "@/lib/identity";
+import { HTML_PREVIEW_SANDBOX } from "@/shell/codeViewerHelpers";
 import { jsonResponse, noticeInput, systemNotice } from "@/test/globalHubFixtures";
 
 vi.mock("@/lib/identity", async (importOriginal) => ({
   ...(await importOriginal<typeof IdentityModule>()),
   authenticatedFetch: vi.fn(),
+}));
+
+// jsdom does not run the frame's script, so the test relays the frame's clicks.
+const frame = vi.hoisted(() => ({
+  relay: null as null | ((actionId: string, inputs: Record<string, boolean | string>) => void),
+}));
+vi.mock("./noticeBridge", async (importOriginal) => ({
+  ...(await importOriginal<typeof NoticeBridgeModule>()),
+  connectNoticeFrame: (
+    _window: Window,
+    _nonce: string,
+    isDeclared: (actionId: string) => boolean,
+    onAction: (actionId: string, inputs: Record<string, boolean | string>) => void,
+  ) => {
+    frame.relay = (actionId, inputs) => {
+      if (isDeclared(actionId)) onAction(actionId, inputs);
+    };
+    return { close: () => {} } as unknown as MessagePort;
+  },
 }));
 
 const fetchMock = vi.mocked(authenticatedFetch);
@@ -157,6 +178,33 @@ describe("SystemNoticeCard", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("input 'note' is required");
     expect(screen.getByRole("button", { name: "Delete selected" })).toBeEnabled();
     expect(screen.getByText("Instructions *")).toBeInTheDocument();
+  });
+
+  it("runs an HTML notice in a sandboxed frame and sends each declared action once", async () => {
+    serveNotice(
+      systemNotice("n6", {
+        body_kind: "html",
+        body: "<button data-action='confirm'>Go</button>",
+        actions: [{ id: "confirm", label: "Delete selected", inputs: [noticeInput("delete_s1")] }],
+      }),
+    );
+    renderCard();
+
+    const notice = await screen.findByTitle("System notice");
+    fireEvent.load(notice);
+    act(() => {
+      frame.relay?.("undeclared", {});
+      frame.relay?.("confirm", { delete_s1: true });
+      frame.relay?.("confirm", { delete_s1: true });
+    });
+
+    expect(await screen.findByText("Sent to the custodian: Delete selected.")).toBeInTheDocument();
+    expect(notice).toHaveAttribute("sandbox", HTML_PREVIEW_SANDBOX);
+    expect(notice.getAttribute("srcdoc")).toContain("data-action='confirm'");
+    expect(screen.queryByRole("button", { name: "Delete selected" })).toBeNull();
+    expect(posts()).toEqual([
+      [`${NOTICE_PATH}/actions/confirm/click`, { inputs: { delete_s1: true } }],
+    ]);
   });
 
   it("dismisses the notice", async () => {
