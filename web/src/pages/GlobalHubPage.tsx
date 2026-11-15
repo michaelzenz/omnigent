@@ -3,6 +3,7 @@ import { SettingsIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { GlobalHubSettingsDialog } from "@/globalhub/GlobalHubSettingsDialog";
+import { SystemNoticeCard } from "@/globalhub/SystemNoticeCard";
 import { TaskBoard } from "@/globalhub/TaskBoard";
 import { useGlobalHubSettings } from "@/hooks/useGlobalHubSettings";
 
@@ -52,6 +53,7 @@ export function GlobalHubPage() {
                 </Button>
               </div>
             )}
+            <SystemNoticeCard />
             <TaskBoard scrollRoot={boardRef} />
           </>
         )}

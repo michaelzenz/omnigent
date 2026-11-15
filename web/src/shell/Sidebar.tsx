@@ -266,6 +266,7 @@ import {
 } from "@/lib/sidebarViewPreferences";
 import { ExtensionPrimaryNavigation } from "@/extensions/ExtensionPrimaryNavigation";
 import { PrimaryNavLink } from "@/shell/PrimaryNavLink";
+import { SystemNoticeDot } from "@/globalhub/SystemNoticeDot";
 import { useViewerId } from "@/hooks/useViewerId";
 import { useExtensions } from "@/extensions/ExtensionProvider";
 import { extensionPathParts, resolveExtensionPageFromPath } from "@/extensions/catalog";
@@ -1424,6 +1425,7 @@ function SidebarImpl({
                 onClick={onNavClick}
                 componentId="sidebar.globalhub"
                 testId="globalhub-nav"
+                trailing={<SystemNoticeDot />}
               />
               {/* Keep Scheduled in the primary nav group with the same row treatment as New session. */}
               {automationsEnabled && (

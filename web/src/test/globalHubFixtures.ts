@@ -1,3 +1,4 @@
+import type { SystemNotice, SystemNoticeInput } from "@/hooks/useGlobalHubNotice";
 import type {
   AgentTaskAsset,
   AgentTaskCard,
@@ -61,6 +62,41 @@ export function taskAsset(id: string, fields: Partial<AgentTaskAsset> = {}): Age
     related_session_ids: [],
     created_at: 1_800_000_000,
     updated_at: null,
+    ...fields,
+  };
+}
+
+/** An active Markdown notice with no actions; ``fields`` override the defaults. */
+export function systemNotice(id: string, fields: Partial<SystemNotice> = {}): SystemNotice {
+  return {
+    id,
+    title: `Notice ${id}`,
+    body_kind: "markdown",
+    body: null,
+    actions: [],
+    state: "active",
+    publisher_session_id: null,
+    publisher_label: null,
+    created_at: 1_800_000_000,
+    updated_at: null,
+    resolved_at: null,
+    ...fields,
+  };
+}
+
+/** A toggle without a label or group; ``fields`` override the defaults. */
+export function noticeInput(
+  id: string,
+  fields: Partial<SystemNoticeInput> = {},
+): SystemNoticeInput {
+  return {
+    id,
+    kind: "toggle",
+    label: null,
+    group: null,
+    placeholder: null,
+    default: null,
+    required: null,
     ...fields,
   };
 }
