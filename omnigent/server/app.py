@@ -133,6 +133,7 @@ from omnigent.server.performance_metrics import (
 )
 from omnigent.server.preference_requests import DEFAULT_PREFERENCE_POLICY, PreferencePolicy
 from omnigent.server.routes.agent_task_assets import create_agent_task_assets_router
+from omnigent.server.routes.agent_task_board import create_agent_task_board_router
 from omnigent.server.routes.agent_task_events import create_agent_task_events_router
 from omnigent.server.routes.agent_task_fyi import create_agent_task_fyi_router
 from omnigent.server.routes.agent_task_managers import create_agent_task_managers_router
@@ -4205,8 +4206,24 @@ def create_app(
         )
     board_stores = open_board_stores(conversation_store)
     if board_stores is not None:
-        # The managers and system notice routers go before the tasks router,
-        # whose /agent-tasks/{task_id} matches their literal paths.
+        send_deps = agent_task_delivery.SessionSendDeps(
+            conversation_store=conversation_store,
+            agent_store=agent_store,
+            app_state=app.state,
+            runner_router=runner_router,
+            file_store=file_store,
+            artifact_store=artifact_store,
+            liveness_lookup=_bulk_session_liveness,
+        )
+        # The board, managers and system notice routers go before the tasks
+        # router, whose /agent-tasks/{task_id} matches their literal paths.
+        app.include_router(
+            create_agent_task_board_router(
+                board_stores, conversation_store, send_deps, auth_provider
+            ),
+            prefix="/v1",
+            tags=["agent-tasks"],
+        )
         if role_session_stores is not None:
             app.include_router(
                 create_agent_task_managers_router(
@@ -4250,15 +4267,6 @@ def create_app(
             tags=["agent-tasks"],
         )
         if role_session_stores is not None:
-            send_deps = agent_task_delivery.SessionSendDeps(
-                conversation_store=conversation_store,
-                agent_store=agent_store,
-                app_state=app.state,
-                runner_router=runner_router,
-                file_store=file_store,
-                artifact_store=artifact_store,
-                liveness_lookup=_bulk_session_liveness,
-            )
             # Started and stopped by the lifespan.
             app.state.agent_queue_dispatcher = AgentQueueDispatcher(
                 board=board_stores,

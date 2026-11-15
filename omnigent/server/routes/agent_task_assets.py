@@ -54,7 +54,7 @@ def create_agent_task_assets_router(
                 add_related_session_ids=body.add_related_session_ids,
             )
 
-        return _asset_response(await asyncio.to_thread(attach))
+        return asset_response(await asyncio.to_thread(attach))
 
     @router.delete(
         "/agent-tasks/{task_id}/assets/{asset_id}", response_model=AgentTaskAssetDeletedResponse
@@ -74,7 +74,7 @@ def create_agent_task_assets_router(
     return router
 
 
-def _asset_response(asset: TaskAsset) -> AgentTaskAssetResponse:
+def asset_response(asset: TaskAsset) -> AgentTaskAssetResponse:
     return AgentTaskAssetResponse(
         id=asset.id,
         task_id=asset.task_id,

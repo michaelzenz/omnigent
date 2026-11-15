@@ -6315,6 +6315,56 @@ class AgentTaskAssetDeletedResponse(BaseModel):
     deleted: Literal[True] = True
 
 
+class AgentTaskBoardSession(BaseModel):
+    """The session a worker wraps, with the title and live state the session list shows."""
+
+    title: str | None
+    status: Literal["idle", "running", "waiting", "failed"]
+    pending_elicitations_count: int
+    background_work_running: bool
+    blocked_on: str | None
+    updated_at: int
+
+
+class AgentTaskBoardWorker(AgentTaskWorkerResponse):
+    """A worker on a board card, with its session."""
+
+    session: AgentTaskBoardSession
+
+
+class AgentTaskBoardCard(BaseModel):
+    """A live task on the caller's board, with the workers and assets its card shows.
+
+    The card leaves out the task's ``internal_note``, which only agents read.
+    Workers whose session is busy come first, then the most recently active.
+    """
+
+    object: Literal["agent.task.card"] = "agent.task.card"
+    id: str
+    manager_id: str | None
+    title: str
+    goal: str
+    description: str | None
+    state: AgentTaskState
+    priority: int
+    queue_rank: int
+    created_at: int
+    updated_at: int | None
+    workers: list[AgentTaskBoardWorker]
+    assets: list[AgentTaskAssetResponse]
+
+
+class AgentTaskBoard(BaseModel):
+    """The first live tasks on the caller's board, in board order, as cards.
+
+    ``has_more`` says the board has more live tasks than ``data`` holds.
+    """
+
+    object: Literal["agent.task.board"] = "agent.task.board"
+    data: list[AgentTaskBoardCard]
+    has_more: bool
+
+
 AgentSystemNoticeState = Literal["active", "resolved"]
 AgentSystemNoticeBodyKind = Literal["markdown", "html"]
 _AGENT_SYSTEM_NOTICE_ACTIONS_MAX_BYTES = 2 * 1024 * 1024

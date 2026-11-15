@@ -109,7 +109,7 @@ def create_agent_task_workers_router(
         user_id = require_user(request, auth_provider)
         await require_owned_task(task_id, user_id)
         found = await asyncio.to_thread(workers.list_for_tasks, [task_id], owner_user_id=user_id)
-        return AgentTaskWorkerList(data=[_worker_response(worker) for worker in found])
+        return AgentTaskWorkerList(data=[worker_response(worker) for worker in found])
 
     @router.post(
         "/task-workers/{worker_id}/untrack", response_model=AgentTaskWorkerDeletedResponse
@@ -124,7 +124,7 @@ def create_agent_task_workers_router(
     return router
 
 
-def _worker_response(worker: Worker) -> AgentTaskWorkerResponse:
+def worker_response(worker: Worker) -> AgentTaskWorkerResponse:
     return AgentTaskWorkerResponse(
         id=worker.id,
         task_id=worker.task_id,
