@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import itertools
 import uuid
 
 import httpx
+import pytest
 
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.stores.manager_store import sqlalchemy_store as manager_tables
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
@@ -69,12 +72,15 @@ def _click(db_uri: str, custodian: str) -> None:
 
 
 async def test_the_rows_show_each_role_with_its_session_and_waiting_work(
-    auth_client: httpx.AsyncClient, db_uri: str
+    auth_client: httpx.AsyncClient, db_uri: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     broker, custodian = _place_role_sessions(db_uri)
     storage_session = _session(db_uri, "Storage manager")
-    storage = _manager(db_uri, "Storage", storage_session)
-    sessionless = _manager(db_uri, "Docs", None)
+    with monkeypatch.context() as clock:
+        # Each manager is newer than the one before it.
+        clock.setattr(manager_tables, "now_epoch", itertools.count(1_000).__next__)
+        storage = _manager(db_uri, "Storage", storage_session)
+        sessionless = _manager(db_uri, "Docs", None)
     _event(db_uri)
     _event(db_uri)
     _event(db_uri, owner=BOB_ID)
