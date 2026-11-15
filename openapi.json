@@ -1246,7 +1246,7 @@
         "type": "object"
       },
       "AgentTaskBoard": {
-        "description": "The first live tasks on the caller's board, in board order, as cards.\n\n`has_more` says the board has more live tasks than `data` holds.\n`unmanaged_count` counts the live tasks on the whole board that have no\nmanager.",
+        "description": "The first live tasks on the caller's board, in board order, as cards.\n\nA search returns the matching tasks instead, best match first.\n`has_more` says the board has more live tasks than `data` holds.\n`unmanaged_count` counts the live tasks on the whole board that have no\nmanager.",
         "properties": {
           "data": {
             "items": {
@@ -1280,7 +1280,7 @@
         "type": "object"
       },
       "AgentTaskBoardCard": {
-        "description": "A live task on the caller's board, with the workers and assets its card shows.\n\nThe card leaves out the task's `internal_note`, which only agents read.\nWorkers whose session is busy come first, then the most recently active.",
+        "description": "A live task on the caller's board, with the workers and assets its card shows.\n\nThe card leaves out the task's `internal_note`, which only agents read.\nWorkers whose session is busy come first, then the most recently active.\n`match` is null unless the board read was a search.",
         "properties": {
           "assets": {
             "items": {
@@ -1323,6 +1323,16 @@
               }
             ],
             "title": "Manager Id"
+          },
+          "match": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentTaskBoardMatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "object": {
             "const": "agent.task.card",
@@ -1389,6 +1399,37 @@
           "assets"
         ],
         "title": "AgentTaskBoardCard",
+        "type": "object"
+      },
+      "AgentTaskBoardMatch": {
+        "description": "How a card matched a board search.\n\n`hits` counts the distinct query words the card holds; `asset_ids` and\n`worker_ids` name the assets and workers whose text holds one.",
+        "properties": {
+          "asset_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Asset Ids",
+            "type": "array"
+          },
+          "hits": {
+            "format": "int64",
+            "title": "Hits",
+            "type": "integer"
+          },
+          "worker_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Worker Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hits",
+          "asset_ids",
+          "worker_ids"
+        ],
+        "title": "AgentTaskBoardMatch",
         "type": "object"
       },
       "AgentTaskBoardPending": {
@@ -16268,7 +16309,7 @@
     },
     "/v1/agent-tasks/board": {
       "get": {
-        "description": "Read the first `limit` live tasks on the caller's board as cards, in board order.\n\nA worker whose session no longer exists is left off its card. The\ncount of tasks without a manager covers the whole board.",
+        "description": "Read the first `limit` live tasks on the caller's board as cards, in board order.\n\nWith a query `q`, read the first `limit` live tasks whose cards hold\nany of its words instead, best match first, as `board_search` ranks\nthem. A worker whose session no longer exists is left off its card. The\ncount of tasks without a manager covers the whole board.",
         "operationId": "read_board_v1_agent_tasks_board_get",
         "parameters": [
           {
@@ -16281,6 +16322,17 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Q",
+              "type": "string"
             }
           }
         ],

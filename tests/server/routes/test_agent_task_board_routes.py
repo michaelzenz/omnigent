@@ -13,6 +13,7 @@ from omnigent.server.routes import sessions
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store import sqlalchemy_store as conversation_tables
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
+from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
@@ -61,7 +62,7 @@ def _worker(db_uri: str, task_id: str, session_id: str, title: str | None = None
 
 
 async def _board(
-    client: httpx.AsyncClient, headers: dict[str, str] = ALICE, **params: int
+    client: httpx.AsyncClient, headers: dict[str, str] = ALICE, **params: int | str
 ) -> dict[str, Any]:
     response = await client.get("/v1/agent-tasks/board", params=params, headers=headers)
     assert response.status_code == 200
@@ -94,6 +95,33 @@ async def test_the_board_reads_the_live_tasks_in_board_order_a_window_at_a_time(
     assert [card["title"] for card in bobs["data"]] == ["Bob's"]
     # The count covers the whole board, not only the window.
     assert [board["unmanaged_count"] for board in (window, whole, bobs)] == [2, 2, 1]
+
+
+async def test_a_search_returns_the_cards_that_hold_the_most_words_first_a_window_at_a_time(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    platform = SqlAlchemyManagerStore(db_uri).create(
+        uuid.uuid4().hex, owner_user_id=ALICE_ID, title="Platform", conversation_id=None
+    )
+    one_word = _task(db_uri, "Fix the logs", manager_id=platform.id)
+    both_words = _task(db_uri, "Fix the retries")
+    _task(db_uri, "Docs")
+    _task(db_uri, "Archived retries fix", state="archived")
+    _task(db_uri, "Fix Bob's retries", owner=BOB_ID)
+
+    found = await _board(auth_client, q="retries FIX")
+    window = await _board(auth_client, q="retries FIX", limit=1)
+    by_manager_name = await _board(auth_client, q="platform")
+    plain = await _board(auth_client)
+
+    assert [(card["id"], card["match"]["hits"]) for card in found["data"]] == [
+        (both_words, 2),
+        (one_word, 1),
+    ]
+    assert ([card["id"] for card in window["data"]], window["has_more"]) == ([both_words], True)
+    # The manager's name is not searched.
+    assert by_manager_name["data"] == []
+    assert {card["match"] is None for card in plain["data"]} == {True}
 
 
 async def test_a_card_lists_its_workers_busy_first_then_most_recent_and_its_assets(

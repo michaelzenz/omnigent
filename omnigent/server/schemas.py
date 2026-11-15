@@ -6346,11 +6346,24 @@ class AgentTaskBoardWorker(AgentTaskWorkerResponse):
     session: AgentTaskBoardSession
 
 
+class AgentTaskBoardMatch(BaseModel):
+    """How a card matched a board search.
+
+    ``hits`` counts the distinct query words the card holds; ``asset_ids`` and
+    ``worker_ids`` name the assets and workers whose text holds one.
+    """
+
+    hits: int
+    asset_ids: list[str]
+    worker_ids: list[str]
+
+
 class AgentTaskBoardCard(BaseModel):
     """A live task on the caller's board, with the workers and assets its card shows.
 
     The card leaves out the task's ``internal_note``, which only agents read.
     Workers whose session is busy come first, then the most recently active.
+    ``match`` is null unless the board read was a search.
     """
 
     object: Literal["agent.task.card"] = "agent.task.card"
@@ -6366,11 +6379,13 @@ class AgentTaskBoardCard(BaseModel):
     updated_at: int | None
     workers: list[AgentTaskBoardWorker]
     assets: list[AgentTaskAssetResponse]
+    match: AgentTaskBoardMatch | None = None
 
 
 class AgentTaskBoard(BaseModel):
     """The first live tasks on the caller's board, in board order, as cards.
 
+    A search returns the matching tasks instead, best match first.
     ``has_more`` says the board has more live tasks than ``data`` holds.
     ``unmanaged_count`` counts the live tasks on the whole board that have no
     manager.
