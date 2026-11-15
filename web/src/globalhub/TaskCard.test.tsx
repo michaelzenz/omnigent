@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
+import { GlobalHubChatProvider } from "./GlobalHubChat";
 import { TaskCard } from "./TaskCard";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { AgentTaskCard } from "@/hooks/useGlobalHubTasks";
@@ -17,13 +18,26 @@ vi.mock("@/lib/identity", async (importOriginal) => ({
 
 const fetchMock = vi.mocked(authenticatedFetch);
 
-function renderCard(task: AgentTaskCard, isLast = false): void {
+function renderCard(
+  task: AgentTaskCard,
+  {
+    isLast = false,
+    managerSessionId = "s-m1",
+  }: { isLast?: boolean; managerSessionId?: string | null } = {},
+): void {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <TooltipProvider>
-          <TaskCard task={task} managerTitle="Storage" isLast={isLast} />
+          <GlobalHubChatProvider>
+            <TaskCard
+              task={task}
+              managerTitle="Storage"
+              managerSessionId={managerSessionId}
+              isLast={isLast}
+            />
+          </GlobalHubChatProvider>
         </TooltipProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -84,12 +98,27 @@ describe("TaskCard", () => {
   });
 
   it("shows a resolved task without a manager, and the last card cannot move down", () => {
-    renderCard(agentTask("t1", { state: "agent-resolved" }), true);
+    renderCard(agentTask("t1", { state: "agent-resolved" }), { isLast: true });
 
     expect(screen.getByText("resolved")).toBeInTheDocument();
     expect(screen.getByText("Unmanaged")).toBeInTheDocument();
     expect(screen.queryByTestId("task-card-resolve-t1")).toBeNull();
     expect(screen.getByTestId("task-card-move-to-end-t1")).toBeDisabled();
+  });
+
+  it("opens the manager's chat from its name while the manager has a session", () => {
+    renderCard(agentTask("t1", { manager_id: "m1" }));
+
+    const chat = screen.getByRole("button", { name: "Chat with Storage" });
+    fireEvent.click(chat);
+    expect(chat).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(chat);
+    expect(chat).toHaveAttribute("aria-pressed", "false");
+
+    cleanup();
+    renderCard(agentTask("t1", { manager_id: "m1" }), { managerSessionId: null });
+    expect(screen.getByText("Storage")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Chat with Storage" })).toBeNull();
   });
 
   it.each([

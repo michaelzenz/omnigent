@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
+import { GlobalHubChatProvider } from "./GlobalHubChat";
 import { TaskCardRail } from "./TaskCardRail";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { AgentTaskCard } from "@/hooks/useGlobalHubTasks";
@@ -23,7 +24,9 @@ function renderRail(task: AgentTaskCard): void {
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <TooltipProvider>
-          <TaskCardRail task={task} />
+          <GlobalHubChatProvider>
+            <TaskCardRail task={task} />
+          </GlobalHubChatProvider>
         </TooltipProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -109,7 +112,7 @@ describe("TaskCardRail", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows each worker's session state and a link to its session", () => {
+  it("shows each worker's session state, a chat button and a link to its session", () => {
     renderRail(
       agentTask("t1", {
         workers: [
@@ -127,6 +130,9 @@ describe("TaskCardRail", () => {
       "href",
       "/c/s-w1",
     );
+    const chat = waiting.getByRole("button", { name: "Chat with Fixing retries" });
+    fireEvent.click(chat);
+    expect(chat).toHaveAttribute("aria-pressed", "true");
     const idle = within(screen.getByTestId("task-worker-w2"));
     expect(idle.getByText("Untitled session")).toBeInTheDocument();
     expect(idle.queryByTestId("session-state-badge")).toBeNull();

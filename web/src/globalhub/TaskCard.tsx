@@ -1,5 +1,5 @@
 import { memo, type ReactNode, useEffect, useState } from "react";
-import { ArchiveIcon, CheckIcon, PencilIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, CheckIcon, MessageSquareIcon, PencilIcon, XIcon } from "lucide-react";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { RunningDot } from "@/components/RunningDot";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,7 @@ import { getSessionState } from "@/hooks/useSessionState";
 import { relativeTime } from "@/lib/relativeTime";
 import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ChatButton } from "./GlobalHubChat";
 import { TaskCardRail } from "./TaskCardRail";
 
 // A tinted outline per state: a hue-matched border, a light fill and darker text.
@@ -34,12 +35,19 @@ interface TaskCardProps {
   task: AgentTaskCard;
   /** The owning manager's name, or ``null`` until the managers load. */
   managerTitle: string | null;
+  /** The owning manager's session, or ``null`` while it has none. */
+  managerSessionId: string | null;
   /** Whether this is the board's last card, which cannot move further down. */
   isLast: boolean;
 }
 
 /** One task on the Global Hub board: its header, goal, overview, details, assets and workers. */
-export const TaskCard = memo(function TaskCard({ task, managerTitle, isLast }: TaskCardProps) {
+export const TaskCard = memo(function TaskCard({
+  task,
+  managerTitle,
+  managerSessionId,
+  isLast,
+}: TaskCardProps) {
   const moveToEnd = useMoveTaskToQueueEnd(task.id);
   const resolve = usePatchAgentTask(task.id);
   const resolved = task.state === "agent-resolved";
@@ -139,7 +147,7 @@ export const TaskCard = memo(function TaskCard({ task, managerTitle, isLast }: T
           </section>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-muted/20 p-3 @2xl:grid-cols-4">
             <TaskDetail label="Manager">
-              {task.manager_id === null ? "None" : (managerTitle ?? "…")}
+              <ManagerName task={task} title={managerTitle} sessionId={managerSessionId} />
             </TaskDetail>
             <TaskDetail label="Workers">{task.workers.length}</TaskDetail>
             <TaskDetail label="Created">{relativeTime(task.created_at * 1000)}</TaskDetail>
@@ -153,6 +161,32 @@ export const TaskCard = memo(function TaskCard({ task, managerTitle, isLast }: T
     </article>
   );
 });
+
+/** The manager's name; while the manager has a session, a button that opens its chat. */
+function ManagerName({
+  task,
+  title,
+  sessionId,
+}: {
+  task: AgentTask;
+  title: string | null;
+  sessionId: string | null;
+}) {
+  if (task.manager_id === null) return "None";
+  if (title === null) return "…";
+  if (sessionId === null) return title;
+  return (
+    <ChatButton
+      target={{ sessionId, title, kind: "Manager" }}
+      label={`Chat with ${title}`}
+      variant="link"
+      className="h-auto max-w-full justify-start gap-1 p-0 font-medium text-foreground aria-pressed:text-primary"
+    >
+      <MessageSquareIcon className="size-3.5 shrink-0" aria-hidden />
+      <span className="truncate">{title}</span>
+    </ChatButton>
+  );
+}
 
 function TaskDetail({ label, children }: { label: string; children: ReactNode }) {
   return (

@@ -46,25 +46,27 @@ export function TaskBoard({ scrollRoot }: { scrollRoot: RefObject<HTMLElement | 
     );
   }
 
-  const managerTitles = new Map(
-    (managers.data ?? []).map((manager) => [manager.id, manager.title]),
-  );
+  const managersById = new Map((managers.data ?? []).map((manager) => [manager.id, manager]));
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 p-4" data-testid="globalhub-tasks">
       {unmanagedCount > 0 && (
         // A new count mounts a new line, so a sent request no longer holds the button.
         <UnmanagedTasksLine key={unmanagedCount} count={unmanagedCount} />
       )}
-      {cards.map((card, index) => (
-        <TaskCard
-          key={card.id}
-          task={card}
-          managerTitle={
-            card.manager_id === null ? null : (managerTitles.get(card.manager_id) ?? null)
-          }
-          isLast={!hasMore && index === cards.length - 1}
-        />
-      ))}
+      {cards.map((card, index) => {
+        const manager = card.manager_id === null ? undefined : managersById.get(card.manager_id);
+        return (
+          <TaskCard
+            key={card.id}
+            task={card}
+            managerTitle={manager?.title ?? null}
+            managerSessionId={
+              manager === undefined || manager.session_missing ? null : manager.conversation_id
+            }
+            isLast={!hasMore && index === cards.length - 1}
+          />
+        );
+      })}
       {limit < BOARD_MAX_CARDS ? (
         <InfiniteScrollSentinel
           hasMore={hasMore}

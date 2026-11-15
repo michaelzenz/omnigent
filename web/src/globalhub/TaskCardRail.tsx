@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronRightIcon, UnlinkIcon, UsersIcon, XIcon } from "lucide-react";
+import { ChevronRightIcon, MessageSquareIcon, UnlinkIcon, UsersIcon, XIcon } from "lucide-react";
 import { SessionStateBadge } from "@/components/SessionStateBadge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -13,6 +13,7 @@ import { getSessionState } from "@/hooks/useSessionState";
 import { cn } from "@/lib/utils";
 import { groupAssets } from "./assetGroups";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ChatButton } from "./GlobalHubChat";
 import { OpenSessionLink } from "./OpenSessionLink";
 
 /**
@@ -145,7 +146,7 @@ function RelatedSessions({
                 <span className="min-w-0 flex-1 text-xs font-medium break-words">
                   {workerLabel(worker)}
                 </span>
-                <WorkerSessionLink worker={worker} />
+                <WorkerSessionButtons worker={worker} />
               </div>
               <span className="font-mono text-[10.5px] text-muted-foreground">
                 worker {shortId(worker.id)} · session {shortId(worker.session_id)}
@@ -181,7 +182,7 @@ function WorkerList({ workers }: { workers: AgentTaskWorker[] }) {
               <div className="flex min-w-0 items-center justify-between gap-2">
                 {state ? <SessionStateBadge state={state} /> : <span />}
                 <div className="flex shrink-0 items-center gap-1">
-                  <WorkerSessionLink worker={worker} />
+                  <WorkerSessionButtons worker={worker} />
                   <Button
                     variant="outline"
                     size="icon-sm"
@@ -216,8 +217,23 @@ function WorkerList({ workers }: { workers: AgentTaskWorker[] }) {
   );
 }
 
-function WorkerSessionLink({ worker }: { worker: AgentTaskWorker }) {
-  return <OpenSessionLink sessionId={worker.session_id} label={`Open ${workerLabel(worker)}`} />;
+/** Opens the worker's session in the chat panel, or on its own page. */
+function WorkerSessionButtons({ worker }: { worker: AgentTaskWorker }) {
+  const label = workerLabel(worker);
+  return (
+    <>
+      <ChatButton
+        target={{ sessionId: worker.session_id, title: label, kind: "Worker" }}
+        label={`Chat with ${label}`}
+        variant="outline"
+        size="icon-sm"
+        className="text-muted-foreground aria-pressed:bg-accent aria-pressed:text-foreground"
+      >
+        <MessageSquareIcon aria-hidden />
+      </ChatButton>
+      <OpenSessionLink sessionId={worker.session_id} label={`Open ${label}`} />
+    </>
+  );
 }
 
 function workerLabel(worker: AgentTaskWorker): string {

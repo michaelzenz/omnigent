@@ -15,6 +15,7 @@ vi.mock("@/globalhub/TaskBoard", () => ({
 vi.mock("@/globalhub/SystemNoticeCard", () => ({ SystemNoticeCard: () => null }));
 vi.mock("@/globalhub/FyiStream", () => ({ FyiStream: () => null }));
 vi.mock("@/globalhub/BoardConfigDialog", () => ({ BoardConfigButton: () => null }));
+vi.mock("@/globalhub/GlobalHubChatPanel", () => ({ GlobalHubChatPanel: () => null }));
 
 function renderPage(data: GlobalHubSettings) {
   vi.mocked(useGlobalHubSettings).mockReturnValue({
