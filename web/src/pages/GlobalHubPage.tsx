@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { SettingsIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -10,6 +10,7 @@ import { useGlobalHubSettings } from "@/hooks/useGlobalHubSettings";
 export function GlobalHubPage() {
   const settings = useGlobalHubSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const boardRef = useRef<HTMLDivElement>(null);
   const openSettings = () => setSettingsOpen(true);
 
   return (
@@ -27,7 +28,7 @@ export function GlobalHubPage() {
           <SettingsIcon className="size-4" />
         </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto" data-testid="globalhub-board">
+      <div ref={boardRef} className="min-h-0 flex-1 overflow-auto" data-testid="globalhub-board">
         {settings.isPending ? (
           <div className="flex justify-center p-8">
             <Spinner className="size-5 text-muted-foreground" aria-label="Loading" />
@@ -51,7 +52,7 @@ export function GlobalHubPage() {
                 </Button>
               </div>
             )}
-            <TaskBoard />
+            <TaskBoard scrollRoot={boardRef} />
           </>
         )}
       </div>

@@ -1,27 +1,23 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { memo, type ReactNode, useEffect, useState } from "react";
 import { ArchiveIcon, CheckIcon, PencilIcon, XIcon } from "lucide-react";
 import { MessageResponse } from "@/components/ai-elements/message";
+import { RunningDot } from "@/components/RunningDot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   type AgentTask,
+  type AgentTaskCard,
   useArchiveAgentTask,
   useDeleteAgentTaskPermanently,
   useMoveTaskToQueueEnd,
   usePatchAgentTask,
 } from "@/hooks/useGlobalHubTasks";
+import { getSessionState } from "@/hooks/useSessionState";
 import { relativeTime } from "@/lib/relativeTime";
 import { cn } from "@/lib/utils";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { TaskCardRail } from "./TaskCardRail";
 
 // A tinted outline per state: a hue-matched border, a light fill and darker text.
 const STATE_BADGE_CLASSES: Record<AgentTask["state"], string> = {
@@ -35,23 +31,26 @@ const STATE_BADGE_CLASSES: Record<AgentTask["state"], string> = {
 };
 
 interface TaskCardProps {
-  task: AgentTask;
+  task: AgentTaskCard;
   /** The owning manager's name, or ``null`` until the managers load. */
   managerTitle: string | null;
   /** Whether this is the board's last card, which cannot move further down. */
   isLast: boolean;
 }
 
-/** One task on the Global Hub board: its header, goal, overview and details. */
-export function TaskCard({ task, managerTitle, isLast }: TaskCardProps) {
+/** One task on the Global Hub board: its header, goal, overview, details, assets and workers. */
+export const TaskCard = memo(function TaskCard({ task, managerTitle, isLast }: TaskCardProps) {
   const moveToEnd = useMoveTaskToQueueEnd(task.id);
   const resolve = usePatchAgentTask(task.id);
   const resolved = task.state === "agent-resolved";
   const failure = moveToEnd.error ?? resolve.error;
+  const workersRunning = task.workers.some(
+    (worker) => getSessionState(worker.session)?.kind === "running",
+  );
 
   return (
     <article
-      className="flex min-w-0 flex-col rounded-xl border-2 border-border bg-card shadow-sm"
+      className="@container flex min-w-0 flex-col rounded-xl border-2 border-border bg-card shadow-sm"
       data-testid={`task-card-${task.id}`}
     >
       <header className="space-y-2 border-b border-border px-4 py-3">
@@ -72,6 +71,16 @@ export function TaskCard({ task, managerTitle, isLast }: TaskCardProps) {
               >
                 Unmanaged
               </Badge>
+            )}
+            {workersRunning && (
+              <span
+                role="img"
+                aria-label="Workers running"
+                title="Workers running"
+                className="inline-flex"
+              >
+                <RunningDot className="size-4" />
+              </span>
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -114,30 +123,36 @@ export function TaskCard({ task, managerTitle, isLast }: TaskCardProps) {
           </p>
         )}
       </header>
-      <div className="grid min-w-0 gap-4 p-4">
-        <section className="min-w-0">
-          <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-            Overview
-          </h3>
-          {task.description ? (
-            <div className="text-ui break-words">
-              <MessageResponse allowGitHubAttachmentImages>{task.description}</MessageResponse>
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">No overview yet.</p>
-          )}
-        </section>
-        <dl className="grid grid-cols-3 gap-x-4 gap-y-3 rounded-lg border border-border bg-muted/20 p-3">
-          <TaskDetail label="Manager">
-            {task.manager_id === null ? "None" : (managerTitle ?? "…")}
-          </TaskDetail>
-          <TaskDetail label="Created">{relativeTime(task.created_at * 1000)}</TaskDetail>
-          <TaskDetail label="Priority">P{task.priority}</TaskDetail>
-        </dl>
+      <div className="grid min-w-0 gap-4 p-4 @4xl:min-h-64 @4xl:grid-cols-[minmax(0,1fr)_18rem]">
+        <div className="grid min-w-0 content-start gap-4">
+          <section className="min-w-0">
+            <h3 className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+              Overview
+            </h3>
+            {task.description ? (
+              <div className="text-ui break-words">
+                <MessageResponse allowGitHubAttachmentImages>{task.description}</MessageResponse>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No overview yet.</p>
+            )}
+          </section>
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-muted/20 p-3 @2xl:grid-cols-4">
+            <TaskDetail label="Manager">
+              {task.manager_id === null ? "None" : (managerTitle ?? "…")}
+            </TaskDetail>
+            <TaskDetail label="Workers">{task.workers.length}</TaskDetail>
+            <TaskDetail label="Created">{relativeTime(task.created_at * 1000)}</TaskDetail>
+            <TaskDetail label="Priority">P{task.priority}</TaskDetail>
+          </dl>
+        </div>
+        <div className="relative min-w-0">
+          <TaskCardRail task={task} />
+        </div>
       </div>
     </article>
   );
-}
+});
 
 function TaskDetail({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -298,60 +313,5 @@ function RemoveTaskButtons({ task }: { task: AgentTask }) {
         onConfirm={() => remove.mutate(undefined, { onSuccess: close })}
       />
     </>
-  );
-}
-
-interface ConfirmDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  title: string;
-  description: string;
-  confirmLabel: string;
-  destructive?: boolean;
-  pending: boolean;
-  error: Error | null;
-  onConfirm: () => void;
-}
-
-function ConfirmDialog({
-  open,
-  onOpenChange,
-  title,
-  description,
-  confirmLabel,
-  destructive = false,
-  pending,
-  error,
-  onConfirm,
-}: ConfirmDialogProps) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle className={destructive ? "text-destructive" : undefined}>
-            {title}
-          </DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error.message}
-          </p>
-        )}
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button variant="outline">Cancel</Button>
-          </DialogClose>
-          <Button
-            variant={destructive ? "destructive" : "outline"}
-            loading={pending}
-            onClick={onConfirm}
-            data-testid="task-confirm-button"
-          >
-            {confirmLabel}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }

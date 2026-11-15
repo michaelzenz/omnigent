@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 
 import { TaskCard } from "./TaskCard";
-import type { AgentTask } from "@/hooks/useGlobalHubTasks";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import type { AgentTaskCard } from "@/hooks/useGlobalHubTasks";
 import { authenticatedFetch } from "@/lib/identity";
 import type * as IdentityModule from "@/lib/identity";
-import { agentTask, jsonResponse } from "@/test/globalHubFixtures";
+import { agentTask, jsonResponse, taskWorker } from "@/test/globalHubFixtures";
 
 vi.mock("@/lib/identity", async (importOriginal) => ({
   ...(await importOriginal<typeof IdentityModule>()),
@@ -15,11 +17,15 @@ vi.mock("@/lib/identity", async (importOriginal) => ({
 
 const fetchMock = vi.mocked(authenticatedFetch);
 
-function renderCard(task: AgentTask, isLast = false): void {
+function renderCard(task: AgentTaskCard, isLast = false): void {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <TaskCard task={task} managerTitle="Storage" isLast={isLast} />
+      <MemoryRouter>
+        <TooltipProvider>
+          <TaskCard task={task} managerTitle="Storage" isLast={isLast} />
+        </TooltipProvider>
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -61,6 +67,20 @@ describe("TaskCard", () => {
     expect(card.getByText("Storage")).toBeInTheDocument();
     expect(card.getByText("P1")).toBeInTheDocument();
     expect(card.queryByText("Unmanaged")).toBeNull();
+  });
+
+  it.each([
+    { session: { status: "running" as const }, spinner: true },
+    { session: { background_work_running: true }, spinner: true },
+    { session: { status: "running" as const, pending_elicitations_count: 1 }, spinner: false },
+    { session: {}, spinner: false },
+  ])("counts the workers and spins while one works: $session", ({ session, spinner }) => {
+    renderCard(agentTask("t1", { workers: [taskWorker("w1", {}, session), taskWorker("w2")] }));
+
+    expect(screen.queryByRole("img", { name: "Workers running" }) !== null).toBe(spinner);
+    expect(screen.getByText("Workers", { selector: "dt" }).nextElementSibling).toHaveTextContent(
+      "2",
+    );
   });
 
   it("shows a resolved task without a manager, and the last card cannot move down", () => {

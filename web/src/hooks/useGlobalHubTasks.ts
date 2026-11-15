@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 
@@ -21,6 +21,56 @@ export interface AgentTask {
   updated_at: number | null;
 }
 
+/** The session a worker wraps, with the title and live state the sidebar shows. */
+export interface AgentTaskWorkerSession {
+  title: string | null;
+  status: "idle" | "running" | "failed";
+  pending_elicitations_count: number;
+  background_work_running: boolean;
+  blocked_on: string | null;
+  /** Unix epoch seconds of the session's last change. */
+  updated_at: number;
+}
+
+/** A session working on a task. */
+export interface AgentTaskWorker {
+  id: string;
+  task_id: string;
+  session_id: string;
+  /** The manager's short label for the session's recent work on the task. */
+  title: string | null;
+  created_at: number;
+  updated_at: number | null;
+  session: AgentTaskWorkerSession;
+}
+
+/** A link a task carries, such as a design doc or a pull request. */
+export interface AgentTaskAsset {
+  id: string;
+  task_id: string;
+  /** Free-form label that groups the task's assets, e.g. ``"documents"``. */
+  category: string;
+  title: string;
+  url: string;
+  /** The sessions that produced or used the link. */
+  related_session_ids: string[];
+  created_at: number;
+  updated_at: number | null;
+}
+
+/** A live task with the workers and assets its card shows; busy workers come first. */
+export interface AgentTaskCard extends AgentTask {
+  workers: AgentTaskWorker[];
+  assets: AgentTaskAsset[];
+}
+
+/** The first live tasks on the user's board, in board order. */
+export interface AgentTaskBoard {
+  data: AgentTaskCard[];
+  /** Whether the board has more live tasks than ``data`` holds. */
+  has_more: boolean;
+}
+
 /** A manager on the user's board, with the fields a task card reads. */
 export interface AgentManager {
   id: string;
@@ -38,9 +88,10 @@ export interface AgentTaskChanges {
 export const GLOBALHUB_TASKS_QUERY_KEY = ["globalhub-tasks"] as const;
 export const GLOBALHUB_MANAGERS_QUERY_KEY = ["globalhub-managers"] as const;
 
-const LIVE_STATES: readonly AgentTaskState[] = ["active", "idle", "agent-resolved"];
-// The most tasks the list route returns in one call.
-const TASKS_PER_STATE = 100;
+/** The cards the board reads first, and how many more each scroll to its end reads. */
+export const BOARD_WINDOW = 20;
+/** The most cards one board read returns. */
+export const BOARD_MAX_CARDS = 1000;
 // The broker and the managers change the board in the background.
 const BOARD_REFRESH_MS = 10_000;
 
@@ -49,14 +100,8 @@ async function readJson<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function fetchTasks(state: AgentTaskState): Promise<AgentTask[]> {
-  const res = await authenticatedFetch(`/v1/agent-tasks?state=${state}&limit=${TASKS_PER_STATE}`);
-  return (await readJson<{ data: AgentTask[] }>(res)).data;
-}
-
-async function fetchLiveTasks(): Promise<AgentTask[]> {
-  const lists = await Promise.all(LIVE_STATES.map(fetchTasks));
-  return lists.flat().sort((a, b) => b.queue_rank - a.queue_rank);
+async function fetchBoard(limit: number): Promise<AgentTaskBoard> {
+  return readJson(await authenticatedFetch(`/v1/agent-tasks/board?limit=${limit}`));
 }
 
 async function fetchManagers(): Promise<AgentManager[]> {
@@ -64,12 +109,14 @@ async function fetchManagers(): Promise<AgentManager[]> {
   return (await readJson<{ data: AgentManager[] }>(res)).data;
 }
 
-/** Every live task (active, idle or resolved), in board order. */
-export function useLiveAgentTasks() {
+/** The first ``limit`` live tasks (active, idle or resolved) as cards, in board order. */
+export function useGlobalHubBoard(limit: number) {
   return useQuery({
-    queryKey: [...GLOBALHUB_TASKS_QUERY_KEY, "live"],
-    queryFn: fetchLiveTasks,
+    queryKey: [...GLOBALHUB_TASKS_QUERY_KEY, "board", limit],
+    queryFn: () => fetchBoard(limit),
     refetchInterval: BOARD_REFRESH_MS,
+    // The loaded cards stay on screen while a longer window loads.
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -127,5 +174,23 @@ export function useArchiveAgentTask(taskId: string) {
 export function useDeleteAgentTaskPermanently(taskId: string) {
   return useTaskAction(() =>
     sendTaskRequest(`${taskPath(taskId)}/permanent`, { method: "DELETE" }),
+  );
+}
+
+/** Take a session off its task; the session keeps running. */
+export function useUntrackWorker() {
+  return useTaskAction((workerId: string) =>
+    sendTaskRequest(`/v1/task-workers/${encodeURIComponent(workerId)}/untrack`, {
+      method: "POST",
+    }),
+  );
+}
+
+/** Remove a link from a task. */
+export function useDeleteTaskAsset(taskId: string) {
+  return useTaskAction((assetId: string) =>
+    sendTaskRequest(`${taskPath(taskId)}/assets/${encodeURIComponent(assetId)}`, {
+      method: "DELETE",
+    }),
   );
 }
