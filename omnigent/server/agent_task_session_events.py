@@ -1,4 +1,4 @@
-"""Report the finished turns and deletions of each GlobalHub user's sessions as task events.
+"""Report the finished turns, deletions and failed starts of GlobalHub users' sessions as events.
 
 A session that works on live tasks reports to those tasks' managers. Any other
 session reports its turns to the broker, whose chosen manager may attach it to
@@ -6,6 +6,7 @@ a task, and its deletion to whoever holds its waiting turn report. Role
 sessions, sub-agents and side chats do not report, and a user without a
 GlobalHub host gets no turn reports. A worker's finished turn also counts as
 work on its tasks, which moves an active or idle task to the top of the board.
+A session started for a task reports when its first message could not be sent.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from omnigent.agent_tasks.session_labels import ROLE_LABEL
 from omnigent.entities import LIVE_TASK_STATES, Conversation, EventTag, TaskEvent
 from omnigent.server.agent_queue_packagers import (
     SESSION_DELETED_EVENT_TYPE,
+    SESSION_START_FAILED_EVENT_TYPE,
     SESSION_TURN_FINISHED_EVENT_TYPE,
 )
 
@@ -30,6 +32,7 @@ _logger = logging.getLogger(__name__)
 SESSION_EVENT_SOURCE = "session"
 # A report waits until the broker or a manager handles it.
 _WAITING_STATES = ("unrouted", "routed")
+_START_ERROR_MAX_CHARS = 1000
 
 
 def reports_to_globalhub(conv: Conversation) -> bool:
@@ -123,6 +126,26 @@ class SessionEventReporter:
             event_type=SESSION_DELETED_EVENT_TYPE,
             summary="Session deleted",
             targets=[holder for holder in holders if holder not in told],
+        )
+
+    def report_start_failed(self, session_id: str, error: str) -> None:
+        """Record that a started session did not get its first message. Blocking.
+
+        The managers of the session's live tasks hear of it; without one, the broker does.
+        """
+        conversations = self._sessions.conversation_store
+        conv = conversations.get_conversation(session_id)
+        if conv is None:
+            return
+        owner = conversations.get_session_owner(session_id, owner_only=True)
+        managers: Sequence[str | None] = self._managers_of_live_tasks(session_id, owner)
+        self._report(
+            conv,
+            owner,
+            event_type=SESSION_START_FAILED_EVENT_TYPE,
+            summary="Session did not start",
+            targets=managers or [None],
+            details={"error": error[:_START_ERROR_MAX_CHARS]},
         )
 
     def _waiting(self, event_type: str, session_id: str, owner: str | None) -> list[TaskEvent]:

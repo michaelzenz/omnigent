@@ -238,6 +238,41 @@ def test_deleting_a_session_on_live_tasks_tells_their_managers_and_detaches_it(
     assert hub.board.workers.list_for_session(session_id, owner_user_id=ALICE) == []
 
 
+def test_a_failed_start_reports_to_the_managers_of_live_tasks_else_to_the_broker(
+    hub: _Hub,
+) -> None:
+    on_live_task, on_finished_task = hub.session(), hub.session()
+    storage = hub.manager()
+    hub.attach(on_live_task, manager_id=storage)
+    hub.attach(on_finished_task, manager_id=storage, state="archived")
+
+    hub.reporter.report_start_failed(on_live_task, "no runner can be reached or woken")
+    hub.reporter.report_start_failed(on_finished_task, "x" * 1500)
+
+    reported = {
+        event.source_session_id: event
+        for event in hub.board.events.list(owner_user_id=ALICE, event_type="session.start.failed")
+    }
+    to_manager, to_broker = reported[on_live_task], reported[on_finished_task]
+    assert (to_manager.state, to_manager.manager_id, to_manager.title) == (
+        "routed",
+        storage,
+        "Session did not start: Fix S3 retries",
+    )
+    assert to_manager.payload == {
+        "session_id": on_live_task,
+        "session_title": "Fix S3 retries",
+        "project_name": None,
+        "error": "no runner can be reached or woken",
+    }
+    assert (to_broker.state, to_broker.manager_id, to_broker.tags) == (
+        "unrouted",
+        None,
+        [EventTag(tag_type="host", tag=HOST_ID)],
+    )
+    assert to_broker.payload is not None and to_broker.payload["error"] == "x" * 1000
+
+
 @pytest.mark.parametrize("holder", ["nobody", "broker", "manager"])
 def test_deleting_a_session_on_no_task_tells_whoever_holds_its_turn_report(
     hub: _Hub, holder: str

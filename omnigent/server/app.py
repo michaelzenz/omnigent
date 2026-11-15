@@ -102,6 +102,7 @@ from omnigent.server.agent_task_session_events import (
     SessionEventReporter,
     install_session_event_reporter,
 )
+from omnigent.server.agent_task_worker_sessions import WorkerSessionStarter
 from omnigent.server.auth import (
     RESERVED_USER_LOCAL,
     AuthProvider,
@@ -2355,6 +2356,9 @@ def create_app(
         session_event_reporter: SessionEventReporter | None = getattr(
             app_inst.state, "session_event_reporter", None
         )
+        worker_session_starter: WorkerSessionStarter | None = getattr(
+            app_inst.state, "worker_session_starter", None
+        )
         if agent_queue_dispatcher is not None:
             await agent_queue_dispatcher.start()
         agent_task_delivery.install_turn_listeners(
@@ -2371,6 +2375,8 @@ def create_app(
         finally:
             install_session_event_reporter(None)
             agent_task_delivery.install_turn_listeners()
+            if worker_session_starter is not None:
+                await worker_session_starter.stop()
             if session_event_reporter is not None:
                 await session_event_reporter.stop()
             if agent_queue_dispatcher is not None:
@@ -4275,9 +4281,27 @@ def create_app(
             prefix="/v1",
             tags=["agent-tasks"],
         )
+        worker_session_starter: WorkerSessionStarter | None = None
+        if role_session_stores is not None:
+            # Started and stopped by the lifespan.
+            app.state.session_event_reporter = SessionEventReporter(
+                board=board_stores, sessions=role_session_stores
+            )
+            worker_session_starter = WorkerSessionStarter(
+                board=board_stores,
+                sessions=role_session_stores,
+                send_deps=send_deps,
+                reporter=app.state.session_event_reporter,
+                agent_cache=agent_cache,
+            )
+            app.state.worker_session_starter = worker_session_starter
         app.include_router(
             create_agent_task_workers_router(
-                board_stores, conversation_store, permission_store, auth_provider
+                board_stores,
+                conversation_store,
+                permission_store,
+                auth_provider,
+                starter=worker_session_starter,
             ),
             prefix="/v1",
             tags=["agent-tasks"],
@@ -4320,9 +4344,6 @@ def create_app(
                     ),
                     RoleSchedulePackager(board=board_stores, sessions=role_session_stores),
                 ],
-            )
-            app.state.session_event_reporter = SessionEventReporter(
-                board=board_stores, sessions=role_session_stores
             )
 
     if preference_store is not None:

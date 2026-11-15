@@ -56,6 +56,7 @@ _logger = logging.getLogger(__name__)
 # How many notices may carry an event its role neither routed nor handled.
 MAX_DELIVERIES = 3
 SESSION_DELETED_EVENT_TYPE = "session.deleted"
+SESSION_START_FAILED_EVENT_TYPE = "session.start.failed"
 SESSION_TURN_FINISHED_EVENT_TYPE = "session.turn.finished"
 _BROKER_PROMPT = "[System: route these events to managers]\n"
 # About 20,000 tokens, v2's roster limit.

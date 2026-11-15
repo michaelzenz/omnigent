@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.exc import IntegrityError
 
 from omnigent.agent_tasks.board_stores import BoardStores
@@ -13,15 +14,22 @@ from omnigent.entities import Worker
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import LEVEL_OWNER, AuthProvider
 from omnigent.server.routes._auth_helpers import require_access, require_user
+from omnigent.server.routes._content_type import require_json_content_type
+from omnigent.server.routes._origin import require_trusted_origin
 from omnigent.server.schemas import (
     AdoptAgentTaskSessionRequest,
     AgentTaskSessionAdoption,
     AgentTaskWorkerDeletedResponse,
     AgentTaskWorkerList,
     AgentTaskWorkerResponse,
+    StartAgentTaskWorkerRequest,
+    StartedAgentTaskWorker,
 )
 from omnigent.stores import ConversationStore
 from omnigent.stores.permission_store import PermissionStore
+
+if TYPE_CHECKING:
+    from omnigent.server.agent_task_worker_sessions import WorkerSessionStarter
 
 
 def create_agent_task_workers_router(
@@ -29,6 +37,7 @@ def create_agent_task_workers_router(
     conversation_store: ConversationStore,
     permission_store: PermissionStore | None = None,
     auth_provider: AuthProvider | None = None,
+    starter: WorkerSessionStarter | None = None,
 ) -> APIRouter:
     """Build the router for the sessions working on the caller's tasks.
 
@@ -37,6 +46,8 @@ def create_agent_task_workers_router(
     :param permission_store: Checks that the caller owns an adopted session;
         ``None`` on servers without permissions.
     :param auth_provider: Identifies the caller; ``None`` is single-user mode.
+    :param starter: Starts sessions for tasks; ``None`` on servers without
+        GlobalHub settings.
     :returns: A configured :class:`APIRouter`.
     """
     router = APIRouter()
@@ -102,6 +113,28 @@ def create_agent_task_workers_router(
             worker_id=worker.id,
             already_bound=not created,
         )
+
+    @router.post(
+        "/agent-tasks/{task_id}/workers/start",
+        status_code=201,
+        response_model=StartedAgentTaskWorker,
+        dependencies=[Depends(require_json_content_type), Depends(require_trusted_origin)],
+    )
+    async def start_worker(
+        request: Request, task_id: str, body: StartAgentTaskWorkerRequest
+    ) -> StartedAgentTaskWorker:
+        """Start a session on one of the caller's hosts to work on one of their tasks.
+
+        The session is the task's worker before its first message, which goes
+        out in the background.
+        """
+        user_id = require_user(request, auth_provider)
+        if starter is None:
+            raise OmnigentError(
+                "Starting sessions for tasks needs GlobalHub settings on this server",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        return await starter.start(request, task_id, body, user_id=user_id)
 
     @router.get("/agent-tasks/{task_id}/workers", response_model=AgentTaskWorkerList)
     async def list_task_workers(request: Request, task_id: str) -> AgentTaskWorkerList:

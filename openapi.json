@@ -15087,6 +15087,170 @@
         "title": "SmartRoutingSourcesInfo",
         "type": "object"
       },
+      "StartAgentTaskWorkerRequest": {
+        "additionalProperties": false,
+        "description": "Start a session that works on one of the caller's tasks.\n\nThe session runs on `host_id` in `workspace`, or in a git worktree of\nthat repository when `git` is set. It uses `agent`, else the server's\nNew Chat default agent. `project_name` files it in the caller's project\nwith that name and creates the project when it is missing. `title` names\nthe session and its worker, and `message` is the session's first message.",
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent"
+          },
+          "git": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionGitOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "host_id": {
+            "maxLength": 128,
+            "title": "Host Id",
+            "type": "string"
+          },
+          "message": {
+            "maxLength": 8000,
+            "title": "Message",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Name"
+          },
+          "reasoning_effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Effort"
+          },
+          "title": {
+            "maxLength": 200,
+            "title": "Title",
+            "type": "string"
+          },
+          "workspace": {
+            "maxLength": 4096,
+            "title": "Workspace",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host_id",
+          "workspace",
+          "title",
+          "message"
+        ],
+        "title": "StartAgentTaskWorkerRequest",
+        "type": "object"
+      },
+      "StartedAgentTaskWorker": {
+        "description": "A session started to work on one of the caller's tasks, and its worker.\n\nThe first message goes out in the background. When it cannot be sent, a\n`session.start.failed` event goes to the task's manager.",
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "git_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Branch"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.task.worker_start",
+            "default": "agent.task.worker_start",
+            "title": "Object",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "worker_id": {
+            "title": "Worker Id",
+            "type": "string"
+          },
+          "workspace": {
+            "title": "Workspace",
+            "type": "string"
+          }
+        },
+        "required": [
+          "worker_id",
+          "task_id",
+          "session_id",
+          "title",
+          "agent",
+          "host_id",
+          "workspace",
+          "git_branch",
+          "project_id"
+        ],
+        "title": "StartedAgentTaskWorker",
+        "type": "object"
+      },
       "StartupInputOptions": {
         "description": "Request options retained only while a startup input awaits delivery.",
         "properties": {
@@ -18916,6 +19080,59 @@
           }
         },
         "summary": "List Task Workers",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/{task_id}/workers/start": {
+      "post": {
+        "description": "Start a session on one of the caller's hosts to work on one of their tasks.\n\nThe session is the task's worker before its first message, which goes\nout in the background.",
+        "operationId": "start_worker_v1_agent_tasks__task_id__workers_start_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartAgentTaskWorkerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartedAgentTaskWorker"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Worker",
         "tags": [
           "agent-tasks"
         ]

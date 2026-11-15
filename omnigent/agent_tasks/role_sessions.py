@@ -166,17 +166,28 @@ def ensure_globalhub_project(project_store: Any | None, user_id: str | None) -> 
     :param user_id: The owner, or ``None`` in single-user mode.
     :returns: The project id, or ``None`` when the server has no project store.
     """
+    return ensure_named_project(project_store, user_id, GLOBALHUB_PROJECT_NAME)
+
+
+def ensure_named_project(project_store: Any | None, user_id: str | None, name: str) -> str | None:
+    """Return the id of the user's project named ``name``, creating the project when missing.
+
+    :param project_store: The server's project store, or ``None``.
+    :param user_id: The owner, or ``None`` in single-user mode.
+    :param name: The exact project name, e.g. ``"GlobalHub"``.
+    :returns: The project id, or ``None`` when the server has no project store.
+    """
     if project_store is None:
         return None
-    existing = _find_globalhub_project(project_store, user_id)
+    existing = _find_project(project_store, user_id, name)
     if existing is not None:
         return existing
     try:
-        return project_store.create(uuid.uuid4().hex, GLOBALHUB_PROJECT_NAME, user_id).id
+        return project_store.create(uuid.uuid4().hex, name, user_id).id
     except OmnigentError as exc:
         # Another request created the project first; use theirs.
         found = (
-            _find_globalhub_project(project_store, user_id)
+            _find_project(project_store, user_id, name)
             if exc.code == ErrorCode.ALREADY_EXISTS
             else None
         )
@@ -292,12 +303,8 @@ def _ensure_watcher_session(
     return created, True
 
 
-def _find_globalhub_project(project_store: Any, user_id: str | None) -> str | None:
+def _find_project(project_store: Any, user_id: str | None, name: str) -> str | None:
     return next(
-        (
-            project.id
-            for project in project_store.list(user_id=user_id)
-            if project.name == GLOBALHUB_PROJECT_NAME
-        ),
+        (project.id for project in project_store.list(user_id=user_id) if project.name == name),
         None,
     )

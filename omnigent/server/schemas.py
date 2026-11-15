@@ -6460,6 +6460,61 @@ class AgentTaskWorkerDeletedResponse(BaseModel):
     deleted: Literal[True] = True
 
 
+_AgentTaskWorkerHost = Annotated[str, Field(max_length=128), AfterValidator(_strip_required_text)]
+_AgentTaskWorkerWorkspace = Annotated[
+    str, Field(max_length=4096), AfterValidator(_strip_required_text)
+]
+_AgentTaskWorkerMessage = Annotated[
+    str, Field(max_length=8000), AfterValidator(_strip_required_text)
+]
+_AgentTaskWorkerAgent = Annotated[str, Field(max_length=200), AfterValidator(_strip_required_text)]
+_AgentTaskWorkerProject = Annotated[
+    str, Field(max_length=100), AfterValidator(_strip_required_text)
+]
+
+
+class StartAgentTaskWorkerRequest(BaseModel):
+    """Start a session that works on one of the caller's tasks.
+
+    The session runs on ``host_id`` in ``workspace``, or in a git worktree of
+    that repository when ``git`` is set. It uses ``agent``, else the server's
+    New Chat default agent. ``project_name`` files it in the caller's project
+    with that name and creates the project when it is missing. ``title`` names
+    the session and its worker, and ``message`` is the session's first message.
+    """
+
+    host_id: _AgentTaskWorkerHost
+    workspace: _AgentTaskWorkerWorkspace
+    title: _AgentTaskWorkerTitle
+    message: _AgentTaskWorkerMessage
+    agent: _AgentTaskWorkerAgent | None = None
+    project_name: _AgentTaskWorkerProject | None = None
+    git: SessionGitOptions | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class StartedAgentTaskWorker(BaseModel):
+    """A session started to work on one of the caller's tasks, and its worker.
+
+    The first message goes out in the background. When it cannot be sent, a
+    ``session.start.failed`` event goes to the task's manager.
+    """
+
+    object: Literal["agent.task.worker_start"] = "agent.task.worker_start"
+    worker_id: str
+    task_id: str
+    session_id: str
+    title: str
+    agent: str
+    host_id: str
+    workspace: str
+    git_branch: str | None
+    project_id: str | None
+
+
 AgentTaskEventState = Literal["unrouted", "routed", "dismissed", "fyi"]
 
 

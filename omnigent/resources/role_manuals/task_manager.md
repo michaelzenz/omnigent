@@ -201,7 +201,49 @@ pmv2_api(
 )
 ```
 
+## Start a worker session
 
+When a task needs work that no session does yet, for example a new pull
+request to review, start a session for it. The server creates the session,
+attaches it to the task as a worker, and sends your message as its first
+message. Its finished turns then come to you as `session.turn.finished`
+events.
+
+```
+pmv2_api(
+  method="POST",
+  path="/v1/agent-tasks/<task_id>/workers/start",
+  body={
+    "host_id": "<host id>",
+    "workspace": "<absolute path of the repository on that host>",
+    "title": "<worker title, e.g. Review PR 12>",
+    "message": "<the complete work order>"
+  }
+)
+```
+
+Optional fields: `agent` (an agent name from New Chat, e.g. `claude-native-ui`),
+`project_name`, `git`, `model` and `reasoning_effort`.
+
+- **Host and workspace are required.** List the hosts with
+`pmv2_api(method="GET", path="/v1/hosts")`. Copy the workspace from a session
+that worked in the same repository: read the task's workers
+(`GET /v1/agent-tasks/<task_id>/workers`), call `sys_session_get_info` on a
+worker's session, and use its `host_id` and `workspace`. Follow the user's
+instructions about where the repositories are. Never guess a path.
+- **Agent.** Without `agent`, the session uses the server's default agent. If
+the server has no default agent, the call fails; then name an agent.
+- **Worktree.** `git` starts the session in a new git worktree, so the work
+does not change the user's checkout. Use
+`{"branch_name": "<new branch>", "base_branch": "main"}` for a new branch, or
+`{"branch_name": "<existing branch>", "existing_branch": true}` for a branch
+that exists, for example the branch of a pull request.
+- **First message.** The session knows nothing about the task. Write the goal,
+the links, and what done means.
+- **One session for each piece of work.** Do not start a second session for
+work that a worker already does.
+- **Failures.** The first message goes out in the background. If it cannot be
+sent, a `session.start.failed` event tells you why.
 
 ## Task lifecycle
 
