@@ -183,7 +183,7 @@ function waitingTitle(row: BoardRole): string {
   if (row.manager_id !== null) return "Events routed to this manager";
   return row.role === "custodian"
     ? "Clicks queued for the custodian"
-    : "Events waiting for the broker";
+    : "Events and requests for managers waiting for the broker";
 }
 
 function confirmText(
@@ -208,10 +208,19 @@ function confirmText(
       confirmLabel: "Reset",
     };
   }
+  const plural = row.waiting === 1 ? "" : "s";
+  if (row.role === "broker" && row.manager_id === null) {
+    return {
+      title: `Dismiss ${row.waiting} waiting item${plural} for ${row.title}?`,
+      description:
+        "The waiting events are dismissed, and the queued requests for managers are dropped. A notice or request the broker is already handling goes on. This cannot be undone.",
+      confirmLabel: "Dismiss all",
+    };
+  }
   const clicks = row.role === "custodian" && row.manager_id === null;
   const unit = clicks ? "click" : "event";
   return {
-    title: `Dismiss ${row.waiting} waiting ${unit}${row.waiting === 1 ? "" : "s"} for ${row.title}?`,
+    title: `Dismiss ${row.waiting} waiting ${unit}${plural} for ${row.title}?`,
     description: clicks
       ? "The queued clicks are dropped. A click the custodian is already handling goes on. This cannot be undone."
       : "The waiting events are dismissed. A notice the role is already handling goes on. This cannot be undone.",

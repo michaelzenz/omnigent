@@ -8,10 +8,12 @@ import {
   useGlobalHubBoard,
 } from "@/hooks/useGlobalHubTasks";
 import { TaskCard } from "./TaskCard";
+import { UnmanagedTasksLine } from "./UnmanagedTasksLine";
 
 /**
  * The user's live tasks in board order, one card each. The board reads 20
- * cards, and 20 more each time the end of the list scrolls into view.
+ * cards, and 20 more each time the end of the list scrolls into view. While
+ * some live tasks have no manager, a line above the cards says so.
  *
  * @param scrollRoot - The element the board scrolls in.
  */
@@ -35,7 +37,7 @@ export function TaskBoard({ scrollRoot }: { scrollRoot: RefObject<HTMLElement | 
       </div>
     );
   }
-  const { data: cards, has_more: hasMore } = board.data;
+  const { data: cards, has_more: hasMore, unmanaged_count: unmanagedCount } = board.data;
   if (cards.length === 0) {
     return (
       <p className="p-8 text-center text-sm text-muted-foreground" data-testid="globalhub-no-tasks">
@@ -49,6 +51,10 @@ export function TaskBoard({ scrollRoot }: { scrollRoot: RefObject<HTMLElement | 
   );
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 p-4" data-testid="globalhub-tasks">
+      {unmanagedCount > 0 && (
+        // A new count mounts a new line, so a sent request no longer holds the button.
+        <UnmanagedTasksLine key={unmanagedCount} count={unmanagedCount} />
+      )}
       {cards.map((card, index) => (
         <TaskCard
           key={card.id}

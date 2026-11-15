@@ -69,6 +69,14 @@ export interface AgentTaskBoard {
   data: AgentTaskCard[];
   /** Whether the board has more live tasks than ``data`` holds. */
   has_more: boolean;
+  /** How many live tasks on the whole board have no manager. */
+  unmanaged_count: number;
+}
+
+/** A request for managers; ``queued`` is false when every live task already had one. */
+export interface SpawnManagersRequested {
+  unmanaged_count: number;
+  queued: boolean;
 }
 
 /** A manager on the user's board, with the fields a task card reads. */
@@ -193,4 +201,14 @@ export function useDeleteTaskAsset(taskId: string) {
       method: "DELETE",
     }),
   );
+}
+
+/** Ask the broker to give a manager to each live task that has none. */
+export function useRequestManagers() {
+  const queryClient = useQueryClient();
+  return useMutation<SpawnManagersRequested, Error>({
+    mutationFn: async () =>
+      readJson(await authenticatedFetch("/v1/agent-tasks/spawn-managers", { method: "POST" })),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: GLOBALHUB_TASKS_QUERY_KEY }),
+  });
 }

@@ -18,7 +18,10 @@ export interface BoardRole {
   /** ``null`` while the role has no session; a broker or custodian gets one when it has work. */
   session_id: string | null;
   session: BoardSession | null;
-  /** Events waiting for the broker or a manager, or clicks queued for the custodian. */
+  /**
+   * Events waiting for the broker or a manager, the broker's queued requests
+   * for managers, or clicks queued for the custodian.
+   */
   waiting: number;
 }
 
