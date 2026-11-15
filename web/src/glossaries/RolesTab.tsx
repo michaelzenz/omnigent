@@ -23,6 +23,13 @@ import {
 import { useGlobalHubSettings } from "@/hooks/useGlobalHubSettings";
 import { useHostModelOptions } from "@/hooks/useHosts";
 import { nativeModelLabel } from "@/lib/composerModelLabel";
+import {
+  RoleScheduleField,
+  type RoleScheduleDraft,
+  scheduleChange,
+  scheduleDraft,
+  scheduleError,
+} from "./RoleScheduleField";
 
 // The harness that the GlobalHub role agents run.
 const ROLE_HARNESS = "pi";
@@ -88,7 +95,12 @@ function RoleCard({ summary }: { summary: RoleProfileSummary }) {
 /** The changes to save: a value equal to its default saves as ``null``, which resets it. */
 function changesFrom(
   profile: RoleProfile,
-  draft: { description: string; model: string | null; manual: string },
+  draft: {
+    description: string;
+    model: string | null;
+    manual: string;
+    schedule: RoleScheduleDraft;
+  },
 ): RoleProfileChanges {
   const changes: RoleProfileChanges = {};
   if (draft.description !== profile.description) {
@@ -99,6 +111,10 @@ function changesFrom(
   if (draft.manual !== profile.manual) {
     changes.manual = draft.manual === profile.default_manual ? null : draft.manual;
   }
+  const schedule = profile.schedulable
+    ? scheduleChange(profile.schedule, draft.schedule)
+    : undefined;
+  if (schedule) changes.schedule = schedule;
   return changes;
 }
 
@@ -115,9 +131,11 @@ function RoleForm({
   const [description, setDescription] = useState(profile.description);
   const [model, setModel] = useState(profile.model);
   const [manual, setManual] = useState(profile.manual);
+  const [schedule, setSchedule] = useState(() => scheduleDraft(profile.schedule));
   const [previewManual, setPreviewManual] = useState(false);
-  const changes = changesFrom(profile, { description, model, manual });
+  const changes = changesFrom(profile, { description, model, manual, schedule });
   const changed = Object.keys(changes).length > 0;
+  const invalid = profile.schedulable && scheduleError(schedule) !== null;
   const ids = useId();
   const customized = (field: RoleField) => profile.customized.includes(field);
 
@@ -149,6 +167,21 @@ function RoleForm({
       >
         <RoleModelSelect id={`${ids}-model`} value={model} onChange={setModel} />
       </SettingRow>
+      {profile.schedulable && (
+        <SettingRow
+          id={`${ids}-schedule`}
+          label="Schedule"
+          customized={false}
+          hint="When the role's session gets its scheduled run, e.g. the custodian's session cleanup. Runs come at least 10 minutes apart."
+        >
+          <RoleScheduleField
+            id={`${ids}-schedule`}
+            draft={schedule}
+            saved={profile.schedule}
+            onChange={setSchedule}
+          />
+        </SettingRow>
+      )}
       <SettingRow
         id={`${ids}-manual`}
         label="Manual"
@@ -185,7 +218,7 @@ function RoleForm({
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
-          disabled={!changed}
+          disabled={!changed || invalid}
           loading={save.isPending}
           onClick={() => save.mutate(changes, { onSuccess: onDone })}
         >

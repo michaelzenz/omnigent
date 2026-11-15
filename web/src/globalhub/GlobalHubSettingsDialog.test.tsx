@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { GlobalHubSettingsDialog } from "./GlobalHubSettingsDialog";
@@ -9,7 +8,6 @@ import type { GlobalHubSettings } from "@/hooks/useGlobalHubSettings";
 import { type Host, useHosts } from "@/hooks/useHosts";
 import { authenticatedFetch } from "@/lib/identity";
 import type * as IdentityModule from "@/lib/identity";
-import { localTimezone } from "@/lib/timezones";
 
 vi.mock("@/lib/identity", async (importOriginal) => ({
   ...(await importOriginal<typeof IdentityModule>()),
@@ -79,12 +77,10 @@ const HOSTS: Host[] = [
   { host_id: "host_laptop", name: "laptop", owner: "alice", status: "online" },
   { host_id: "host_desk", name: "desk", owner: "alice", status: "offline" },
 ];
-const PLACEMENT = { host_id: "host_laptop", workspace: "/Users/alice/hub" };
-const SWEEP = { enabled: true, time: "09:00", timezone: "America/Los_Angeles" };
 const SAVED: GlobalHubSettings = {
-  ...PLACEMENT,
+  host_id: "host_laptop",
+  workspace: "/Users/alice/hub",
   report_new_sessions: true,
-  custodian_sweep: { ...SWEEP, next_run_at: 1_800_000_000 },
 };
 const UNSET: GlobalHubSettings = { host_id: null, workspace: null, report_new_sessions: true };
 
@@ -140,15 +136,7 @@ describe("GlobalHubSettingsDialog", () => {
     fireEvent.click(save);
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
-    // A first save turns the daily cleanup on at 09:00 in the browser's timezone.
-    expect(sentRequest()).toEqual({
-      method: "PUT",
-      body: {
-        ...PLACEMENT,
-        report_new_sessions: true,
-        custodian_sweep: { ...SWEEP, timezone: localTimezone() },
-      },
-    });
+    expect(sentRequest()).toEqual({ method: "PUT", body: SAVED });
   });
 
   it("clears a saved setting with nulls", async () => {
@@ -158,7 +146,7 @@ describe("GlobalHubSettingsDialog", () => {
     fireEvent.click(screen.getByTestId("globalhub-settings-clear"));
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
-    expect(sentRequest()).toEqual({ method: "PUT", body: { ...UNSET, custodian_sweep: SWEEP } });
+    expect(sentRequest()).toEqual({ method: "PUT", body: UNSET });
   });
 
   it("saves the switch that stops new sessions reporting to the broker", async () => {
@@ -171,31 +159,7 @@ describe("GlobalHubSettingsDialog", () => {
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(sentRequest()).toEqual({
       method: "PUT",
-      body: { ...PLACEMENT, report_new_sessions: false, custodian_sweep: SWEEP },
-    });
-  });
-
-  it("saves the daily cleanup's time and timezone, and needs a whole time to save", async () => {
-    fetchMock.mockResolvedValue(json(SAVED));
-    const onOpenChange = renderDialog(SAVED);
-    const time = screen.getByLabelText("Cleanup time");
-
-    fireEvent.change(time, { target: { value: "" } });
-    expect(screen.getByTestId("globalhub-settings-save")).toBeDisabled();
-    fireEvent.change(time, { target: { value: "18:30" } });
-    await userEvent.click(screen.getByLabelText("Timezone"));
-    fireEvent.change(screen.getByLabelText("Search timezones"), { target: { value: "Berlin" } });
-    await userEvent.click(await screen.findByRole("option", { name: "Europe/Berlin" }));
-    fireEvent.click(screen.getByTestId("globalhub-settings-save"));
-
-    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
-    expect(sentRequest()).toEqual({
-      method: "PUT",
-      body: {
-        ...PLACEMENT,
-        report_new_sessions: true,
-        custodian_sweep: { enabled: true, time: "18:30", timezone: "Europe/Berlin" },
-      },
+      body: { ...SAVED, report_new_sessions: false },
     });
   });
 

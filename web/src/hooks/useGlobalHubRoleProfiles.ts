@@ -18,15 +18,36 @@ export interface RoleProfileSummary {
   customized: RoleField[];
 }
 
+/** When a role's session gets its scheduled run, e.g. the custodian's session cleanup. */
+export interface RoleScheduleSettings {
+  enabled: boolean;
+  /** An RFC 5545 rule without an end, e.g. ``"FREQ=DAILY;BYHOUR=9;BYMINUTE=0"``. */
+  rrule: string;
+  /** An IANA timezone, e.g. ``"America/Los_Angeles"``. */
+  timezone: string;
+}
+
+/** A saved schedule; ``next_run_at`` is null while it is off. */
+export interface RoleSchedule extends RoleScheduleSettings {
+  /** Unix epoch seconds of the next run. */
+  next_run_at: number | null;
+}
+
 /** A role definition with the manual sent on every turn, and what a reset restores. */
 export interface RoleProfile extends RoleProfileSummary {
   manual: string;
   default_description: string;
   default_manual: string;
+  /** Whether the user can schedule runs of the role's session. */
+  schedulable: boolean;
+  /** The saved schedule, or null until the user saves one. */
+  schedule: RoleSchedule | null;
 }
 
-/** Fields to save; ``null`` restores a field's default. */
-export type RoleProfileChanges = Partial<Record<RoleField, string | null>>;
+/** Fields to save; ``null`` restores a field's default, and a null schedule deletes it. */
+export type RoleProfileChanges = Partial<Record<RoleField, string | null>> & {
+  schedule?: RoleScheduleSettings | null;
+};
 
 /** A saved role, and how its running sessions took a new model. */
 export interface RoleProfileSaved {

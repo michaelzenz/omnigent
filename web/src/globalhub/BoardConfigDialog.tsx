@@ -182,7 +182,7 @@ function roleKind(row: BoardRole): string {
 function waitingTitle(row: BoardRole): string {
   if (row.manager_id !== null) return "Events routed to this manager";
   return row.role === "custodian"
-    ? "Clicks and the daily cleanup queued for the custodian"
+    ? "Clicks and the scheduled cleanup queued for the custodian"
     : "Events and requests for managers waiting for the broker";
 }
 
@@ -203,7 +203,7 @@ function confirmText(
       title: `Reset ${row.title}?`,
       description:
         row.role === "custodian"
-          ? "Its session is deleted and a fresh one starts. The clicks and the daily cleanup queued for it are dropped."
+          ? "Its session is deleted and a fresh one starts. The clicks and the scheduled cleanup queued for it are dropped."
           : "Its session is deleted and a fresh one starts. The events it was handling go to the new session.",
       confirmLabel: "Reset",
     };
@@ -222,7 +222,7 @@ function confirmText(
   return {
     title: `Dismiss ${row.waiting} waiting ${unit}${plural} for ${row.title}?`,
     description: custodian
-      ? "The queued clicks and the queued daily cleanup are dropped. A message the custodian is already handling goes on. This cannot be undone."
+      ? "The queued clicks and the queued scheduled cleanup are dropped. A message the custodian is already handling goes on. This cannot be undone."
       : "The waiting events are dismissed. A notice the role is already handling goes on. This cannot be undone.",
     confirmLabel: "Dismiss all",
   };

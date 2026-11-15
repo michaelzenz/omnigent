@@ -4,11 +4,16 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { RolesTab } from "./RolesTab";
-import type { RoleProfile } from "@/hooks/useGlobalHubRoleProfiles";
+import type {
+  RoleProfile,
+  RoleProfileChanges,
+  RoleScheduleSettings,
+} from "@/hooks/useGlobalHubRoleProfiles";
 import { authenticatedFetch } from "@/lib/identity";
 import type * as IdentityModule from "@/lib/identity";
 import { updateSession } from "@/lib/sessionsApi";
 import type * as SessionsApiModule from "@/lib/sessionsApi";
+import { localTimezone } from "@/lib/timezones";
 import { jsonResponse } from "@/test/globalHubFixtures";
 
 vi.mock("@/lib/identity", async (importOriginal) => ({
@@ -49,20 +54,35 @@ vi.mock("@/components/ui/select", () => ({
 }));
 
 const fetchMock = vi.mocked(authenticatedFetch);
+const TITLES: Record<string, string> = {
+  broker: "Task broker",
+  custodian: "Task custodian",
+  "manager:default": "Task manager",
+};
+const THREE_HOURS_S = 3 * 60 * 60;
 
 function profile(role: string, fields: Partial<RoleProfile> = {}): RoleProfile {
   return {
     role,
     kind: role.split(":")[0],
-    title: role === "broker" ? "Task broker" : "Task manager",
+    title: TITLES[role],
     description: "Default description",
     model: null,
     customized: [],
     manual: "Default manual",
     default_description: "Default description",
     default_manual: "Default manual",
+    schedulable: role === "custodian",
+    schedule: null,
     ...fields,
   };
+}
+
+/** The saved form of a schedule: an enabled one runs next in three hours. */
+function savedSchedule(schedule: RoleScheduleSettings | null): RoleProfile["schedule"] {
+  if (schedule === null) return null;
+  const nextRunAt = Math.floor(Date.now() / 1000) + THREE_HOURS_S;
+  return { ...schedule, next_run_at: schedule.enabled ? nextRunAt : null };
 }
 
 /** Serve the roles; a PUT saves its changes, as the server does. */
@@ -86,7 +106,7 @@ function serveRoles(profiles: RoleProfile[]): void {
     const saved = role === undefined ? undefined : byRole.get(role);
     if (saved === undefined) return jsonResponse({ detail: "Not found" }, 404);
     if (init?.method !== "PUT") return jsonResponse(saved);
-    const changes = JSON.parse(String(init.body)) as Record<string, string | null>;
+    const { schedule, ...changes } = JSON.parse(String(init.body)) as RoleProfileChanges;
     const next: RoleProfile = {
       ...saved,
       ...Object.fromEntries(
@@ -95,6 +115,7 @@ function serveRoles(profiles: RoleProfile[]): void {
           value ?? (field === "model" ? null : saved[`default_${field}` as keyof RoleProfile]),
         ]),
       ),
+      ...(schedule === undefined ? {} : { schedule: savedSchedule(schedule) }),
     };
     byRole.set(saved.role, next);
     return jsonResponse(next);
@@ -187,5 +208,53 @@ describe("RolesTab", () => {
       ["s-storage", { modelOverride: "model-a" }],
       ["s-docs", { modelOverride: "model-a" }],
     ]);
+  });
+
+  it("turns on the custodian's schedule, every day at 09:00 in the browser's timezone", async () => {
+    serveRoles([profile("broker"), profile("custodian")]);
+    renderTab();
+    const broker = await card("broker");
+    const custodian = await card("custodian");
+    const scheduleSwitch = await custodian.findByRole("switch", { name: "Schedule" });
+
+    // Only a schedulable role offers a schedule.
+    expect(broker.queryByRole("switch")).not.toBeInTheDocument();
+    expect(scheduleSwitch).not.toBeChecked();
+    expect(custodian.queryByTestId("schedule-fields")).not.toBeInTheDocument();
+    expect(custodian.getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.click(scheduleSwitch);
+    expect(custodian.getByTestId("schedule-fields")).toBeInTheDocument();
+    fireEvent.click(custodian.getByRole("button", { name: "Save" }));
+
+    expect(await custodian.findByText("Next run in 3 hours.")).toBeInTheDocument();
+    expect(savedBodies()).toEqual([
+      {
+        schedule: {
+          enabled: true,
+          rrule: "FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+          timezone: localTimezone(),
+        },
+      },
+    ]);
+  });
+
+  it("turns off a saved schedule and keeps its rule and timezone", async () => {
+    const schedule = { enabled: true, rrule: "FREQ=HOURLY;BYMINUTE=30", timezone: "Europe/Berlin" };
+    serveRoles([profile("custodian", { schedule: savedSchedule(schedule) })]);
+    renderTab();
+    const custodian = await card("custodian");
+    const scheduleSwitch = await custodian.findByRole("switch", { name: "Schedule" });
+
+    expect(scheduleSwitch).toBeChecked();
+    expect(custodian.getByTestId("schedule-fields")).toBeInTheDocument();
+    expect(custodian.getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.click(scheduleSwitch);
+    fireEvent.click(custodian.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(savedBodies()).toEqual([{ schedule: { ...schedule, enabled: false } }]),
+    );
+    expect(await custodian.findByRole("switch", { name: "Schedule" })).not.toBeChecked();
+    expect(custodian.queryByTestId("role-schedule-next-run")).not.toBeInTheDocument();
   });
 });
