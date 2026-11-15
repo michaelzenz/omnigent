@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { SettingsIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { BoardConfigButton } from "@/globalhub/BoardConfigDialog";
 import { FyiStream } from "@/globalhub/FyiStream";
 import { GlobalHubSettingsDialog } from "@/globalhub/GlobalHubSettingsDialog";
 import { SystemNoticeCard } from "@/globalhub/SystemNoticeCard";
@@ -19,16 +20,19 @@ export function GlobalHubPage() {
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="globalhub-page">
       <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
         <h1 className="text-lg font-semibold">Global Hub</h1>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Global Hub settings"
-          title="Global Hub settings"
-          onClick={openSettings}
-          data-testid="globalhub-settings-button"
-        >
-          <SettingsIcon className="size-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <BoardConfigButton />
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Global Hub settings"
+            title="Global Hub settings"
+            onClick={openSettings}
+            data-testid="globalhub-settings-button"
+          >
+            <SettingsIcon className="size-4" />
+          </Button>
+        </div>
       </div>
       <div ref={boardRef} className="min-h-0 flex-1 overflow-auto" data-testid="globalhub-board">
         {settings.isPending ? (

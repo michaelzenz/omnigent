@@ -4,7 +4,7 @@ import type {
   AgentTaskAsset,
   AgentTaskCard,
   AgentTaskWorker,
-  AgentTaskWorkerSession,
+  BoardSession,
 } from "@/hooks/useGlobalHubTasks";
 
 /** An active task card with no workers or assets; ``fields`` override the defaults. */
@@ -26,11 +26,24 @@ export function agentTask(id: string, fields: Partial<AgentTaskCard> = {}): Agen
   };
 }
 
+/** An idle session; ``fields`` override the defaults. */
+export function boardSession(fields: Partial<BoardSession> = {}): BoardSession {
+  return {
+    title: "Session",
+    status: "idle",
+    pending_elicitations_count: 0,
+    background_work_running: false,
+    blocked_on: null,
+    updated_at: 1_800_000_000,
+    ...fields,
+  };
+}
+
 /** A worker on task ``t1`` whose session ``s-<id>`` is idle; the arguments override that. */
 export function taskWorker(
   id: string,
   fields: Partial<AgentTaskWorker> = {},
-  session: Partial<AgentTaskWorkerSession> = {},
+  session: Partial<BoardSession> = {},
 ): AgentTaskWorker {
   return {
     id,
@@ -39,15 +52,7 @@ export function taskWorker(
     title: null,
     created_at: 1_800_000_000,
     updated_at: null,
-    session: {
-      title: `Session ${id}`,
-      status: "idle",
-      pending_elicitations_count: 0,
-      background_work_running: false,
-      blocked_on: null,
-      updated_at: 1_800_000_000,
-      ...session,
-    },
+    session: boardSession({ title: `Session ${id}`, ...session }),
     ...fields,
   };
 }

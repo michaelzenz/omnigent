@@ -21,8 +21,8 @@ export interface AgentTask {
   updated_at: number | null;
 }
 
-/** The session a worker wraps, with the title and live state the sidebar shows. */
-export interface AgentTaskWorkerSession {
+/** A worker's or a role's session, with the title and live state the sidebar shows. */
+export interface BoardSession {
   title: string | null;
   status: "idle" | "running" | "failed";
   pending_elicitations_count: number;
@@ -41,7 +41,7 @@ export interface AgentTaskWorker {
   title: string | null;
   created_at: number;
   updated_at: number | null;
-  session: AgentTaskWorkerSession;
+  session: BoardSession;
 }
 
 /** A link a task carries, such as a design doc or a pull request. */
