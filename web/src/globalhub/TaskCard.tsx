@@ -64,7 +64,9 @@ export const TaskCard = memo(function TaskCard({
       <header className="space-y-2 border-b border-border px-4 py-3">
         <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <h2 className="min-w-0 text-lg leading-tight font-semibold">{task.title}</h2>
+            <h2 className="min-w-0 text-lg leading-tight font-semibold" data-board-search-text>
+              {task.title}
+            </h2>
             <Badge
               variant="outline"
               className={cn("shrink-0 border-[1.5px] capitalize", STATE_BADGE_CLASSES[task.state])}
@@ -138,7 +140,7 @@ export const TaskCard = memo(function TaskCard({
               Overview
             </h3>
             {task.description ? (
-              <div className="text-ui break-words">
+              <div className="text-ui break-words" data-board-search-text>
                 <MessageResponse allowGitHubAttachmentImages>{task.description}</MessageResponse>
               </div>
             ) : (
@@ -230,7 +232,9 @@ function EditableGoal({ task }: { task: AgentTask }) {
         data-testid={`task-card-goal-${task.id}`}
       >
         <span className="shrink-0 font-medium">Goal:</span>
-        <span className="min-w-0 text-muted-foreground">{task.goal || "Add a goal"}</span>
+        <span className="min-w-0 text-muted-foreground" data-board-search-text>
+          {task.goal || "Add a goal"}
+        </span>
         <PencilIcon
           className="mt-0.5 size-3.5 shrink-0 opacity-0 group-hover:opacity-100"
           aria-hidden

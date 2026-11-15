@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { GlobalHubPage } from "./GlobalHubPage";
 import { type GlobalHubSettings, useGlobalHubSettings } from "@/hooks/useGlobalHubSettings";
@@ -10,10 +10,16 @@ vi.mock("@/globalhub/GlobalHubSettingsDialog", () => ({
     open ? <div data-testid="globalhub-settings-dialog" /> : null,
 }));
 vi.mock("@/globalhub/TaskBoard", () => ({
-  TaskBoard: () => <div data-testid="globalhub-task-board" />,
+  TaskBoard: ({ query }: { query?: string }) => (
+    <div data-testid="globalhub-task-board" data-query={query ?? ""} />
+  ),
 }));
-vi.mock("@/globalhub/SystemNoticeCard", () => ({ SystemNoticeCard: () => null }));
-vi.mock("@/globalhub/FyiStream", () => ({ FyiStream: () => null }));
+vi.mock("@/globalhub/SystemNoticeCard", () => ({
+  SystemNoticeCard: () => <div data-testid="globalhub-system-notice" />,
+}));
+vi.mock("@/globalhub/FyiStream", () => ({
+  FyiStream: () => <div data-testid="globalhub-fyi-stream" />,
+}));
 vi.mock("@/globalhub/BoardConfigDialog", () => ({ BoardConfigButton: () => null }));
 vi.mock("@/globalhub/GlobalHubChatPanel", () => ({ GlobalHubChatPanel: () => null }));
 
@@ -55,5 +61,27 @@ describe("GlobalHubPage", () => {
     expect(promptShown).toBe(false);
     expect(screen.getByTestId("globalhub-task-board")).toBeInTheDocument();
     expect(screen.getByTestId("globalhub-settings-dialog")).toBeInTheDocument();
+  });
+
+  it("searches the board after a pause in typing, and Escape clears the search", async () => {
+    renderPage({ host_id: "host_laptop", workspace: "/srv", report_new_sessions: true });
+    const search = screen.getByRole("textbox", { name: "Search tasks" });
+    const board = screen.getByTestId("globalhub-task-board");
+
+    fireEvent.change(search, { target: { value: "  retries fix " } });
+    const queryWhileTyping = board.dataset.query;
+    await waitFor(() => expect(board.dataset.query).toBe("retries fix"));
+    // A search shows the board's matches without the notice and the FYI stream.
+    const shownWhileSearching = ["globalhub-system-notice", "globalhub-fyi-stream"].filter(
+      (testId) => screen.queryByTestId(testId) !== null,
+    );
+    fireEvent.keyDown(search, { key: "Escape" });
+
+    expect(shownWhileSearching).toEqual([]);
+    expect(queryWhileTyping).toBe("");
+    expect(search).toHaveValue("");
+    await waitFor(() => expect(board.dataset.query).toBe(""));
+    expect(screen.getByTestId("globalhub-system-notice")).toBeInTheDocument();
+    expect(screen.getByTestId("globalhub-fyi-stream")).toBeInTheDocument();
   });
 });

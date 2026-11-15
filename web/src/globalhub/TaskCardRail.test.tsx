@@ -138,6 +138,34 @@ describe("TaskCardRail", () => {
     expect(idle.queryByTestId("session-state-badge")).toBeNull();
   });
 
+  it("outlines what a search matched, and opens on the workers when only they match", () => {
+    const workers = [taskWorker("w1", { title: "Fixing retries" }), taskWorker("w2")];
+    renderRail(
+      agentTask("t1", {
+        assets: [taskAsset("a1")],
+        workers,
+        match: { hits: 1, asset_ids: [], worker_ids: ["w1"] },
+      }),
+    );
+
+    expect(screen.getByRole("tab", { name: /Workers/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("task-worker-w1")).toHaveClass("ring-amber-400/50");
+    expect(screen.getByTestId("task-worker-w2")).not.toHaveClass("ring-amber-400/50");
+
+    cleanup();
+    renderRail(
+      agentTask("t1", {
+        assets: [taskAsset("a1"), taskAsset("a2")],
+        workers,
+        match: { hits: 1, asset_ids: ["a2"], worker_ids: ["w1"] },
+      }),
+    );
+
+    expect(screen.getByRole("tab", { name: /Assets/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("task-asset-a2")).toHaveClass("ring-amber-400/50");
+    expect(screen.getByTestId("task-asset-a1")).not.toHaveClass("ring-amber-400/50");
+  });
+
   it("untracks a worker after asking", async () => {
     renderRail(agentTask("t1", { workers: [taskWorker("w1", { title: "Fixing retries" })] }));
     openWorkersTab();

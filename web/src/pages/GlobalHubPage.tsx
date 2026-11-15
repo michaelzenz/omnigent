@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
-import { SettingsIcon } from "lucide-react";
+import { SearchIcon, SettingsIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { BoardConfigButton } from "@/globalhub/BoardConfigDialog";
 import { FyiStream } from "@/globalhub/FyiStream";
@@ -9,15 +10,21 @@ import { GlobalHubChatPanel } from "@/globalhub/GlobalHubChatPanel";
 import { GlobalHubSettingsDialog } from "@/globalhub/GlobalHubSettingsDialog";
 import { SystemNoticeCard } from "@/globalhub/SystemNoticeCard";
 import { TaskBoard } from "@/globalhub/TaskBoard";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useGlobalHubSettings } from "@/hooks/useGlobalHubSettings";
 
+// The search waits for a pause in typing before it asks the server.
+const SEARCH_DELAY_MS = 300;
+
 /**
- * The Global Hub board, with its settings behind the gear in the header. A
+ * The Global Hub board, with its search and settings in the header. A
  * manager's or worker's chat opens in a panel over the right side of the board.
  */
 export function GlobalHubPage() {
   const settings = useGlobalHubSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const query = useDebouncedValue(search.trim(), SEARCH_DELAY_MS);
   const boardRef = useRef<HTMLDivElement>(null);
   const openSettings = () => setSettingsOpen(true);
 
@@ -26,7 +33,34 @@ export function GlobalHubPage() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="globalhub-page">
         <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
           <h1 className="text-lg font-semibold">Global Hub</h1>
-          <div className="flex items-center gap-1">
+          <div className="flex min-w-0 items-center gap-1">
+            <div className="relative w-64 min-w-0">
+              <SearchIcon
+                className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden
+              />
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setSearch("");
+                }}
+                placeholder="Search tasks"
+                aria-label="Search tasks"
+                className="h-8 pr-8 pl-8"
+                data-testid="globalhub-search"
+              />
+              {search && (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  className="absolute top-1/2 right-2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                  onClick={() => setSearch("")}
+                >
+                  <XIcon className="size-4" aria-hidden />
+                </button>
+              )}
+            </div>
             <BoardConfigButton />
             <Button
               variant="ghost"
@@ -65,9 +99,13 @@ export function GlobalHubPage() {
                     </Button>
                   </div>
                 )}
-                <SystemNoticeCard />
-                <FyiStream />
-                <TaskBoard scrollRoot={boardRef} />
+                {!query && (
+                  <>
+                    <SystemNoticeCard />
+                    <FyiStream />
+                  </>
+                )}
+                <TaskBoard scrollRoot={boardRef} query={query} />
               </>
             )}
           </div>

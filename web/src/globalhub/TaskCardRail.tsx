@@ -16,14 +16,23 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { ChatButton } from "./GlobalHubChat";
 import { OpenSessionLink } from "./OpenSessionLink";
 
+// Outlines an asset or worker whose text holds a board search word.
+const SEARCH_MATCH_CLASSES =
+  "border-amber-400/70 bg-amber-50/70 ring-1 ring-amber-400/50 dark:bg-amber-400/10";
+
 /**
  * A card's panel with the task's assets and workers, one tab each. Beside the
  * overview it fills the card's height; below it, it scrolls past a fixed height.
+ * During a search it opens on the workers when only workers match.
  */
 export function TaskCardRail({ task }: { task: AgentTaskCard }) {
+  const match = task.match;
+  const firstTab =
+    match && match.asset_ids.length === 0 && match.worker_ids.length > 0 ? "workers" : "assets";
   return (
     <Tabs
-      defaultValue="assets"
+      key={firstTab}
+      defaultValue={firstTab}
       className="max-h-80 min-h-0 flex-col gap-0 overflow-hidden rounded-lg border border-border bg-muted/20 @4xl:absolute @4xl:inset-0 @4xl:max-h-none"
       data-testid={`task-card-rail-${task.id}`}
     >
@@ -41,7 +50,7 @@ export function TaskCardRail({ task }: { task: AgentTaskCard }) {
         <AssetList task={task} />
       </TabsContent>
       <TabsContent value="workers" className="min-h-0 overflow-y-auto p-2">
-        <WorkerList workers={task.workers} />
+        <WorkerList workers={task.workers} matchedIds={match?.worker_ids ?? []} />
       </TabsContent>
     </Tabs>
   );
@@ -68,7 +77,10 @@ function AssetList({ task }: { task: AgentTaskCard }) {
             {group.assets.map((asset) => (
               <li
                 key={asset.id}
-                className="flex flex-col gap-1 rounded-md border border-border/70 bg-background px-2 py-1.5 text-xs"
+                className={cn(
+                  "flex flex-col gap-1 rounded-md border border-border/70 bg-background px-2 py-1.5 text-xs",
+                  task.match?.asset_ids.includes(asset.id) && SEARCH_MATCH_CLASSES,
+                )}
                 data-testid={`task-asset-${asset.id}`}
               >
                 <div className="flex min-w-0 items-start gap-1">
@@ -77,6 +89,7 @@ function AssetList({ task }: { task: AgentTaskCard }) {
                     target="_blank"
                     rel="noopener noreferrer"
                     className="min-w-0 flex-1 font-medium break-words text-primary hover:underline"
+                    data-board-search-text
                   >
                     {asset.title}
                   </a>
@@ -143,7 +156,10 @@ function RelatedSessions({
           {related.map((worker) => (
             <li key={worker.id} className="flex flex-col gap-0.5">
               <div className="flex min-w-0 items-center gap-1.5">
-                <span className="min-w-0 flex-1 text-xs font-medium break-words">
+                <span
+                  className="min-w-0 flex-1 text-xs font-medium break-words"
+                  data-board-search-text
+                >
                   {workerLabel(worker)}
                 </span>
                 <WorkerSessionButtons worker={worker} />
@@ -159,7 +175,14 @@ function RelatedSessions({
   );
 }
 
-function WorkerList({ workers }: { workers: AgentTaskWorker[] }) {
+function WorkerList({
+  workers,
+  matchedIds,
+}: {
+  workers: AgentTaskWorker[];
+  /** The workers whose label holds a board search word. */
+  matchedIds: string[];
+}) {
   const untrack = useUntrackWorker();
   const [confirming, setConfirming] = useState<AgentTaskWorker | null>(null);
   const close = () => setConfirming(null);
@@ -175,10 +198,15 @@ function WorkerList({ workers }: { workers: AgentTaskWorker[] }) {
           return (
             <li
               key={worker.id}
-              className="flex flex-col gap-1.5 rounded-lg border border-border bg-background p-2"
+              className={cn(
+                "flex flex-col gap-1.5 rounded-lg border border-border bg-background p-2",
+                matchedIds.includes(worker.id) && SEARCH_MATCH_CLASSES,
+              )}
               data-testid={`task-worker-${worker.id}`}
             >
-              <span className="text-sm font-medium break-words">{label}</span>
+              <span className="text-sm font-medium break-words" data-board-search-text>
+                {label}
+              </span>
               <div className="flex min-w-0 items-center justify-between gap-2">
                 {state ? <SessionStateBadge state={state} /> : <span />}
                 <div className="flex shrink-0 items-center gap-1">

@@ -58,10 +58,20 @@ export interface AgentTaskAsset {
   updated_at: number | null;
 }
 
+/** How a card matched a board search. */
+export interface BoardSearchMatch {
+  /** How many distinct query words the card holds. */
+  hits: number;
+  asset_ids: string[];
+  worker_ids: string[];
+}
+
 /** A live task with the workers and assets its card shows; busy workers come first. */
 export interface AgentTaskCard extends AgentTask {
   workers: AgentTaskWorker[];
   assets: AgentTaskAsset[];
+  /** How the card matched, while the board shows a search. */
+  match?: BoardSearchMatch | null;
 }
 
 /** The first live tasks on the user's board, in board order. */
@@ -108,8 +118,14 @@ async function readJson<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function fetchBoard(limit: number): Promise<AgentTaskBoard> {
-  return readJson(await authenticatedFetch(`/v1/agent-tasks/board?limit=${limit}`));
+/** The distinct lowercase words of a board search, as the server reads them. */
+export function boardSearchWords(query: string): string[] {
+  return [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))];
+}
+
+async function fetchBoard(limit: number, query: string): Promise<AgentTaskBoard> {
+  const search = query ? `&q=${encodeURIComponent(query)}` : "";
+  return readJson(await authenticatedFetch(`/v1/agent-tasks/board?limit=${limit}${search}`));
 }
 
 async function fetchManagers(): Promise<AgentManager[]> {
@@ -117,11 +133,14 @@ async function fetchManagers(): Promise<AgentManager[]> {
   return (await readJson<{ data: AgentManager[] }>(res)).data;
 }
 
-/** The first ``limit`` live tasks (active, idle or resolved) as cards, in board order. */
-export function useGlobalHubBoard(limit: number) {
+/**
+ * The first ``limit`` live tasks (active, idle or resolved) as cards, in board
+ * order; with a ``query``, the tasks that match it, best match first.
+ */
+export function useGlobalHubBoard(limit: number, query = "") {
   return useQuery({
-    queryKey: [...GLOBALHUB_TASKS_QUERY_KEY, "board", limit],
-    queryFn: () => fetchBoard(limit),
+    queryKey: [...GLOBALHUB_TASKS_QUERY_KEY, "board", limit, query],
+    queryFn: () => fetchBoard(limit, query),
     refetchInterval: BOARD_REFRESH_MS,
     // The loaded cards stay on screen while a longer window loads.
     placeholderData: keepPreviousData,

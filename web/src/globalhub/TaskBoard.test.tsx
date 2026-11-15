@@ -23,13 +23,25 @@ const STORAGE_MANAGER = {
   session_missing: false,
 };
 
-/** Serve the managers, the board read for each window size, and requests for managers. */
-function serveBoard(read: (limit: number) => AgentTaskBoard): void {
+/** The board reads the board sent, each with its window size and search. */
+function boardReads(): { limit: number; query: string | null }[] {
+  return fetchMock.mock.calls
+    .map(([input]) => String(input))
+    .filter((path) => path.startsWith(BOARD_PATH))
+    .map((path) => {
+      const params = new URL(path, "http://board.example.com").searchParams;
+      return { limit: Number(params.get("limit")), query: params.get("q") };
+    });
+}
+
+/** Serve the managers, the board read for each window and search, and requests for managers. */
+function serveBoard(read: (limit: number, query: string | null) => AgentTaskBoard): void {
   fetchMock.mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/v1/agent-tasks/managers") return jsonResponse({ data: [STORAGE_MANAGER] });
     if (path.startsWith(BOARD_PATH)) {
-      return jsonResponse(read(Number(path.slice(BOARD_PATH.length))));
+      const params = new URL(path, "http://board.example.com").searchParams;
+      return jsonResponse(read(Number(params.get("limit")), params.get("q")));
     }
     if (path === SPAWN_PATH) return jsonResponse({ unmanaged_count: 2, queued: true });
     return jsonResponse({ detail: "Not found" }, 404);
@@ -38,17 +50,14 @@ function serveBoard(read: (limit: number) => AgentTaskBoard): void {
 
 /** The window sizes the board read, in order. */
 function readLimits(): number[] {
-  return fetchMock.mock.calls
-    .map(([input]) => String(input))
-    .filter((path) => path.startsWith(BOARD_PATH))
-    .map((path) => Number(path.slice(BOARD_PATH.length)));
+  return boardReads().map((read) => read.limit);
 }
 
-function renderBoard(): QueryClient {
+function renderBoard(query?: string): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <TaskBoard scrollRoot={{ current: null }} />
+      <TaskBoard scrollRoot={{ current: null }} query={query} />
     </QueryClientProvider>,
   );
   return client;
@@ -139,6 +148,31 @@ describe("TaskBoard", () => {
     await waitFor(() => expect(readLimits()).toEqual([20, 40, 60, 80, 100]));
     // The board's last card is loaded once no more are left.
     await waitFor(() => expect(screen.getByTestId("task-card-move-to-end-t1")).toBeDisabled());
+  });
+
+  it("reads the matching cards for a search, and says so when none match", async () => {
+    serveBoard((_limit, query) => ({
+      data:
+        query === "retries"
+          ? [agentTask("t1", { match: { hits: 1, asset_ids: [], worker_ids: [] } })]
+          : [],
+      has_more: false,
+      unmanaged_count: 0,
+    }));
+
+    renderBoard("retries");
+
+    expect(await screen.findByTestId("task-card-t1")).toBeInTheDocument();
+    expect(boardReads()).toEqual([{ limit: 20, query: "retries" }]);
+    // A search result's place on the board is not known, so it can still move down.
+    expect(screen.getByTestId("task-card-move-to-end-t1")).toBeEnabled();
+
+    cleanup();
+    renderBoard("nothing");
+
+    expect(await screen.findByTestId("globalhub-no-matches")).toHaveTextContent(
+      'No tasks match "nothing".',
+    );
   });
 
   it("says so when no task is live", async () => {

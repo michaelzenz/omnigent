@@ -1,30 +1,49 @@
-import { type RefObject, useCallback, useState } from "react";
+import { type RefObject, useCallback, useMemo, useRef, useState } from "react";
 import { InfiniteScrollSentinel } from "@/components/InfiniteScrollSentinel";
 import { Spinner } from "@/components/ui/spinner";
 import {
   BOARD_MAX_CARDS,
   BOARD_WINDOW,
+  boardSearchWords,
   useAgentManagers,
   useGlobalHubBoard,
 } from "@/hooks/useGlobalHubTasks";
 import { TaskCard } from "./TaskCard";
 import { UnmanagedTasksLine } from "./UnmanagedTasksLine";
+import { BOARD_SEARCH_HIGHLIGHT_CSS, useBoardSearchHighlight } from "./useBoardSearchHighlight";
 
 /**
  * The user's live tasks in board order, one card each. The board reads 20
  * cards, and 20 more each time the end of the list scrolls into view. While
- * some live tasks have no manager, a line above the cards says so.
+ * some live tasks have no manager, a line above the cards says so. A search
+ * shows only the matching cards, best match first, with their matches marked.
  *
  * @param scrollRoot - The element the board scrolls in.
+ * @param query - The search, or an empty string to show the whole board.
  */
-export function TaskBoard({ scrollRoot }: { scrollRoot: RefObject<HTMLElement | null> }) {
+export function TaskBoard({
+  scrollRoot,
+  query = "",
+}: {
+  scrollRoot: RefObject<HTMLElement | null>;
+  query?: string;
+}) {
   const [limit, setLimit] = useState(BOARD_WINDOW);
-  const board = useGlobalHubBoard(limit);
+  // A new search starts again from its first cards.
+  const [limitQuery, setLimitQuery] = useState(query);
+  if (limitQuery !== query) {
+    setLimitQuery(query);
+    setLimit(BOARD_WINDOW);
+  }
+  const board = useGlobalHubBoard(limit, query);
   const managers = useAgentManagers();
   const readMore = useCallback(
     () => setLimit((current) => Math.min(current + BOARD_WINDOW, BOARD_MAX_CARDS)),
     [],
   );
+  const words = useMemo(() => boardSearchWords(query), [query]);
+  const listRef = useRef<HTMLDivElement>(null);
+  useBoardSearchHighlight(listRef, words, (board.data?.data.length ?? 0) > 0);
 
   if (board.data === undefined) {
     return board.isError ? (
@@ -38,8 +57,16 @@ export function TaskBoard({ scrollRoot }: { scrollRoot: RefObject<HTMLElement | 
     );
   }
   const { data: cards, has_more: hasMore, unmanaged_count: unmanagedCount } = board.data;
+  const searching = words.length > 0;
   if (cards.length === 0) {
-    return (
+    return searching ? (
+      <p
+        className="p-8 text-center text-sm text-muted-foreground"
+        data-testid="globalhub-no-matches"
+      >
+        No tasks match "{query}".
+      </p>
+    ) : (
       <p className="p-8 text-center text-sm text-muted-foreground" data-testid="globalhub-no-tasks">
         No tasks yet.
       </p>
@@ -48,7 +75,12 @@ export function TaskBoard({ scrollRoot }: { scrollRoot: RefObject<HTMLElement | 
 
   const managersById = new Map((managers.data ?? []).map((manager) => [manager.id, manager]));
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 p-4" data-testid="globalhub-tasks">
+    <div
+      ref={listRef}
+      className="mx-auto flex w-full max-w-5xl flex-col gap-4 p-4"
+      data-testid="globalhub-tasks"
+    >
+      {searching && <style>{BOARD_SEARCH_HIGHLIGHT_CSS}</style>}
       {unmanagedCount > 0 && (
         // A new count mounts a new line, so a sent request no longer holds the button.
         <UnmanagedTasksLine key={unmanagedCount} count={unmanagedCount} />
@@ -63,7 +95,8 @@ export function TaskBoard({ scrollRoot }: { scrollRoot: RefObject<HTMLElement | 
             managerSessionId={
               manager === undefined || manager.session_missing ? null : manager.conversation_id
             }
-            isLast={!hasMore && index === cards.length - 1}
+            // Search results are not in board order, so none is known to be last.
+            isLast={!searching && !hasMore && index === cards.length - 1}
           />
         );
       })}
@@ -73,7 +106,7 @@ export function TaskBoard({ scrollRoot }: { scrollRoot: RefObject<HTMLElement | 
           isFetching={board.isPlaceholderData}
           fetchMore={readMore}
           scrollRoot={scrollRoot}
-          scopeKey="globalhub-board"
+          scopeKey={`globalhub-board:${query}`}
           maxAutoLoads={Number.POSITIVE_INFINITY}
         />
       ) : (
