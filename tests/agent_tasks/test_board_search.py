@@ -8,12 +8,12 @@ from omnigent.agent_tasks.board_search import query_words, search_board
 from omnigent.entities import Task, TaskAsset, Worker
 
 
-def _task(task_id: str, title: str, **fields: Any) -> Task:
+def _task(task_id: str, title: str, *, goal: str = "", **fields: Any) -> Task:
     return Task(
         id=task_id,
         owner_user_id=None,
         title=title,
-        goal="",
+        goal=goal,
         state="active",
         created_at=100,
         **fields,
