@@ -33,7 +33,8 @@ async function sendRoleRequest(path: string, method: "POST" | "DELETE"): Promise
   return res;
 }
 
-async function fetchBoardRoles(): Promise<BoardRole[]> {
+/** The broker, the custodian and each manager, each with its current session. */
+export async function fetchBoardRoles(): Promise<BoardRole[]> {
   const res = await authenticatedFetch("/v1/agent-tasks/board/roles");
   if (!res.ok) throw await apiErrorFromResponse(res);
   return ((await res.json()) as { data: BoardRole[] }).data;

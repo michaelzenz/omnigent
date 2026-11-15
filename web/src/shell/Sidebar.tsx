@@ -47,6 +47,7 @@ import {
   ArchiveIcon,
   ArrowUpDownIcon,
   ArchiveRestoreIcon,
+  BookOpenIcon,
   CheckIcon as CheckMarkIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -589,6 +590,7 @@ function useActiveNavItem(): {
   isNewChatPage: boolean;
   isInboxPage: boolean;
   isGlobalHubPage: boolean;
+  isGlossariesPage: boolean;
   isCanvasPage: boolean;
   isTasksPage: boolean;
   isUsagePage: boolean;
@@ -608,6 +610,7 @@ function useActiveNavItem(): {
   const isExtensionRoute = extensionPathParts(location.pathname) !== null;
   const isInboxPage = !isExtensionRoute && leaf === "inbox";
   const isGlobalHubPage = !isExtensionRoute && leaf === "globalhub";
+  const isGlossariesPage = !isExtensionRoute && leaf === "glossaries";
   const isCanvasPage =
     !isExtensionRoute && isCanvasPathname(location.pathname, rebasePath("/canvas"));
   // True for both /tasks (list) and /tasks/:taskId (detail). Basename-agnostic:
@@ -621,6 +624,7 @@ function useActiveNavItem(): {
     (gridId == null || !isFeatureEnabled(serverInfo, "grid_sessions_display_ui")) &&
     !isInboxPage &&
     !isGlobalHubPage &&
+    !isGlossariesPage &&
     !isCanvasPage &&
     !isTasksPage &&
     !isUsagePage &&
@@ -637,6 +641,7 @@ function useActiveNavItem(): {
     isNewChatPage,
     isInboxPage,
     isGlobalHubPage,
+    isGlossariesPage,
     isCanvasPage,
     isTasksPage,
     isUsagePage,
@@ -923,6 +928,7 @@ function SidebarImpl({
     isNewChatPage,
     isInboxPage,
     isGlobalHubPage,
+    isGlossariesPage,
     isCanvasPage,
     isTasksPage,
     isUsagePage,
@@ -1426,6 +1432,15 @@ function SidebarImpl({
                 componentId="sidebar.globalhub"
                 testId="globalhub-nav"
                 trailing={<SystemNoticeDot />}
+              />
+              <PrimaryNavLink
+                to="/glossaries"
+                label="Glossaries"
+                icon={BookOpenIcon}
+                active={isGlossariesPage}
+                onClick={onNavClick}
+                componentId="sidebar.glossaries"
+                testId="glossaries-nav"
               />
               {/* Keep Scheduled in the primary nav group with the same row treatment as New session. */}
               {automationsEnabled && (

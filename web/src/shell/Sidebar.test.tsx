@@ -1255,15 +1255,21 @@ describe("Sidebar session list", () => {
     expect(usage).toHaveClass("bg-[var(--sidebar-active)]");
   });
 
-  it("renders and highlights the Global Hub nav row without lighting New session", () => {
-    mockConversations(THREE_TYPE_CONVERSATIONS);
-    renderSidebar(true, "/globalhub");
+  it.each([
+    { path: "/globalhub", testId: "globalhub-nav" },
+    { path: "/glossaries", testId: "glossaries-nav" },
+  ])(
+    "renders and highlights the $path nav row without lighting New session",
+    ({ path, testId }) => {
+      mockConversations(THREE_TYPE_CONVERSATIONS);
+      renderSidebar(true, path);
 
-    const globalHub = screen.getByTestId("globalhub-nav");
-    expect(globalHub).toHaveAttribute("href", "/globalhub");
-    expect(globalHub).toHaveAttribute("aria-current", "page");
-    expect(screen.getByTestId("new-chat-button")).not.toHaveClass("bg-[var(--sidebar-active)]");
-  });
+      const row = screen.getByTestId(testId);
+      expect(row).toHaveAttribute("href", path);
+      expect(row).toHaveAttribute("aria-current", "page");
+      expect(screen.getByTestId("new-chat-button")).not.toHaveClass("bg-[var(--sidebar-active)]");
+    },
+  );
 
   it("hides Canvas navigation while the release feature is off", () => {
     mockConversations(THREE_TYPE_CONVERSATIONS);
