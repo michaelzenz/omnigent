@@ -6,12 +6,12 @@ from dataclasses import dataclass
 
 from omnigent.stores.agent_queue_store import AgentQueueStore
 from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
-from omnigent.stores.custodian_sweep_store import CustodianSweepStore
-from omnigent.stores.custodian_sweep_store.sqlalchemy_store import SqlAlchemyCustodianSweepStore
 from omnigent.stores.fyi_cluster_store import FyiClusterStore
 from omnigent.stores.fyi_cluster_store.sqlalchemy_store import SqlAlchemyFyiClusterStore
 from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+from omnigent.stores.role_schedule_store import RoleScheduleStore
+from omnigent.stores.role_schedule_store.sqlalchemy_store import SqlAlchemyRoleScheduleStore
 from omnigent.stores.system_notice_store import SystemNoticeStore
 from omnigent.stores.system_notice_store.sqlalchemy_store import SqlAlchemySystemNoticeStore
 from omnigent.stores.task_asset_store import TaskAssetStore
@@ -37,7 +37,7 @@ class BoardStores:
     :param assets: The links the tasks carry.
     :param system_notices: The notice pinned on each user's board.
     :param queue: The messages waiting for the role sessions.
-    :param custodian_sweeps: When each user's custodian gets its daily cleanup message.
+    :param role_schedules: When each user's role sessions get their scheduled runs.
     """
 
     tasks: TaskStore
@@ -48,7 +48,7 @@ class BoardStores:
     assets: TaskAssetStore
     system_notices: SystemNoticeStore
     queue: AgentQueueStore
-    custodian_sweeps: CustodianSweepStore
+    role_schedules: RoleScheduleStore
 
 
 def open_board_stores(conversation_store: object) -> BoardStores | None:
@@ -70,5 +70,5 @@ def open_board_stores(conversation_store: object) -> BoardStores | None:
         assets=SqlAlchemyTaskAssetStore(location),
         system_notices=SqlAlchemySystemNoticeStore(location),
         queue=SqlAlchemyAgentQueueStore(location),
-        custodian_sweeps=SqlAlchemyCustodianSweepStore(location),
+        role_schedules=SqlAlchemyRoleScheduleStore(location),
     )

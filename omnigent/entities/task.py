@@ -1,6 +1,6 @@
 """GlobalHub board entities, persisted in the ``tasks``, ``managers``, ``workers``,
 ``task_events``, ``fyi_clusters``, ``task_assets``, ``system_notices``,
-``agent_queue_items`` and ``custodian_sweeps`` tables.
+``agent_queue_items`` and ``role_schedules`` tables.
 
 A :class:`Task` is a long-lived unit of work on one user's GlobalHub board,
 owned by one :class:`Manager`. Each :class:`Worker` attaches a session that
@@ -300,7 +300,7 @@ class AgentQueueItem:
     :param owner_user_id: Owning user, or ``None`` in single-user mode.
     :param target_session_id: The session the message goes to.
     :param kind: ``"events"``, ``"notice_click"``, ``"spawn_managers"`` or
-        ``"custodian_sweep"``.
+        ``"scheduled_run"``.
     :param state: ``"queued"``, ``"sending"``, ``"sent"`` or ``"done"``.
     :param seq: Arrival order; a session receives its items in this order.
     :param created_at: Unix epoch seconds at row creation.
@@ -332,24 +332,28 @@ class AgentQueueItem:
 
 
 @dataclass
-class CustodianSweep:
+class RoleSchedule:
     """
-    When a user's custodian gets its daily session cleanup message.
+    When one of a user's GlobalHub role sessions gets its scheduled run message.
 
     :param id: UUID primary key (bare 32-char hex string, no dashes).
     :param owner_user_id: Owning user, or ``None`` in single-user mode.
-    :param local_time: The time of day in ``timezone``, as ``"HH:MM"``.
-    :param timezone: The IANA timezone of ``local_time``, e.g. ``"America/Los_Angeles"``.
-    :param next_run_at: Unix epoch seconds of the next message, or ``None`` while
-        the sweep is off.
-    :param created_at: Unix epoch seconds at row creation.
+    :param role_key: The role that runs, e.g. ``"custodian"``.
+    :param rrule: An RFC 5545 recurrence rule without an end, e.g.
+        ``"FREQ=DAILY;BYHOUR=9;BYMINUTE=0"``.
+    :param timezone: The IANA timezone of ``rrule``, e.g. ``"America/Los_Angeles"``.
+    :param next_run_at: Unix epoch seconds of the next run, or ``None`` while the
+        schedule is off.
+    :param created_at: Unix epoch seconds at row creation; the rule's intervals
+        count from this day.
     :param updated_at: Unix epoch seconds of the last change.
     :param workspace_id: Tenant partition key that owns this row.
     """
 
     id: str
     owner_user_id: str | None
-    local_time: str
+    role_key: str
+    rrule: str
     timezone: str
     next_run_at: int | None
     created_at: int
@@ -358,5 +362,5 @@ class CustodianSweep:
 
     @property
     def enabled(self) -> bool:
-        """Whether the custodian gets the message."""
+        """Whether the role gets its runs."""
         return self.next_run_at is not None

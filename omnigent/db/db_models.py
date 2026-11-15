@@ -1313,26 +1313,27 @@ class SqlAgentQueueItem(OmnigentBase):
     )
 
 
-class SqlCustodianSweep(OmnigentBase):
+class SqlRoleSchedule(OmnigentBase):
     """
-    SQLAlchemy model for the ``custodian_sweeps`` table: each user's daily session cleanup.
+    SQLAlchemy model for the ``role_schedules`` table: when each GlobalHub role session runs.
 
-    Each user has at most one row. At ``next_run_at`` the GlobalHub dispatcher
-    queues the cleanup message for the user's custodian and moves the time to
-    the next day. Ownership is stamped on the row; there are no foreign keys
-    (Rule R032).
+    Each user has at most one row per role. At ``next_run_at`` the GlobalHub
+    dispatcher queues the run message for the user's role session and moves
+    the time to the rule's next occurrence. Ownership is stamped on the row;
+    there are no foreign keys (Rule R032).
 
     :param id: Uuid16 primary key (bare 32-char hex in Python).
     :param owner_user_id: Owning user, or ``None`` in single-user mode.
-    :param local_time: The time of day in ``timezone``, as ``"HH:MM"``.
-    :param timezone: The IANA timezone of ``local_time``.
-    :param next_run_at: Unix epoch seconds of the next message, or ``None``
-        while the sweep is off.
+    :param role_key: The role that runs, e.g. ``"custodian"``.
+    :param rrule: An RFC 5545 recurrence rule without an end.
+    :param timezone: The IANA timezone of ``rrule``.
+    :param next_run_at: Unix epoch seconds of the next run, or ``None`` while
+        the schedule is off.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last change, or ``None``.
     """
 
-    __tablename__ = "custodian_sweeps"
+    __tablename__ = "role_schedules"
 
     # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
     workspace_id: Mapped[int] = mapped_column(
@@ -1344,17 +1345,19 @@ class SqlCustodianSweep(OmnigentBase):
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    local_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    role_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    rrule: Mapped[str] = mapped_column(String(512), nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False)
     next_run_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
-        # One owner's sweep.
-        Index("ix_custodian_sweeps_owner", "workspace_id", "owner_user_id"),
-        # The sweeps due across every workspace, for the dispatcher's scan.
-        Index("ix_custodian_sweeps_due", "next_run_at", "workspace_id", "id"),
+        # One owner's schedule for a role. Unique, so two concurrent saves cannot
+        # add a second schedule; NULL owners (single-user mode) rely on SQLite's write lock.
+        Index("ix_role_schedules_owner", "workspace_id", "owner_user_id", "role_key", unique=True),
+        # The schedules due across every workspace, for the dispatcher's scan.
+        Index("ix_role_schedules_due", "next_run_at", "workspace_id", "id"),
     )
 
 

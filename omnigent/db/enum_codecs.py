@@ -183,8 +183,8 @@ AGENT_QUEUE_ITEM_KIND: dict[str, int] = {
     "notice_click": 2,
     # A request that the broker create managers for unmanaged tasks.
     "spawn_managers": 3,
-    # The custodian's daily session cleanup message.
-    "custodian_sweep": 4,
+    # A role session's scheduled run, e.g. the custodian's session cleanup.
+    "scheduled_run": 4,
 }
 
 # GlobalHub queue items: claimed by the dispatcher, sent, then done when the

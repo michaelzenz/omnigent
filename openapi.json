@@ -1456,7 +1456,7 @@
         "type": "object"
       },
       "AgentTaskBoardRole": {
-        "description": "A role that runs the caller's board, with its session and what waits for it.\n\n`session` is null when the role has no current session; a broker or\ncustodian gets a new one when it has work. `waiting` counts the events\nthat wait for the broker or a manager, or the clicks and the daily cleanup\nqueued for the custodian.",
+        "description": "A role that runs the caller's board, with its session and what waits for it.\n\n`session` is null when the role has no current session; a broker or\ncustodian gets a new one when it has work. `waiting` counts the events\nthat wait for the broker or a manager, or the clicks and the session cleanup\nqueued for the custodian.",
         "properties": {
           "manager_id": {
             "anyOf": [
@@ -4199,75 +4199,6 @@
         "title": "CreatedEvent",
         "type": "object"
       },
-      "CustodianSweepSettings": {
-        "additionalProperties": false,
-        "description": "When the caller's custodian gets its daily session cleanup message.\n\n`time` is a time of day on a 24-hour clock in `timezone`, an IANA name.",
-        "properties": {
-          "enabled": {
-            "title": "Enabled",
-            "type": "boolean"
-          },
-          "time": {
-            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
-            "title": "Time",
-            "type": "string"
-          },
-          "timezone": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Timezone",
-            "type": "string"
-          }
-        },
-        "required": [
-          "enabled",
-          "time",
-          "timezone"
-        ],
-        "title": "CustodianSweepSettings",
-        "type": "object"
-      },
-      "CustodianSweepSettingsResponse": {
-        "additionalProperties": false,
-        "description": "The caller's daily session cleanup and its next run, which is null while it is off.",
-        "properties": {
-          "enabled": {
-            "title": "Enabled",
-            "type": "boolean"
-          },
-          "next_run_at": {
-            "anyOf": [
-              {
-                "format": "int64",
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Run At"
-          },
-          "time": {
-            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
-            "title": "Time",
-            "type": "string"
-          },
-          "timezone": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Timezone",
-            "type": "string"
-          }
-        },
-        "required": [
-          "enabled",
-          "time",
-          "timezone",
-          "next_run_at"
-        ],
-        "title": "CustodianSweepSettingsResponse",
-        "type": "object"
-      },
       "DailyCost": {
         "description": "One day's LLM spend for the daily timeline chart.",
         "properties": {
@@ -5504,7 +5435,7 @@
         "type": "object"
       },
       "GlobalHubRoleProfileDetail": {
-        "description": "A role definition with the manual attached to every turn of its sessions.\n\n`default_description` and `default_manual` are what a reset restores.",
+        "description": "A role definition with the manual attached to every turn of its sessions.\n\n`default_description` and `default_manual` are what a reset restores.\n`schedulable` says whether the caller can schedule runs of the role's\nsession; `schedule` is null until the caller saves one.",
         "properties": {
           "customized": {
             "items": {
@@ -5554,6 +5485,21 @@
             "title": "Role",
             "type": "string"
           },
+          "schedulable": {
+            "default": false,
+            "title": "Schedulable",
+            "type": "boolean"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GlobalHubRoleScheduleResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -5596,6 +5542,77 @@
         "title": "GlobalHubRoleProfileList",
         "type": "object"
       },
+      "GlobalHubRoleSchedule": {
+        "additionalProperties": false,
+        "description": "When a GlobalHub role's session gets its scheduled run, e.g. the custodian's cleanup.\n\n`rrule` is an RFC 5545 recurrence rule without COUNT or UNTIL, e.g.\n`\"FREQ=DAILY;BYHOUR=9;BYMINUTE=0\"`, in `timezone`, an IANA name. Runs\ncome at least 10 minutes apart. `enabled` false keeps the rule but sends\nno runs.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "rrule": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Rrule",
+            "type": "string"
+          },
+          "timezone": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "rrule",
+          "timezone"
+        ],
+        "title": "GlobalHubRoleSchedule",
+        "type": "object"
+      },
+      "GlobalHubRoleScheduleResponse": {
+        "additionalProperties": false,
+        "description": "A role's saved schedule and its next run, which is null while it is off.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "next_run_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Run At"
+          },
+          "rrule": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Rrule",
+            "type": "string"
+          },
+          "timezone": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "rrule",
+          "timezone",
+          "next_run_at"
+        ],
+        "title": "GlobalHubRoleScheduleResponse",
+        "type": "object"
+      },
       "GlobalHubRoleSessionResponse": {
         "description": "The caller's session for a singleton GlobalHub role.\n\n`created` is true when this request created the session.",
         "properties": {
@@ -5622,18 +5639,8 @@
       },
       "GlobalHubSettingsRequest": {
         "additionalProperties": false,
-        "description": "Set where the caller's GlobalHub role sessions run; null for both clears it.\n\nThe host must be one of the caller's own hosts and online, and the workspace\nan existing directory on it; the server stores the canonical path.\n`report_new_sessions` turns on or off the reports of the caller's\nsessions on no task to the broker, and `custodian_sweep` sets the daily\nsession cleanup; omitted, each stays as it is.",
+        "description": "Set where the caller's GlobalHub role sessions run; null for both clears it.\n\nThe host must be one of the caller's own hosts and online, and the workspace\nan existing directory on it; the server stores the canonical path.\n`report_new_sessions` turns on or off the reports of the caller's\nsessions on no task to the broker; omitted, it stays as it is.",
         "properties": {
-          "custodian_sweep": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/CustodianSweepSettings"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "host_id": {
             "anyOf": [
               {
@@ -5680,18 +5687,8 @@
         "type": "object"
       },
       "GlobalHubSettingsResponse": {
-        "description": "Where the caller's GlobalHub role sessions run; both null until it is set.\n\n`report_new_sessions` says whether the caller's sessions on no task\nreport their finished turns to the broker, which can add them to a task.\nSessions on a task always report to their managers. `custodian_sweep` is\nnull until the caller saves the daily session cleanup.",
+        "description": "Where the caller's GlobalHub role sessions run; both null until it is set.\n\n`report_new_sessions` says whether the caller's sessions on no task\nreport their finished turns to the broker, which can add them to a task.\nSessions on a task always report to their managers.",
         "properties": {
-          "custodian_sweep": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/CustodianSweepSettingsResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "host_id": {
             "anyOf": [
               {
@@ -15265,7 +15262,7 @@
       },
       "UpdateGlobalHubRoleProfileRequest": {
         "additionalProperties": false,
-        "description": "Override fields of the caller's role definition.\n\nOmitted fields keep their value; null or blank restores the field's default.",
+        "description": "Override fields of the caller's role definition.\n\nOmitted fields keep their value; null or blank restores the field's default.\n`schedule` applies only to a schedulable role; null deletes the saved\nschedule, so the role gets no runs.",
         "properties": {
           "description": {
             "anyOf": [
@@ -15302,6 +15299,16 @@
               }
             ],
             "title": "Model"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GlobalHubRoleSchedule"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "title": "UpdateGlobalHubRoleProfileRequest",
@@ -16756,7 +16763,7 @@
     },
     "/v1/agent-tasks/roles/{role}/dismiss-waiting": {
       "post": {
-        "description": "Clear the waiting work of the caller's broker or custodian.\n\nFor the broker, it dismisses the unrouted events and drops the queued\nrequests for managers; for the custodian, it drops the queued clicks\nand the queued daily cleanup. A message the role is already handling\ngoes on.",
+        "description": "Clear the waiting work of the caller's broker or custodian.\n\nFor the broker, it dismisses the unrouted events and drops the queued\nrequests for managers; for the custodian, it drops the queued clicks\nand the queued session cleanup. A message the role is already handling\ngoes on.",
         "operationId": "dismiss_role_waiting_v1_agent_tasks_roles__role__dismiss_waiting_post",
         "parameters": [
           {
@@ -16799,7 +16806,7 @@
     },
     "/v1/agent-tasks/roles/{role}/profile": {
       "get": {
-        "description": "Read one of the caller's role definitions, including its manual.",
+        "description": "Read one of the caller's role definitions, including its manual and schedule.",
         "operationId": "get_role_profile_v1_agent_tasks_roles__role__profile_get",
         "parameters": [
           {
@@ -16840,7 +16847,7 @@
         ]
       },
       "put": {
-        "description": "Override fields of the caller's role definition.\n\nOmitted fields keep their value; null or blank restores the field's default.\nA model must pass the same check as a session's model override, because\nthe role's sessions start with it.",
+        "description": "Override fields of the caller's role definition, or set its schedule.\n\nOmitted fields keep their value; null or blank restores the field's default.\nA model must pass the same check as a session's model override, because\nthe role's sessions start with it. A schedule must repeat without an end,\nat least 10 minutes apart. Both checks come before any save, so a refused\nrequest changes nothing.",
         "operationId": "update_role_profile_v1_agent_tasks_roles__role__profile_put",
         "parameters": [
           {
@@ -26804,7 +26811,7 @@
         ]
       },
       "put": {
-        "description": "Set or clear where the caller's GlobalHub role sessions run.\n\nThe host must be the caller's own and online, and the workspace an\nexisting directory on it. The canonical path is stored. A daily\nsession cleanup that is on runs next at its time after now.",
+        "description": "Set or clear where the caller's GlobalHub role sessions run.\n\nThe host must be the caller's own and online, and the workspace an\nexisting directory on it. The canonical path is stored.",
         "operationId": "save_globalhub_settings_v1_settings_globalhub_put",
         "requestBody": {
           "content": {

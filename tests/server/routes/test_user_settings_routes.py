@@ -15,7 +15,7 @@ from omnigent.agent_tasks.session_labels import CUSTODIAN_ROLE_VALUE, ROLE_LABEL
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.app import create_app
 from omnigent.server.auth import UnifiedAuthProvider
-from omnigent.server.routes import user_settings
+from omnigent.server.routes import agent_task_roles, user_settings
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -26,9 +26,10 @@ from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissi
 ROUTE = "/v1/settings/session-title-instructions"
 GLOBALHUB_ROUTE = "/v1/settings/globalhub"
 GLOBALHUB_UNSET = {"host_id": None, "workspace": None}
-GLOBALHUB_DEFAULTS = {**GLOBALHUB_UNSET, "report_new_sessions": True, "custodian_sweep": None}
+GLOBALHUB_DEFAULTS = {**GLOBALHUB_UNSET, "report_new_sessions": True}
 ROLE_PROFILES_ROUTE = "/v1/agent-tasks/roles/profiles"
 MANAGER_PROFILE_ROUTE = "/v1/agent-tasks/roles/manager:default/profile"
+CUSTODIAN_PROFILE_ROUTE = "/v1/agent-tasks/roles/custodian/profile"
 CUSTODIAN_SESSION_ROUTE = "/v1/agent-tasks/roles/custodian/session"
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
@@ -103,6 +104,9 @@ async def test_accepts_limit_after_stripping(client: httpx.AsyncClient) -> None:
         (GLOBALHUB_ROUTE, {"host_id": None, "workspace": "/Users/alice"}),
         (GLOBALHUB_ROUTE, {"host_id": "", "workspace": "/Users/alice"}),
         (GLOBALHUB_ROUTE, {"host_id": "host_alice", "workspace": "/Users/alice", "extra": True}),
+        # The custodian's schedule moved to its role profile.
+        (GLOBALHUB_ROUTE, {**GLOBALHUB_UNSET, "custodian_sweep": None}),
+        (CUSTODIAN_PROFILE_ROUTE, {"schedule": {"enabled": True, "rrule": "FREQ=DAILY"}}),
         (MANAGER_PROFILE_ROUTE, {"manual": 7}),
         (MANAGER_PROFILE_ROUTE, {"manual": "x" * 64_001}),
         (MANAGER_PROFILE_ROUTE, {"title": "Renamed"}),
@@ -141,7 +145,6 @@ async def test_globalhub_round_trip_stores_canonical_workspace(
         "host_id": "host_alice",
         "workspace": "/Users/alice/globalhub",
         "report_new_sessions": False,
-        "custodian_sweep": None,
     }
     assert saved.json() == placed
     assert (await client.get(GLOBALHUB_ROUTE)).json() == placed
@@ -158,35 +161,55 @@ async def test_globalhub_round_trip_stores_canonical_workspace(
     assert len(validations) == 1
 
 
-async def test_globalhub_saves_the_daily_cleanup_and_refuses_an_unknown_timezone(
+async def test_custodian_profile_saves_its_schedule_and_refuses_a_bad_one(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(user_settings, "now_epoch", lambda: 1_800_000_000)
-    sweep = {"enabled": True, "time": "18:30", "timezone": "Europe/Berlin"}
-
-    saved = await client.put(GLOBALHUB_ROUTE, json={**GLOBALHUB_UNSET, "custodian_sweep": sweep})
-    off = await client.put(
-        GLOBALHUB_ROUTE, json={**GLOBALHUB_UNSET, "custodian_sweep": {**sweep, "enabled": False}}
-    )
-    refused = await client.put(
-        GLOBALHUB_ROUTE,
-        json={
-            **GLOBALHUB_UNSET,
-            "report_new_sessions": False,
-            "custodian_sweep": {**sweep, "timezone": "Mars/Olympus_Mons"},
-        },
-    )
-
-    # Now is 08:00 UTC on 2027-01-15, a winter day, so 18:30 in Berlin is 17:30 UTC.
-    assert saved.json()["custodian_sweep"] == {**sweep, "next_run_at": 1_800_034_200}
-    turned_off = {**sweep, "enabled": False, "next_run_at": None}
-    assert off.json()["custodian_sweep"] == turned_off
-    # The refused save changes nothing, also not the switch it carries.
-    assert refused.status_code == 400
-    assert (await client.get(GLOBALHUB_ROUTE)).json() == {
-        **GLOBALHUB_DEFAULTS,
-        "custodian_sweep": turned_off,
+    monkeypatch.setattr(agent_task_roles, "now_epoch", lambda: 1_800_000_000)
+    schedule = {
+        "enabled": True,
+        "rrule": "FREQ=DAILY;BYHOUR=18;BYMINUTE=30",
+        "timezone": "Europe/Berlin",
     }
+    unsaved = (await client.get(CUSTODIAN_PROFILE_ROUTE)).json()
+
+    saved = await client.put(CUSTODIAN_PROFILE_ROUTE, json={"schedule": schedule})
+    off = await client.put(
+        CUSTODIAN_PROFILE_ROUTE, json={"schedule": {**schedule, "enabled": False}}
+    )
+    refused = [
+        await client.put(
+            CUSTODIAN_PROFILE_ROUTE,
+            json={"description": "Changed.", "schedule": {**schedule, **bad}},
+        )
+        for bad in (
+            {"timezone": "Mars/Olympus_Mons"},
+            {"rrule": "FREQ=MINUTELY;INTERVAL=5"},
+            {"rrule": "FREQ=DAILY;BYHOUR=9;COUNT=3"},
+        )
+    ]
+
+    assert (unsaved["schedulable"], unsaved["schedule"]) == (True, None)
+    # Now is 08:00 UTC on 2027-01-15, a winter day, so 18:30 in Berlin is 17:30 UTC.
+    assert saved.json()["schedule"] == {**schedule, "next_run_at": 1_800_034_200}
+    turned_off = {**schedule, "enabled": False, "next_run_at": None}
+    assert off.json()["schedule"] == turned_off
+    # A refused schedule changes nothing, also not the description it carries.
+    assert [response.status_code for response in refused] == [400, 400, 400]
+    stored = (await client.get(CUSTODIAN_PROFILE_ROUTE)).json()
+    assert (stored["schedule"], stored["customized"]) == (turned_off, [])
+
+    deleted = await client.put(CUSTODIAN_PROFILE_ROUTE, json={"schedule": None})
+    assert deleted.json()["schedule"] is None
+
+
+async def test_a_role_without_a_schedule_refuses_one(client: httpx.AsyncClient) -> None:
+    schedule = {"enabled": True, "rrule": "FREQ=DAILY;BYHOUR=9;BYMINUTE=0", "timezone": "UTC"}
+
+    response = await client.put(MANAGER_PROFILE_ROUTE, json={"schedule": schedule})
+
+    assert response.status_code == 400
+    profile = (await client.get(MANAGER_PROFILE_ROUTE)).json()
+    assert (profile["schedulable"], profile["schedule"]) == (False, None)
 
 
 async def test_globalhub_rejects_another_users_host(

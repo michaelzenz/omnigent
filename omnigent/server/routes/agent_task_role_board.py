@@ -74,7 +74,7 @@ def create_agent_task_role_board_router(
     def custodian_waiting(
         user_id: str | None, custodian_session: Conversation | None
     ) -> list[str]:
-        return queued_items(user_id, custodian_session, "notice_click", "custodian_sweep")
+        return queued_items(user_id, custodian_session, "notice_click", "scheduled_run")
 
     def broker_waiting(user_id: str | None, broker_session: Conversation | None) -> int:
         requests = queued_items(user_id, broker_session, "spawn_managers")
@@ -140,7 +140,7 @@ def create_agent_task_role_board_router(
 
         For the broker, it dismisses the unrouted events and drops the queued
         requests for managers; for the custodian, it drops the queued clicks
-        and the queued daily cleanup. A message the role is already handling
+        and the queued session cleanup. A message the role is already handling
         goes on.
         """
         user_id = require_user(request, auth_provider)

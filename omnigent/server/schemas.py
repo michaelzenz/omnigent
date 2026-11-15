@@ -53,6 +53,7 @@ from omnigent.server.server_config import (
     GLOBALHUB_ROLE_DESCRIPTION_MAX_CHARS,
     GLOBALHUB_ROLE_MANUAL_MAX_CHARS,
     GLOBALHUB_ROLE_MODEL_MAX_CHARS,
+    GLOBALHUB_ROLE_RRULE_MAX_CHARS,
     GLOBALHUB_WORKSPACE_MAX_CHARS,
 )
 
@@ -5837,39 +5838,18 @@ class SessionTitleInstructionsResponse(BaseModel):
     max_chars: int
 
 
-class CustodianSweepSettings(BaseModel):
-    """When the caller's custodian gets its daily session cleanup message.
-
-    ``time`` is a time of day on a 24-hour clock in ``timezone``, an IANA name.
-    """
-
-    enabled: bool
-    time: str = Field(..., pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
-    timezone: str = Field(..., min_length=1, max_length=64)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class CustodianSweepSettingsResponse(CustodianSweepSettings):
-    """The caller's daily session cleanup and its next run, which is null while it is off."""
-
-    next_run_at: int | None
-
-
 class GlobalHubSettingsRequest(BaseModel):
     """Set where the caller's GlobalHub role sessions run; null for both clears it.
 
     The host must be one of the caller's own hosts and online, and the workspace
     an existing directory on it; the server stores the canonical path.
     ``report_new_sessions`` turns on or off the reports of the caller's
-    sessions on no task to the broker, and ``custodian_sweep`` sets the daily
-    session cleanup; omitted, each stays as it is.
+    sessions on no task to the broker; omitted, it stays as it is.
     """
 
     host_id: str | None = Field(..., min_length=1, max_length=GLOBALHUB_HOST_ID_MAX_CHARS)
     workspace: str | None = Field(..., min_length=1, max_length=GLOBALHUB_WORKSPACE_MAX_CHARS)
     report_new_sessions: bool | None = None
-    custodian_sweep: CustodianSweepSettings | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -5885,14 +5865,34 @@ class GlobalHubSettingsResponse(BaseModel):
 
     ``report_new_sessions`` says whether the caller's sessions on no task
     report their finished turns to the broker, which can add them to a task.
-    Sessions on a task always report to their managers. ``custodian_sweep`` is
-    null until the caller saves the daily session cleanup.
+    Sessions on a task always report to their managers.
     """
 
     host_id: str | None
     workspace: str | None
     report_new_sessions: bool
-    custodian_sweep: CustodianSweepSettingsResponse | None = None
+
+
+class GlobalHubRoleSchedule(BaseModel):
+    """When a GlobalHub role's session gets its scheduled run, e.g. the custodian's cleanup.
+
+    ``rrule`` is an RFC 5545 recurrence rule without COUNT or UNTIL, e.g.
+    ``"FREQ=DAILY;BYHOUR=9;BYMINUTE=0"``, in ``timezone``, an IANA name. Runs
+    come at least 10 minutes apart. ``enabled`` false keeps the rule but sends
+    no runs.
+    """
+
+    enabled: bool
+    rrule: str = Field(..., min_length=1, max_length=GLOBALHUB_ROLE_RRULE_MAX_CHARS)
+    timezone: str = Field(..., min_length=1, max_length=64)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GlobalHubRoleScheduleResponse(GlobalHubRoleSchedule):
+    """A role's saved schedule and its next run, which is null while it is off."""
+
+    next_run_at: int | None
 
 
 class GlobalHubRoleProfile(BaseModel):
@@ -5915,11 +5915,15 @@ class GlobalHubRoleProfileDetail(GlobalHubRoleProfile):
     """A role definition with the manual attached to every turn of its sessions.
 
     ``default_description`` and ``default_manual`` are what a reset restores.
+    ``schedulable`` says whether the caller can schedule runs of the role's
+    session; ``schedule`` is null until the caller saves one.
     """
 
     manual: str
     default_description: str
     default_manual: str
+    schedulable: bool = False
+    schedule: GlobalHubRoleScheduleResponse | None = None
 
 
 class GlobalHubRoleProfileList(BaseModel):
@@ -6431,7 +6435,7 @@ class AgentTaskBoardRole(BaseModel):
 
     ``session`` is null when the role has no current session; a broker or
     custodian gets a new one when it has work. ``waiting`` counts the events
-    that wait for the broker or a manager, or the clicks and the daily cleanup
+    that wait for the broker or a manager, or the clicks and the session cleanup
     queued for the custodian.
     """
 
@@ -6607,11 +6611,14 @@ class UpdateGlobalHubRoleProfileRequest(BaseModel):
     """Override fields of the caller's role definition.
 
     Omitted fields keep their value; null or blank restores the field's default.
+    ``schedule`` applies only to a schedulable role; null deletes the saved
+    schedule, so the role gets no runs.
     """
 
     description: str | None = Field(default=None, max_length=GLOBALHUB_ROLE_DESCRIPTION_MAX_CHARS)
     model: str | None = Field(default=None, max_length=GLOBALHUB_ROLE_MODEL_MAX_CHARS)
     manual: str | None = Field(default=None, max_length=GLOBALHUB_ROLE_MANUAL_MAX_CHARS)
+    schedule: GlobalHubRoleSchedule | None = None
 
     model_config = ConfigDict(extra="forbid")
 

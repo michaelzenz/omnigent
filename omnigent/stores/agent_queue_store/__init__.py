@@ -43,7 +43,7 @@ class AgentQueueStore(ABC):
         :param owner_user_id: The owner, or ``None`` in single-user mode.
         :param target_session_id: The session the message goes to.
         :param kind: ``"events"``, ``"notice_click"``, ``"spawn_managers"`` or
-            ``"custodian_sweep"``.
+            ``"scheduled_run"``.
         :param payload: Inputs for the message text.
         :param event_ids: The owner's task events the item carries.
         :returns: The queued item, or ``None``, changing nothing, when an event

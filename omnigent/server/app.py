@@ -91,12 +91,12 @@ from omnigent.server import (
 from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher
 from omnigent.server.agent_queue_packagers import (
     BrokerPackager,
-    CustodianSweepPackager,
     EventNoticeWriter,
     ManagerPackager,
+    RoleSchedulePackager,
     SpawnManagersWriter,
-    write_custodian_sweep,
     write_notice_click,
+    write_scheduled_run,
 )
 from omnigent.server.agent_task_session_events import (
     SessionEventReporter,
@@ -4193,11 +4193,7 @@ def create_app(
     board_stores = open_board_stores(conversation_store)
     if user_settings_store is not None:
         app.include_router(
-            create_user_settings_router(
-                user_settings_store,
-                auth_provider,
-                custodian_sweeps=board_stores.custodian_sweeps if board_stores else None,
-            ),
+            create_user_settings_router(user_settings_store, auth_provider),
             prefix="/v1",
             tags=["settings"],
         )
@@ -4209,7 +4205,11 @@ def create_app(
             permission_store=permission_store,
         )
         app.include_router(
-            create_agent_task_roles_router(role_session_stores, auth_provider),
+            create_agent_task_roles_router(
+                role_session_stores,
+                auth_provider,
+                schedules=board_stores.role_schedules if board_stores else None,
+            ),
             prefix="/v1",
             tags=["agent-tasks"],
         )
@@ -4293,7 +4293,7 @@ def create_app(
                     ).write,
                     "notice_click": write_notice_click,
                     "spawn_managers": SpawnManagersWriter(board=board_stores).write,
-                    "custodian_sweep": write_custodian_sweep,
+                    "scheduled_run": write_scheduled_run,
                 },
                 packagers=[
                     BrokerPackager(
@@ -4302,7 +4302,7 @@ def create_app(
                     ManagerPackager(
                         board=board_stores, conversations=conversation_store, send_deps=send_deps
                     ),
-                    CustodianSweepPackager(board=board_stores, sessions=role_session_stores),
+                    RoleSchedulePackager(board=board_stores, sessions=role_session_stores),
                 ],
             )
             app.state.session_event_reporter = SessionEventReporter(

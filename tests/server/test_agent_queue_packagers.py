@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from omnigent.agent_tasks.board_stores import BoardStores, open_board_stores
-from omnigent.agent_tasks.custodian_sweep import next_sweep_at
+from omnigent.agent_tasks.role_schedules import next_run_at
 from omnigent.agent_tasks.role_sessions import (
     RoleSessionStores,
     create_role_session,
@@ -31,12 +31,12 @@ from omnigent.entities import AgentQueueItem, EventTag
 from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher
 from omnigent.server.agent_queue_packagers import (
     BrokerPackager,
-    CustodianSweepPackager,
     EventNoticeWriter,
     ManagerPackager,
+    RoleSchedulePackager,
     SpawnManagersWriter,
-    write_custodian_sweep,
     write_notice_click,
+    write_scheduled_run,
 )
 from omnigent.server.agent_task_delivery import SendResult, SessionSendDeps
 from omnigent.server.routes._sessions.helpers import SessionLiveness
@@ -336,21 +336,28 @@ async def test_a_manager_notice_lists_its_events_by_id_and_ends_with_the_roster(
     assert dismissed is not None and dismissed.state == "dismissed"
 
 
-async def test_a_due_cleanup_queues_one_message_for_the_custodian_and_skips_missed_days(
+async def test_a_due_cleanup_queues_one_message_for_the_custodian_and_skips_missed_runs(
     board: BoardStores, sessions: RoleSessionStores
 ) -> None:
     now = 1_800_000_000
-    sweeps = board.custodian_sweeps
-    sweeps.save(owner_user_id=ALICE, local_time="09:00", timezone="UTC", next_run_at=now - 60)
-    # Bob's server missed three days, and he has no GlobalHub host.
-    sweeps.save(
-        owner_user_id=BOB, local_time="09:00", timezone="UTC", next_run_at=now - 3 * 86_400
+    daily = "FREQ=DAILY;BYHOUR=9;BYMINUTE=0"
+    schedules = board.role_schedules
+    schedules.save(
+        CUSTODIAN_ROLE_KEY, owner_user_id=ALICE, rrule=daily, timezone="UTC", next_run_at=now - 60
     )
-    packager = CustodianSweepPackager(board=board, sessions=sessions)
+    # Bob's server missed three days, and he has no GlobalHub host.
+    schedules.save(
+        CUSTODIAN_ROLE_KEY,
+        owner_user_id=BOB,
+        rrule=daily,
+        timezone="UTC",
+        next_run_at=now - 3 * 86_400,
+    )
+    packager = RoleSchedulePackager(board=board, sessions=sessions)
 
     await packager.package(now)
-    following = next_sweep_at("09:00", "UTC", after=now)
-    moved = [sweeps.get(owner_user_id=owner) for owner in (ALICE, BOB)]
+    following = next_run_at(daily, "UTC", after=now, anchor=now)
+    moved = [schedules.get(CUSTODIAN_ROLE_KEY, owner_user_id=owner) for owner in (ALICE, BOB)]
     # The next day's cleanup finds the first one still waiting for the custodian.
     await packager.package(following)
 
@@ -358,12 +365,65 @@ async def test_a_due_cleanup_queues_one_message_for_the_custodian_and_skips_miss
         CUSTODIAN_ROLE_KEY, user_id=ALICE
     )
     items = board.queue.list(owner_user_id=ALICE)
-    assert [sweep.next_run_at if sweep else None for sweep in moved] == [following, following]
-    assert [(item.kind, item.target_session_id) for item in items] == [
-        ("custodian_sweep", custodian)
+    assert [each.next_run_at if each else None for each in moved] == [following, following]
+    assert [(item.kind, item.target_session_id, item.payload) for item in items] == [
+        ("scheduled_run", custodian, {"role_key": CUSTODIAN_ROLE_KEY})
     ]
-    assert write_custodian_sweep(items[0]).startswith("[System: daily session cleanup]\n")
+    assert (write_scheduled_run(items[0]) or "").startswith("[System: session cleanup]\n")
     assert board.queue.list(owner_user_id=BOB) == []
+
+
+async def test_a_waiting_run_of_another_role_does_not_hold_back_a_due_run(
+    board: BoardStores, sessions: RoleSessionStores
+) -> None:
+    now = 1_800_000_000
+    role = builtin_role(CUSTODIAN_ROLE_KEY)
+    assert role is not None
+    custodian, _ = await ensure_role_session(role, user_id=ALICE, stores=sessions)
+    # Only the role's own waiting run holds back its next one, even in a shared session.
+    board.queue.enqueue(
+        next(_ids),
+        owner_user_id=ALICE,
+        target_session_id=custodian.id,
+        kind="scheduled_run",
+        payload={"role_key": "watcher:docs"},
+    )
+    board.role_schedules.save(
+        CUSTODIAN_ROLE_KEY,
+        owner_user_id=ALICE,
+        rrule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+        timezone="UTC",
+        next_run_at=now - 60,
+    )
+
+    await RoleSchedulePackager(board=board, sessions=sessions).package(now)
+
+    assert [item.payload["role_key"] for item in board.queue.list(owner_user_id=ALICE)] == [
+        "watcher:docs",
+        CUSTODIAN_ROLE_KEY,
+    ]
+
+
+async def test_a_schedule_without_a_next_run_sends_the_due_run_and_turns_off(
+    board: BoardStores, sessions: RoleSessionStores
+) -> None:
+    now = 1_800_000_000
+    # A timezone that a tzdata update removed after the save.
+    board.role_schedules.save(
+        CUSTODIAN_ROLE_KEY,
+        owner_user_id=ALICE,
+        rrule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+        timezone="Mars/Olympus_Mons",
+        next_run_at=now - 60,
+    )
+    packager = RoleSchedulePackager(board=board, sessions=sessions)
+
+    await packager.package(now)
+    await packager.package(now + 86_400)
+
+    schedule = board.role_schedules.get(CUSTODIAN_ROLE_KEY, owner_user_id=ALICE)
+    assert schedule is not None and schedule.enabled is False
+    assert [item.kind for item in board.queue.list(owner_user_id=ALICE)] == ["scheduled_run"]
 
 
 def test_a_notice_click_is_written_for_the_custodian() -> None:

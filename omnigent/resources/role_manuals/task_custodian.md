@@ -20,13 +20,13 @@ uncommitted work.
 
 ## When you run
 
-1. **Daily sweep** — once a day, at the time the user set in the Global Hub
-  settings, a `[System: daily session cleanup]` message prompts you.
+1. **Scheduled sweep** — on the schedule the user set on your role card in
+  Glossaries, a `[System: session cleanup]` message prompts you.
 2. **Notice clicks** — when the user clicks an action button on the active
   system notice, the system injects the click (action id, input values)
    into this session as a user message.
 
-## Daily session sweep process
+## Session sweep process
 
 1. List the user's sessions with `sys_session_list`. Focus on candidates for
   cleanup: long-idle sessions, finished one-off sub-agent sessions, sessions whose work clearly completed. Inspect with `sys_session_get_info` /

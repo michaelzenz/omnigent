@@ -35,6 +35,8 @@ class BuiltinRole:
     :param agent_name: Built-in agent the role's sessions run, e.g. ``"onih-pmv2"``.
     :param singleton: Whether each user has exactly one session for the role.
         Managers are not singletons: each manager gets its own session.
+    :param schedulable: Whether the user can schedule runs of the role's
+        session, e.g. the custodian's session cleanup.
     """
 
     key: str
@@ -45,6 +47,7 @@ class BuiltinRole:
     manual_file: str
     agent_name: str
     singleton: bool
+    schedulable: bool = False
 
     def default_manual(self) -> str:
         """Return the manual packaged with omnigent for this role."""
@@ -100,6 +103,7 @@ BUILTIN_ROLES = (
         manual_file="task_custodian.md",
         agent_name="onih-custodian",
         singleton=True,
+        schedulable=True,
     ),
 )
 _ROLES_BY_KEY = {role.key: role for role in BUILTIN_ROLES}

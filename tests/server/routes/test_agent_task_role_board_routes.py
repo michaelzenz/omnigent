@@ -68,7 +68,7 @@ def _custodian_item(db_uri: str, custodian: str, kind: str = "notice_click") -> 
         owner_user_id=ALICE_ID,
         target_session_id=custodian,
         kind=kind,
-        payload={"action_id": "confirm"} if kind == "notice_click" else {},
+        payload={"action_id": "confirm"} if kind == "notice_click" else {"role_key": "custodian"},
     )
 
 
@@ -87,7 +87,7 @@ async def test_the_rows_show_each_role_with_its_session_and_waiting_work(
     _event(db_uri, owner=BOB_ID)
     _event(db_uri, manager_id=storage)
     _custodian_item(db_uri, custodian)
-    _custodian_item(db_uri, custodian, "custodian_sweep")
+    _custodian_item(db_uri, custodian, "scheduled_run")
 
     response = await auth_client.get("/v1/agent-tasks/board/roles", headers=ALICE)
 
@@ -120,7 +120,7 @@ async def test_dismissing_clears_only_that_roles_waiting_work(
     bobs = _event(db_uri, owner=BOB_ID)
     to_storage, to_docs = _event(db_uri, manager_id=storage), _event(db_uri, manager_id=docs)
     _custodian_item(db_uri, custodian)
-    _custodian_item(db_uri, custodian, "custodian_sweep")
+    _custodian_item(db_uri, custodian, "scheduled_run")
 
     dismissed = [
         (await auth_client.post(path, headers=ALICE)).json()["dismissed"]

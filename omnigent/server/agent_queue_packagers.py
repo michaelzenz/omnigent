@@ -1,7 +1,7 @@
 """Queue the work waiting for each user's broker, managers and custodian, and write queue messages.
 
-Task events wait for the broker and the managers; the custodian gets a daily
-session cleanup message at the time its owner chose.
+Task events wait for the broker and the managers; a role with a schedule, such
+as the custodian, gets its run message when its owner's schedule comes due.
 """
 
 from __future__ import annotations
@@ -13,15 +13,16 @@ import uuid
 from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any
+from zoneinfo import ZoneInfoNotFoundError
 
 from omnigent.agent_tasks.board_stores import BoardStores
-from omnigent.agent_tasks.custodian_sweep import next_sweep_at
 from omnigent.agent_tasks.event_batches import (
     broker_batches,
     cluster_by_tags,
     is_session_event,
     manager_batches,
 )
+from omnigent.agent_tasks.role_schedules import next_run_at
 from omnigent.agent_tasks.role_sessions import RoleSessionStores, ensure_role_session
 from omnigent.agent_tasks.roles import (
     BROKER_ROLE_KEY,
@@ -35,7 +36,7 @@ from omnigent.entities import (
     LIVE_TASK_STATES,
     AgentQueueItem,
     Conversation,
-    CustodianSweep,
+    RoleSchedule,
     Task,
     TaskEvent,
 )
@@ -62,12 +63,12 @@ _SPAWN_ADVICE = (
     "Assign each task below to the best-fitting active manager, or create a manager "
     'when none fits. Follow "Assigning unmanaged tasks" in the Task broker manual.'
 )
-_SWEEP_PROMPT = (
-    "[System: daily session cleanup]\n"
-    "This is your daily maintenance notice. Follow the Custodian manual, and be "
+_CUSTODIAN_RUN_PROMPT = (
+    "[System: session cleanup]\n"
+    "This is your scheduled maintenance notice. Follow the Custodian manual, and be "
     "aggressive in suggesting session deletes."
 )
-# A cleanup message not yet handled covers the next day's too.
+# A run message not yet handled covers the next run too.
 _UNHANDLED_STATES = ("queued", "sending", "sent")
 
 
@@ -124,63 +125,88 @@ class BrokerPackager:
             )
 
 
-class CustodianSweepPackager:
-    """Queues each user's daily session cleanup message for their custodian when it is due."""
+class RoleSchedulePackager:
+    """Queues the run message of each due role schedule for its owner's role session."""
 
     def __init__(self, *, board: BoardStores, sessions: RoleSessionStores) -> None:
         """
-        :param board: Holds the sweeps and the queue.
-        :param sessions: Where each user's custodian session lives.
+        :param board: Holds the schedules and the queue.
+        :param sessions: Where each user's role sessions live.
         """
-        role = builtin_role(CUSTODIAN_ROLE_KEY)
-        assert role is not None
-        self._role = role
         self._board = board
         self._sessions = sessions
 
     async def package(self, now: int) -> None:
-        """Queue the cleanup messages due at ``now``, user by user in each workspace."""
-        due = await asyncio.to_thread(
-            self._board.custodian_sweeps.list_due_all_workspaces, now=now
-        )
-        for sweep in due:
+        """Queue the run messages due at ``now``, schedule by schedule in each workspace."""
+        due = await asyncio.to_thread(self._board.role_schedules.list_due_all_workspaces, now=now)
+        for schedule in due:
             try:
-                with workspace_scope(sweep.workspace_id):
-                    await self._package_for(sweep, now)
+                with workspace_scope(schedule.workspace_id):
+                    await self._package_for(schedule, now)
             except Exception:
-                _logger.exception("GlobalHub custodian sweep failed for %s", sweep.owner_user_id)
+                _logger.exception(
+                    "GlobalHub scheduled run of %s failed for %s",
+                    schedule.role_key,
+                    schedule.owner_user_id,
+                )
 
-    async def _package_for(self, sweep: CustodianSweep, now: int) -> None:
-        assert sweep.next_run_at is not None
-        # Days the server missed are skipped; only the pass that moves the time queues.
+    async def _package_for(self, schedule: RoleSchedule, now: int) -> None:
+        assert schedule.next_run_at is not None
+        # Runs the server missed turn into one; only the pass that moves the time queues.
         moved = await asyncio.to_thread(
-            self._board.custodian_sweeps.advance,
-            sweep.id,
-            due_at=sweep.next_run_at,
-            next_run_at=next_sweep_at(sweep.local_time, sweep.timezone, after=now),
+            self._board.role_schedules.advance,
+            schedule.id,
+            due_at=schedule.next_run_at,
+            next_run_at=_next_run_or_off(schedule, now),
         )
-        owner = sweep.owner_user_id
+        role = builtin_role(schedule.role_key)
+        owner = schedule.owner_user_id
         settings = self._sessions.user_settings_store
-        if not moved or (
-            await asyncio.to_thread(settings.get_globalhub_placement, user_id=owner) is None
+        if (
+            not moved
+            or role is None
+            or not role.singleton
+            or await asyncio.to_thread(settings.get_globalhub_placement, user_id=owner) is None
         ):
             return
-        custodian, _ = await ensure_role_session(self._role, user_id=owner, stores=self._sessions)
+        session, _ = await ensure_role_session(role, user_id=owner, stores=self._sessions)
         unhandled = await asyncio.to_thread(
             self._board.queue.list,
             owner_user_id=owner,
             states=_UNHANDLED_STATES,
-            target_session_id=custodian.id,
+            target_session_id=session.id,
         )
-        if any(item.kind == "custodian_sweep" for item in unhandled):
+        if any(
+            item.kind == "scheduled_run" and item.payload.get("role_key") == schedule.role_key
+            for item in unhandled
+        ):
             return
         await asyncio.to_thread(
             self._board.queue.enqueue,
             uuid.uuid4().hex,
             owner_user_id=owner,
-            target_session_id=custodian.id,
-            kind="custodian_sweep",
+            target_session_id=session.id,
+            kind="scheduled_run",
+            payload={"role_key": schedule.role_key},
         )
+
+
+def _next_run_or_off(schedule: RoleSchedule, now: int) -> int | None:
+    """Return the schedule's next run after ``now``, or ``None`` to turn off a rule that fails."""
+    try:
+        return next_run_at(
+            schedule.rrule, schedule.timezone, after=now, anchor=schedule.created_at
+        )
+    except (ValueError, ZoneInfoNotFoundError):
+        _logger.warning(
+            "GlobalHub turned off the %s schedule of %s: %r in %s has no next run",
+            schedule.role_key,
+            schedule.owner_user_id,
+            schedule.rrule,
+            schedule.timezone,
+            exc_info=True,
+        )
+        return None
 
 
 class ManagerPackager:
@@ -355,9 +381,11 @@ class SpawnManagersWriter:
         return "\n".join(lines)
 
 
-def write_custodian_sweep(_item: AgentQueueItem) -> str:
-    """Write the custodian's daily session cleanup message; it is the same every day."""
-    return _SWEEP_PROMPT
+def write_scheduled_run(item: AgentQueueItem) -> str | None:
+    """Write a role's scheduled run message, or ``None`` for a role that has none."""
+    if item.payload.get("role_key") == CUSTODIAN_ROLE_KEY:
+        return _CUSTODIAN_RUN_PROMPT
+    return None
 
 
 def write_notice_click(item: AgentQueueItem) -> str:
