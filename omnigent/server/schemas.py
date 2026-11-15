@@ -6360,7 +6360,7 @@ class AgentTaskBoard(BaseModel):
     ``has_more`` says the board has more live tasks than ``data`` holds.
     """
 
-    object: Literal["agent.task.board"] = "agent.task.board"
+    object: Literal["agent.task.board.cards"] = "agent.task.board.cards"
     data: list[AgentTaskBoardCard]
     has_more: bool
 

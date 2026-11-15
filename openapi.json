@@ -1245,6 +1245,146 @@
         "title": "AgentTaskAssetResponse",
         "type": "object"
       },
+      "AgentTaskBoard": {
+        "description": "The first live tasks on the caller's board, in board order, as cards.\n\n`has_more` says the board has more live tasks than `data` holds.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTaskBoardCard"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "object": {
+            "const": "agent.task.board.cards",
+            "default": "agent.task.board.cards",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data",
+          "has_more"
+        ],
+        "title": "AgentTaskBoard",
+        "type": "object"
+      },
+      "AgentTaskBoardCard": {
+        "description": "A live task on the caller's board, with the workers and assets its card shows.\n\nThe card leaves out the task's `internal_note`, which only agents read.\nWorkers whose session is busy come first, then the most recently active.",
+        "properties": {
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTaskAssetResponse"
+            },
+            "title": "Assets",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "int64",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "goal": {
+            "title": "Goal",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "manager_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manager Id"
+          },
+          "object": {
+            "const": "agent.task.card",
+            "default": "agent.task.card",
+            "title": "Object",
+            "type": "string"
+          },
+          "priority": {
+            "format": "int64",
+            "title": "Priority",
+            "type": "integer"
+          },
+          "queue_rank": {
+            "format": "int64",
+            "title": "Queue Rank",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "active",
+              "idle",
+              "agent-resolved",
+              "archived"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "workers": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTaskBoardWorker"
+            },
+            "title": "Workers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "manager_id",
+          "title",
+          "goal",
+          "description",
+          "state",
+          "priority",
+          "queue_rank",
+          "created_at",
+          "updated_at",
+          "workers",
+          "assets"
+        ],
+        "title": "AgentTaskBoardCard",
+        "type": "object"
+      },
       "AgentTaskBoardPending": {
         "description": "What waits for the caller on their GlobalHub board.\n\n`fyi` lists the pending FYI clusters, oldest first.",
         "properties": {
@@ -1266,6 +1406,67 @@
           "fyi"
         ],
         "title": "AgentTaskBoardPending",
+        "type": "object"
+      },
+      "AgentTaskBoardSession": {
+        "description": "The session a worker wraps, with the title and live state the session list shows.",
+        "properties": {
+          "background_work_running": {
+            "title": "Background Work Running",
+            "type": "boolean"
+          },
+          "blocked_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked On"
+          },
+          "pending_elicitations_count": {
+            "format": "int64",
+            "title": "Pending Elicitations Count",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "idle",
+              "running",
+              "waiting",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "format": "int64",
+            "title": "Updated At",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "title",
+          "status",
+          "pending_elicitations_count",
+          "background_work_running",
+          "blocked_on",
+          "updated_at"
+        ],
+        "title": "AgentTaskBoardSession",
         "type": "object"
       },
       "AgentTaskBoardSystemNotice": {
@@ -1292,6 +1493,71 @@
           "notice"
         ],
         "title": "AgentTaskBoardSystemNotice",
+        "type": "object"
+      },
+      "AgentTaskBoardWorker": {
+        "description": "A worker on a board card, with its session.",
+        "properties": {
+          "created_at": {
+            "format": "int64",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "object": {
+            "const": "agent.task.worker",
+            "default": "agent.task.worker",
+            "title": "Object",
+            "type": "string"
+          },
+          "session": {
+            "$ref": "#/components/schemas/AgentTaskBoardSession"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "session_id",
+          "title",
+          "created_at",
+          "updated_at",
+          "session"
+        ],
+        "title": "AgentTaskBoardWorker",
         "type": "object"
       },
       "AgentTaskDeletedResponse": {
@@ -15816,6 +16082,52 @@
           }
         },
         "summary": "Batch Get Tasks",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/board": {
+      "get": {
+        "description": "Read the first `limit` live tasks on the caller's board as cards, in board order.\n\nA worker whose session no longer exists is left off its card.",
+        "operationId": "read_board_v1_agent_tasks_board_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskBoard"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Board",
         "tags": [
           "agent-tasks"
         ]
