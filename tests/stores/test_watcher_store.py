@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
+
 from omnigent.stores.role_schedule_store.sqlalchemy_store import SqlAlchemyRoleScheduleStore
 from omnigent.stores.watch_item_store import WatchObservation
 from omnigent.stores.watch_item_store.sqlalchemy_store import SqlAlchemyWatchItemStore
+from omnigent.stores.watcher_store import sqlalchemy_store as watcher_sqlalchemy
 from omnigent.stores.watcher_store.sqlalchemy_store import SqlAlchemyWatcherStore
 
 ALICE = "alice@example.com"
@@ -15,7 +18,12 @@ SESSION_ID = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
 HOURLY = "FREQ=HOURLY;BYMINUTE=0"
 
 
-def test_each_owner_lists_only_their_watchers_in_creation_order(db_uri: str) -> None:
+def test_each_owner_lists_only_their_watchers_in_creation_order(
+    db_uri: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Watchers made in the same second list by id, so each create gets its own second.
+    clock = iter([100, 200, 300])
+    monkeypatch.setattr(watcher_sqlalchemy, "now_epoch", lambda: next(clock))
     store = SqlAlchemyWatcherStore(db_uri)
     first = store.create(uuid.uuid4().hex, owner_user_id=ALICE, name="PR watcher")
     second = store.create(
