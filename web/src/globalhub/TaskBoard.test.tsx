@@ -1,12 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 
+import { GlobalHubChatProvider } from "./GlobalHubChat";
 import { TaskBoard } from "./TaskBoard";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type { AgentTaskBoard } from "@/hooks/useGlobalHubTasks";
+import { resetReadStateForTests } from "@/hooks/useUnseenConversations";
 import { authenticatedFetch } from "@/lib/identity";
 import type * as IdentityModule from "@/lib/identity";
-import { agentTask, jsonResponse } from "@/test/globalHubFixtures";
+import { agentTask, jsonResponse, taskWorker } from "@/test/globalHubFixtures";
 
 vi.mock("@/lib/identity", async (importOriginal) => ({
   ...(await importOriginal<typeof IdentityModule>()),
@@ -57,7 +61,13 @@ function renderBoard(query?: string): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <TaskBoard scrollRoot={{ current: null }} query={query} />
+      <MemoryRouter>
+        <TooltipProvider>
+          <GlobalHubChatProvider>
+            <TaskBoard scrollRoot={{ current: null }} query={query} />
+          </GlobalHubChatProvider>
+        </TooltipProvider>
+      </MemoryRouter>
     </QueryClientProvider>,
   );
   return client;
@@ -94,7 +104,9 @@ class InViewObserver {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  resetReadStateForTests();
 });
 
 describe("TaskBoard", () => {
@@ -172,6 +184,35 @@ describe("TaskBoard", () => {
 
     expect(await screen.findByTestId("globalhub-no-matches")).toHaveTextContent(
       'No tasks match "nothing".',
+    );
+  });
+
+  it("marks a worker with new messages until the chat panel shows its session", async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    // The user last saw the session before its latest turn finished.
+    const worker = taskWorker("w1", {}, { updated_at: 200, viewer_last_seen: 100 });
+    serveBoard(() => ({
+      data: [agentTask("t1", { workers: [worker] })],
+      has_more: false,
+      unmanaged_count: 0,
+    }));
+    renderBoard();
+    const rail = within(await screen.findByTestId("task-card-rail-t1"));
+    const tab = rail.getByRole("tab", { name: /Workers/ });
+    expect(await within(tab).findByRole("img", { name: "New messages" })).toBeInTheDocument();
+
+    // Radix selects a tab on focus; jsdom's click does not move focus.
+    fireEvent.focus(tab);
+    fireEvent.click(tab);
+    const chat = rail.getByRole("button", { name: "Chat with Session w1" });
+    fireEvent.click(chat);
+    fireEvent.click(chat);
+
+    // The panel is closed again, and the session stays read.
+    expect(rail.queryAllByRole("img", { name: "New messages" })).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/v1/sessions/s-w1/read-state",
+      expect.objectContaining({ method: "PUT" }),
     );
   });
 

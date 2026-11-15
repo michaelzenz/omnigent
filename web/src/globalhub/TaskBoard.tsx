@@ -11,12 +11,14 @@ import {
 import { TaskCard } from "./TaskCard";
 import { UnmanagedTasksLine } from "./UnmanagedTasksLine";
 import { BOARD_SEARCH_HIGHLIGHT_CSS, useBoardSearchHighlight } from "./useBoardSearchHighlight";
+import { useBoardReadState } from "./useWorkerUpdates";
 
 /**
  * The user's live tasks in board order, one card each. The board reads 20
  * cards, and 20 more each time the end of the list scrolls into view. While
  * some live tasks have no manager, a line above the cards says so. A search
  * shows only the matching cards, best match first, with their matches marked.
+ * A worker whose session finished a turn that the user has not seen has a dot.
  *
  * @param scrollRoot - The element the board scrolls in.
  * @param query - The search, or an empty string to show the whole board.
@@ -44,6 +46,7 @@ export function TaskBoard({
   const words = useMemo(() => boardSearchWords(query), [query]);
   const listRef = useRef<HTMLDivElement>(null);
   useBoardSearchHighlight(listRef, words, (board.data?.data.length ?? 0) > 0);
+  useBoardReadState(board.data?.data);
 
   if (board.data === undefined) {
     return board.isError ? (

@@ -15,6 +15,7 @@ import { groupAssets } from "./assetGroups";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ChatButton } from "./GlobalHubChat";
 import { OpenSessionLink } from "./OpenSessionLink";
+import { useWorkersWithUpdates } from "./useWorkerUpdates";
 
 // Outlines an asset or worker whose text holds a board search word.
 const SEARCH_MATCH_CLASSES =
@@ -23,10 +24,12 @@ const SEARCH_MATCH_CLASSES =
 /**
  * A card's panel with the task's assets and workers, one tab each. Beside the
  * overview it fills the card's height; below it, it scrolls past a fixed height.
- * During a search it opens on the workers when only workers match.
+ * During a search it opens on the workers when only workers match. A worker
+ * with new messages has a dot, and so has the Workers tab.
  */
 export function TaskCardRail({ task }: { task: AgentTaskCard }) {
   const match = task.match;
+  const updatedIds = useWorkersWithUpdates(task.workers);
   const firstTab =
     match && match.asset_ids.length === 0 && match.worker_ids.length > 0 ? "workers" : "assets";
   return (
@@ -43,6 +46,14 @@ export function TaskCardRail({ task }: { task: AgentTaskCard }) {
           </TabsTrigger>
           <TabsTrigger value="workers">
             Workers <span className="font-normal">({task.workers.length})</span>
+            {updatedIds.size > 0 && (
+              <span
+                role="img"
+                aria-label="New messages"
+                title="A worker has new messages"
+                className="size-1.5 shrink-0 rounded-full bg-brand-accent"
+              />
+            )}
           </TabsTrigger>
         </TabsList>
       </div>
@@ -50,7 +61,11 @@ export function TaskCardRail({ task }: { task: AgentTaskCard }) {
         <AssetList task={task} />
       </TabsContent>
       <TabsContent value="workers" className="min-h-0 overflow-y-auto p-2">
-        <WorkerList workers={task.workers} matchedIds={match?.worker_ids ?? []} />
+        <WorkerList
+          workers={task.workers}
+          matchedIds={match?.worker_ids ?? []}
+          updatedIds={updatedIds}
+        />
       </TabsContent>
     </Tabs>
   );
@@ -178,10 +193,13 @@ function RelatedSessions({
 function WorkerList({
   workers,
   matchedIds,
+  updatedIds,
 }: {
   workers: AgentTaskWorker[];
   /** The workers whose label holds a board search word. */
   matchedIds: string[];
+  /** The workers whose session has new messages. */
+  updatedIds: ReadonlySet<string>;
 }) {
   const untrack = useUntrackWorker();
   const [confirming, setConfirming] = useState<AgentTaskWorker | null>(null);
@@ -194,7 +212,10 @@ function WorkerList({
       <ul className="space-y-2">
         {workers.map((worker) => {
           const label = workerLabel(worker);
-          const state = getSessionState(worker.session);
+          // As on the sidebar, approvals and running turns outrank the dot.
+          const state =
+            getSessionState(worker.session) ??
+            (updatedIds.has(worker.id) ? { kind: "unseen" as const } : null);
           return (
             <li
               key={worker.id}

@@ -30,6 +30,10 @@ export interface BoardSession {
   blocked_on: string | null;
   /** Unix epoch seconds of the session's last change. */
   updated_at: number;
+  /** When the user last saw the session, as the session list sends it; ``null`` when never. */
+  viewer_last_seen?: number | null;
+  /** Whether the user marked the session unread. */
+  viewer_unread?: boolean;
 }
 
 /** A session working on a task. */

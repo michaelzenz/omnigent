@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
@@ -7,6 +7,11 @@ import { GlobalHubChatProvider } from "./GlobalHubChat";
 import { TaskCardRail } from "./TaskCardRail";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { AgentTaskCard } from "@/hooks/useGlobalHubTasks";
+import {
+  markConversationRead,
+  resetReadStateForTests,
+  seedReadState,
+} from "@/hooks/useUnseenConversations";
 import { authenticatedFetch } from "@/lib/identity";
 import type * as IdentityModule from "@/lib/identity";
 import { agentTask, jsonResponse, taskAsset, taskWorker } from "@/test/globalHubFixtures";
@@ -18,14 +23,16 @@ vi.mock("@/lib/identity", async (importOriginal) => ({
 
 const fetchMock = vi.mocked(authenticatedFetch);
 
-function renderRail(task: AgentTaskCard): void {
+function renderRail(...tasks: AgentTaskCard[]): void {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <TooltipProvider>
           <GlobalHubChatProvider>
-            <TaskCardRail task={task} />
+            {tasks.map((task) => (
+              <TaskCardRail key={task.id} task={task} />
+            ))}
           </GlobalHubChatProvider>
         </TooltipProvider>
       </MemoryRouter>
@@ -33,9 +40,9 @@ function renderRail(task: AgentTaskCard): void {
   );
 }
 
-function openWorkersTab(): void {
+function openWorkersTab(scope: Pick<typeof screen, "getByRole"> = screen): void {
   // Radix selects a tab on focus; jsdom's click does not move focus.
-  const tab = screen.getByRole("tab", { name: /Workers/ });
+  const tab = scope.getByRole("tab", { name: /Workers/ });
   fireEvent.focus(tab);
   fireEvent.click(tab);
 }
@@ -54,6 +61,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  resetReadStateForTests();
 });
 
 describe("TaskCardRail", () => {
@@ -136,6 +144,26 @@ describe("TaskCardRail", () => {
     const idle = within(screen.getByTestId("task-worker-w2"));
     expect(idle.getByText("Untitled session")).toBeInTheDocument();
     expect(idle.queryByTestId("session-state-badge")).toBeNull();
+  });
+
+  it("marks each worker on a session with new messages and its tab, until the session is read", () => {
+    seedReadState([{ id: "s-shared", viewer_last_seen: 100 }]);
+    const onShared = (id: string) =>
+      taskWorker(id, { session_id: "s-shared" }, { updated_at: 200 });
+    renderRail(
+      agentTask("t1", { workers: [onShared("w1")] }),
+      agentTask("t2", { workers: [onShared("w2"), taskWorker("w3")] }),
+    );
+    openWorkersTab(within(screen.getByTestId("task-card-rail-t2")));
+    const dots = (testId: string) =>
+      within(screen.getByTestId(testId)).queryAllByRole("img", { name: "New messages" }).length;
+
+    // The first rail's dot is on its tab; the second rail shows the tab and the row.
+    expect(["task-card-rail-t1", "task-worker-w2", "task-worker-w3"].map(dots)).toEqual([1, 1, 0]);
+
+    act(() => markConversationRead("s-shared", 200));
+
+    expect(screen.queryAllByRole("img", { name: "New messages" })).toEqual([]);
   });
 
   it("outlines what a search matched, and opens on the workers when only they match", () => {

@@ -566,14 +566,6 @@ export function ChatPage() {
     [conversationsData],
   );
 
-  // Clear the "unseen messages" sidebar dot for the conversation the
-  // user is currently viewing. Re-fires when conversations refresh
-  // (every 4 s) so messages arriving while viewing are marked seen.
-  useMarkConversationSeen(
-    sessionConvId,
-    conversations?.find((c) => c.id === sessionConvId)?.updated_at,
-  );
-
   // Sync the store's active conversation to the URL. Single source of
   // truth: URL is what's "current"; store mirrors it. The effect is
   // the minimal unified surface for all URL change paths — sidebar
@@ -786,6 +778,16 @@ export function ChatPage() {
   // the hook is skipped on renders that hit the loading/error branches,
   // tripping React's "rendered fewer hooks than expected".
   const { session: activeSession, isLoading: sessionLoading } = useSession(sessionConvId ?? null);
+
+  // Clear the "unseen messages" sidebar dot for the conversation the
+  // user is currently viewing. Re-fires when conversations refresh
+  // (every 4 s) so messages arriving while viewing are marked seen.
+  // The snapshot covers a session outside the sidebar's loaded rows,
+  // such as a GlobalHub worker, whose dot shows on the board.
+  useMarkConversationSeen(
+    sessionConvId,
+    conversations?.find((c) => c.id === sessionConvId)?.updated_at ?? activeSession?.updatedAt,
+  );
 
   // Orchestrator-only: polly's children inherit its agentName, so the gate
   // needs the session predicate (parent linkage), not a bare name check. An
