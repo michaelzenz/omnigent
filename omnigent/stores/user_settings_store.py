@@ -58,6 +58,9 @@ _MAX_ROLE_OVERRIDE_BYTES = (
 ) * _JSON_MAX_BYTES_PER_CHAR + 256
 GLOBALHUB_ROLE_SESSION_PREFERENCE_PREFIX = "globalhub_role_session:"
 _MAX_SESSION_ID_BYTES = 256
+GLOBALHUB_NEW_SESSION_REPORTS_PREFERENCE_KEY = "globalhub_new_session_reports"
+# Only the "off" value is stored; no row means the reports are on.
+_NEW_SESSION_REPORTS_OFF = "off"
 
 
 @dataclass(frozen=True)
@@ -226,6 +229,32 @@ class UserSettingsStore:
             "save_globalhub_role_session",
             GLOBALHUB_ROLE_SESSION_PREFERENCE_PREFIX + role_key,
             session_id,
+            user_id=user_id,
+        )
+
+    def get_globalhub_report_new_sessions(self, *, user_id: str | None) -> bool:
+        """Whether the user's sessions on no task report their finished turns to the broker.
+
+        The reports are on until the user turns them off.
+        """
+        value = self._read(
+            "read_globalhub_new_session_reports",
+            GLOBALHUB_NEW_SESSION_REPORTS_PREFERENCE_KEY,
+            user_id=user_id,
+            max_decoded_bytes=len(_NEW_SESSION_REPORTS_OFF),
+        )
+        return value != _NEW_SESSION_REPORTS_OFF
+
+    def save_globalhub_report_new_sessions(self, enabled: bool, *, user_id: str | None) -> None:
+        """Turn the user's reports of sessions on no task to the broker on or off.
+
+        :param enabled: Whether those sessions report their finished turns.
+        :param user_id: The user, or ``None`` in single-user mode.
+        """
+        self._write(
+            "save_globalhub_new_session_reports",
+            GLOBALHUB_NEW_SESSION_REPORTS_PREFERENCE_KEY,
+            None if enabled else _NEW_SESSION_REPORTS_OFF,
             user_id=user_id,
         )
 

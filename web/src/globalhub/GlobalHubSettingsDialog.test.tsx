@@ -77,7 +77,12 @@ const HOSTS: Host[] = [
   { host_id: "host_laptop", name: "laptop", owner: "alice", status: "online" },
   { host_id: "host_desk", name: "desk", owner: "alice", status: "offline" },
 ];
-const SAVED: GlobalHubSettings = { host_id: "host_laptop", workspace: "/Users/alice/hub" };
+const SAVED: GlobalHubSettings = {
+  host_id: "host_laptop",
+  workspace: "/Users/alice/hub",
+  report_new_sessions: true,
+};
+const UNSET: GlobalHubSettings = { host_id: null, workspace: null, report_new_sessions: true };
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -117,7 +122,7 @@ afterEach(() => {
 describe("GlobalHubSettingsDialog", () => {
   it("offers only online hosts and saves once a host and a workspace are chosen", async () => {
     fetchMock.mockResolvedValue(json(SAVED));
-    const onOpenChange = renderDialog({ host_id: null, workspace: null });
+    const onOpenChange = renderDialog(UNSET);
     const save = screen.getByTestId("globalhub-settings-save");
     expect(screen.getByTestId("globalhub-host-option-host_desk")).toBeDisabled();
     expect(save).toBeDisabled();
@@ -135,13 +140,27 @@ describe("GlobalHubSettingsDialog", () => {
   });
 
   it("clears a saved setting with nulls", async () => {
-    fetchMock.mockResolvedValue(json({ host_id: null, workspace: null }));
+    fetchMock.mockResolvedValue(json(UNSET));
     const onOpenChange = renderDialog(SAVED);
 
     fireEvent.click(screen.getByTestId("globalhub-settings-clear"));
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
-    expect(sentRequest()).toEqual({ method: "PUT", body: { host_id: null, workspace: null } });
+    expect(sentRequest()).toEqual({ method: "PUT", body: UNSET });
+  });
+
+  it("saves the switch that stops new sessions reporting to the broker", async () => {
+    fetchMock.mockResolvedValue(json({ ...SAVED, report_new_sessions: false }));
+    const onOpenChange = renderDialog(SAVED);
+
+    fireEvent.click(screen.getByRole("switch", { name: "Send new sessions to the broker" }));
+    fireEvent.click(screen.getByTestId("globalhub-settings-save"));
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(sentRequest()).toEqual({
+      method: "PUT",
+      body: { ...SAVED, report_new_sessions: false },
+    });
   });
 
   it("stays open and shows the server's reason when a save is refused", async () => {

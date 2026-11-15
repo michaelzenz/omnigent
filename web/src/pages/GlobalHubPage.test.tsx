@@ -32,7 +32,7 @@ afterEach(() => {
 
 describe("GlobalHubPage", () => {
   it("asks for a host and a workspace while none is set, above the board", () => {
-    renderPage({ host_id: null, workspace: null });
+    renderPage({ host_id: null, workspace: null, report_new_sessions: true });
     const boardShown = screen.queryByTestId("globalhub-task-board") !== null;
 
     fireEvent.click(screen.getByTestId("globalhub-setup-button"));
@@ -42,7 +42,11 @@ describe("GlobalHubPage", () => {
   });
 
   it("shows only the board once a host is set, and the gear opens the settings", () => {
-    renderPage({ host_id: "host_laptop", workspace: "/Users/alice/hub" });
+    renderPage({
+      host_id: "host_laptop",
+      workspace: "/Users/alice/hub",
+      report_new_sessions: true,
+    });
     const promptShown = screen.queryByTestId("globalhub-setup-prompt") !== null;
 
     fireEvent.click(screen.getByTestId("globalhub-settings-button"));

@@ -75,13 +75,16 @@ class SessionEventReporter:
         if conv is None or not reports_to_globalhub(conv):
             return
         owner = conversations.get_session_owner(session_id, owner_only=True)
-        if self._sessions.user_settings_store.get_globalhub_placement(user_id=owner) is None:
+        settings = self._sessions.user_settings_store
+        if settings.get_globalhub_placement(user_id=owner) is None:
             return
         waiting = self._waiting(SESSION_TURN_FINISHED_EVENT_TYPE, session_id, owner)
         managers = self._managers_of_live_tasks(session_id, owner)
         if managers:
             told = {event.manager_id for event in waiting}
             targets: list[str | None] = [manager for manager in managers if manager not in told]
+        elif not settings.get_globalhub_report_new_sessions(user_id=owner):
+            return
         else:
             # A report that still waits covers this turn too.
             targets = [] if waiting else [None]

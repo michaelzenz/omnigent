@@ -69,12 +69,18 @@ def create_user_settings_router(
             instructions=instructions, max_chars=SESSION_TITLE_INSTRUCTIONS_MAX_CHARS
         )
 
+    async def read_globalhub_settings(user_id: str | None) -> GlobalHubSettingsResponse:
+        placement, report_new_sessions = await asyncio.gather(
+            asyncio.to_thread(store.get_globalhub_placement, user_id=user_id),
+            asyncio.to_thread(store.get_globalhub_report_new_sessions, user_id=user_id),
+        )
+        return _globalhub_response(placement, report_new_sessions)
+
     @router.get("/settings/globalhub", response_model=GlobalHubSettingsResponse)
     async def get_globalhub_settings(request: Request) -> GlobalHubSettingsResponse:
-        """Read where the caller's GlobalHub role sessions run."""
+        """Read where the caller's GlobalHub role sessions run, and what reports to the broker."""
         user_id = require_user(request, auth_provider)
-        placement = await asyncio.to_thread(store.get_globalhub_placement, user_id=user_id)
-        return _globalhub_response(placement)
+        return await read_globalhub_settings(user_id)
 
     @router.put("/settings/globalhub", response_model=GlobalHubSettingsResponse)
     async def save_globalhub_settings(
@@ -99,12 +105,22 @@ def create_user_settings_router(
             )
             placement = GlobalHubPlacement(host_id=body.host_id, workspace=workspace)
         await asyncio.to_thread(store.save_globalhub_placement, placement, user_id=user_id)
-        return _globalhub_response(placement)
+        if body.report_new_sessions is not None:
+            await asyncio.to_thread(
+                store.save_globalhub_report_new_sessions,
+                body.report_new_sessions,
+                user_id=user_id,
+            )
+        return await read_globalhub_settings(user_id)
 
     return router
 
 
-def _globalhub_response(placement: GlobalHubPlacement | None) -> GlobalHubSettingsResponse:
-    if placement is None:
-        return GlobalHubSettingsResponse(host_id=None, workspace=None)
-    return GlobalHubSettingsResponse(host_id=placement.host_id, workspace=placement.workspace)
+def _globalhub_response(
+    placement: GlobalHubPlacement | None, report_new_sessions: bool
+) -> GlobalHubSettingsResponse:
+    return GlobalHubSettingsResponse(
+        host_id=placement.host_id if placement else None,
+        workspace=placement.workspace if placement else None,
+        report_new_sessions=report_new_sessions,
+    )

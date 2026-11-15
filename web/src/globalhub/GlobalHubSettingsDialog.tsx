@@ -15,7 +15,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { type GlobalHubSettings, useSaveGlobalHubSettings } from "@/hooks/useGlobalHubSettings";
+import { Switch } from "@/components/ui/switch";
+import {
+  type GlobalHubSettings,
+  type GlobalHubSettingsUpdate,
+  useSaveGlobalHubSettings,
+} from "@/hooks/useGlobalHubSettings";
 import { useHosts } from "@/hooks/useHosts";
 import { useRecentWorkspaces } from "@/hooks/useRecentWorkspaces";
 import { HostLabel } from "@/shell/HostLabel";
@@ -60,19 +65,23 @@ function SettingsForm({
 }) {
   const [hostId, setHostId] = useState(settings?.host_id ?? "");
   const [workspace, setWorkspace] = useState(settings?.workspace ?? "");
+  const [reportNewSessions, setReportNewSessions] = useState(settings?.report_new_sessions ?? true);
   const [browsing, setBrowsing] = useState(false);
   const hosts = useHosts();
   const { recent, addRecent } = useRecentWorkspaces(hostId || null);
   const save = useSaveGlobalHubSettings();
   const path = workspace.trim();
 
-  function submit(next: GlobalHubSettings): void {
-    save.mutate(next, {
-      onSuccess: (saved) => {
-        if (saved.workspace !== null) addRecent(saved.workspace);
-        onDone();
+  function submit(placement: Pick<GlobalHubSettingsUpdate, "host_id" | "workspace">): void {
+    save.mutate(
+      { ...placement, report_new_sessions: reportNewSessions },
+      {
+        onSuccess: (saved) => {
+          if (saved.workspace !== null) addRecent(saved.workspace);
+          onDone();
+        },
       },
-    });
+    );
   }
 
   return (
@@ -138,6 +147,20 @@ function SettingsForm({
         ) : (
           <p className="text-xs text-muted-foreground">Select a host to choose a workspace.</p>
         )}
+      </div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-muted-foreground">New sessions</span>
+          <span className="text-xs text-muted-foreground">
+            Send the finished turns of sessions on no task to the broker, which can add them to a
+            task. Sessions on a task always update their managers.
+          </span>
+        </div>
+        <Switch
+          aria-label="Send new sessions to the broker"
+          checked={reportNewSessions}
+          onCheckedChange={setReportNewSessions}
+        />
       </div>
       {save.error && (
         <p role="alert" className="text-xs text-destructive" data-testid="globalhub-settings-error">

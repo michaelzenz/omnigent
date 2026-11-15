@@ -2,11 +2,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 
-/** Where the user's Global Hub role sessions run; both null until it is set. */
+/** The user's Global Hub settings; the host and workspace are both null until set. */
 export interface GlobalHubSettings {
   host_id: string | null;
   workspace: string | null;
+  /** Whether sessions on no task report their finished turns to the broker. */
+  report_new_sessions: boolean;
 }
+
+/** A save of the settings; without ``report_new_sessions`` the switch stays as it is. */
+export type GlobalHubSettingsUpdate = Pick<GlobalHubSettings, "host_id" | "workspace"> & {
+  report_new_sessions?: boolean;
+};
 
 export const GLOBALHUB_SETTINGS_QUERY_KEY = ["globalhub-settings"] as const;
 
@@ -18,7 +25,9 @@ async function fetchGlobalHubSettings(): Promise<GlobalHubSettings> {
   return (await res.json()) as GlobalHubSettings;
 }
 
-async function saveGlobalHubSettings(settings: GlobalHubSettings): Promise<GlobalHubSettings> {
+async function saveGlobalHubSettings(
+  settings: GlobalHubSettingsUpdate,
+): Promise<GlobalHubSettings> {
   const res = await authenticatedFetch(SETTINGS_PATH, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -28,7 +37,7 @@ async function saveGlobalHubSettings(settings: GlobalHubSettings): Promise<Globa
   return (await res.json()) as GlobalHubSettings;
 }
 
-/** The host and workspace where the user's Global Hub role sessions run. */
+/** Where the user's Global Hub role sessions run, and whether new sessions report to the broker. */
 export function useGlobalHubSettings() {
   return useQuery({
     queryKey: GLOBALHUB_SETTINGS_QUERY_KEY,
@@ -37,7 +46,7 @@ export function useGlobalHubSettings() {
   });
 }
 
-/** Save the host and workspace, or clear both with nulls. */
+/** Save the host and workspace, or clear both with nulls, and the reports switch when given. */
 export function useSaveGlobalHubSettings() {
   const queryClient = useQueryClient();
   return useMutation({

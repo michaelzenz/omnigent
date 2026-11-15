@@ -26,6 +26,7 @@ from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissi
 ROUTE = "/v1/settings/session-title-instructions"
 GLOBALHUB_ROUTE = "/v1/settings/globalhub"
 GLOBALHUB_UNSET = {"host_id": None, "workspace": None}
+GLOBALHUB_DEFAULTS = {**GLOBALHUB_UNSET, "report_new_sessions": True}
 ROLE_PROFILES_ROUTE = "/v1/agent-tasks/roles/profiles"
 MANAGER_PROFILE_ROUTE = "/v1/agent-tasks/roles/manager:default/profile"
 CUSTODIAN_SESSION_ROUTE = "/v1/agent-tasks/roles/custodian/session"
@@ -125,23 +126,34 @@ async def test_globalhub_round_trip_stores_canonical_workspace(
     monkeypatch.setattr(
         user_settings, "validate_uploaded_bundle_host_workspace", canonical_workspace
     )
-    assert (await client.get(GLOBALHUB_ROUTE)).json() == GLOBALHUB_UNSET
+    assert (await client.get(GLOBALHUB_ROUTE)).json() == GLOBALHUB_DEFAULTS
 
     saved = await client.put(
-        GLOBALHUB_ROUTE, json={"host_id": "host_alice", "workspace": "/Users/alice/./globalhub"}
+        GLOBALHUB_ROUTE,
+        json={
+            "host_id": "host_alice",
+            "workspace": "/Users/alice/./globalhub",
+            "report_new_sessions": False,
+        },
     )
 
-    placement = {"host_id": "host_alice", "workspace": "/Users/alice/globalhub"}
-    assert saved.json() == placement
-    assert (await client.get(GLOBALHUB_ROUTE)).json() == placement
+    placed = {
+        "host_id": "host_alice",
+        "workspace": "/Users/alice/globalhub",
+        "report_new_sessions": False,
+    }
+    assert saved.json() == placed
+    assert (await client.get(GLOBALHUB_ROUTE)).json() == placed
     assert [
         (validation["host_id"], validation["workspace"], validation["spec_cwd"])
         for validation in validations
     ] == [("host_alice", "/Users/alice/./globalhub", None)]
 
+    # A request without the switch leaves it as it is.
     cleared = await client.put(GLOBALHUB_ROUTE, json=GLOBALHUB_UNSET)
-    assert cleared.json() == GLOBALHUB_UNSET
-    assert (await client.get(GLOBALHUB_ROUTE)).json() == GLOBALHUB_UNSET
+    unset_and_off = {**GLOBALHUB_UNSET, "report_new_sessions": False}
+    assert cleared.json() == unset_and_off
+    assert (await client.get(GLOBALHUB_ROUTE)).json() == unset_and_off
     assert len(validations) == 1
 
 
@@ -159,7 +171,7 @@ async def test_globalhub_rejects_another_users_host(
 
     assert response.status_code == 403
     alice = await multi_user_client.get(GLOBALHUB_ROUTE, headers=_as_user(ALICE))
-    assert alice.json() == GLOBALHUB_UNSET
+    assert alice.json() == GLOBALHUB_DEFAULTS
 
 
 async def test_role_profiles_list_defaults_without_manuals(client: httpx.AsyncClient) -> None:

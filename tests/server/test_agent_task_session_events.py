@@ -168,6 +168,22 @@ def test_a_user_without_a_globalhub_host_reports_nothing(hub: _Hub) -> None:
     assert hub.board.events.list(owner_user_id=BOB) == []
 
 
+def test_with_new_session_reports_off_only_sessions_on_live_tasks_report(
+    hub: _Hub, db_uri: str
+) -> None:
+    UserSettingsStore(db_uri).save_globalhub_report_new_sessions(False, user_id=ALICE)
+    loose, worker = hub.session(), hub.session()
+    storage = hub.manager()
+    hub.attach(worker, manager_id=storage)
+
+    hub.reporter.report_turn_finished(loose)
+    hub.reporter.report_turn_finished(worker)
+
+    assert [(event.source_session_id, event.manager_id) for event in hub.reports()] == [
+        (worker, storage)
+    ]
+
+
 async def test_only_a_finished_turn_is_reported_in_the_background(hub: _Hub) -> None:
     session_id = hub.session()
 

@@ -5842,10 +5842,13 @@ class GlobalHubSettingsRequest(BaseModel):
 
     The host must be one of the caller's own hosts and online, and the workspace
     an existing directory on it; the server stores the canonical path.
+    ``report_new_sessions`` turns on or off the reports of the caller's
+    sessions on no task to the broker; omitted, it stays as it is.
     """
 
     host_id: str | None = Field(..., min_length=1, max_length=GLOBALHUB_HOST_ID_MAX_CHARS)
     workspace: str | None = Field(..., min_length=1, max_length=GLOBALHUB_WORKSPACE_MAX_CHARS)
+    report_new_sessions: bool | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -5857,10 +5860,16 @@ class GlobalHubSettingsRequest(BaseModel):
 
 
 class GlobalHubSettingsResponse(BaseModel):
-    """Where the caller's GlobalHub role sessions run; both null until it is set."""
+    """Where the caller's GlobalHub role sessions run; both null until it is set.
+
+    ``report_new_sessions`` says whether the caller's sessions on no task
+    report their finished turns to the broker, which can add them to a task.
+    Sessions on a task always report to their managers.
+    """
 
     host_id: str | None
     workspace: str | None
+    report_new_sessions: bool
 
 
 class GlobalHubRoleProfile(BaseModel):

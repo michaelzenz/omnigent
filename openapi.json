@@ -5453,7 +5453,7 @@
       },
       "GlobalHubSettingsRequest": {
         "additionalProperties": false,
-        "description": "Set where the caller's GlobalHub role sessions run; null for both clears it.\n\nThe host must be one of the caller's own hosts and online, and the workspace\nan existing directory on it; the server stores the canonical path.",
+        "description": "Set where the caller's GlobalHub role sessions run; null for both clears it.\n\nThe host must be one of the caller's own hosts and online, and the workspace\nan existing directory on it; the server stores the canonical path.\n`report_new_sessions` turns on or off the reports of the caller's\nsessions on no task to the broker; omitted, it stays as it is.",
         "properties": {
           "host_id": {
             "anyOf": [
@@ -5467,6 +5467,17 @@
               }
             ],
             "title": "Host Id"
+          },
+          "report_new_sessions": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Report New Sessions"
           },
           "workspace": {
             "anyOf": [
@@ -5490,7 +5501,7 @@
         "type": "object"
       },
       "GlobalHubSettingsResponse": {
-        "description": "Where the caller's GlobalHub role sessions run; both null until it is set.",
+        "description": "Where the caller's GlobalHub role sessions run; both null until it is set.\n\n`report_new_sessions` says whether the caller's sessions on no task\nreport their finished turns to the broker, which can add them to a task.\nSessions on a task always report to their managers.",
         "properties": {
           "host_id": {
             "anyOf": [
@@ -5502,6 +5513,10 @@
               }
             ],
             "title": "Host Id"
+          },
+          "report_new_sessions": {
+            "title": "Report New Sessions",
+            "type": "boolean"
           },
           "workspace": {
             "anyOf": [
@@ -5517,7 +5532,8 @@
         },
         "required": [
           "host_id",
-          "workspace"
+          "workspace",
+          "report_new_sessions"
         ],
         "title": "GlobalHubSettingsResponse",
         "type": "object"
@@ -26546,7 +26562,7 @@
     },
     "/v1/settings/globalhub": {
       "get": {
-        "description": "Read where the caller's GlobalHub role sessions run.",
+        "description": "Read where the caller's GlobalHub role sessions run, and what reports to the broker.",
         "operationId": "get_globalhub_settings_v1_settings_globalhub_get",
         "responses": {
           "200": {
