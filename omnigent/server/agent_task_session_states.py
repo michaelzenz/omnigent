@@ -21,7 +21,7 @@ async def read_session_states(
     deps: SessionSendDeps,
 ) -> dict[str, AgentTaskBoardSession]:
     """
-    Read each session's title and live state, as the sidebar shows them.
+    Read each session's title, live state and the viewer's read state, as the sidebar shows them.
 
     A turn whose runner is gone settles first. Conversations that are not
     sessions are left out.
@@ -70,4 +70,6 @@ def _session_state(
         background_work_running=row.background_work_running,
         blocked_on=row.blocked_on,
         updated_at=row.updated_at,
+        viewer_last_seen=row.viewer_last_seen,
+        viewer_unread=row.viewer_unread,
     )

@@ -6330,7 +6330,11 @@ class AgentTaskAssetDeletedResponse(BaseModel):
 
 
 class AgentTaskBoardSession(BaseModel):
-    """A worker's or a role's session, with the title and live state the session list shows."""
+    """A worker's or a role's session, with the title and live state the session list shows.
+
+    ``viewer_last_seen`` and ``viewer_unread`` are the caller's read state of the
+    session, as in the session list.
+    """
 
     title: str | None
     status: Literal["idle", "running", "waiting", "failed"]
@@ -6338,6 +6342,8 @@ class AgentTaskBoardSession(BaseModel):
     background_work_running: bool
     blocked_on: str | None
     updated_at: int
+    viewer_last_seen: int | None = None
+    viewer_unread: bool = False
 
 
 class AgentTaskBoardWorker(AgentTaskWorkerResponse):

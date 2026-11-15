@@ -143,6 +143,9 @@ async def test_a_card_lists_its_workers_busy_first_then_most_recent_and_its_asse
     ]:
         _worker(db_uri, task_id, session_id, title)
     monkeypatch.setitem(sessions._session_status_cache, busy, "running")
+    # Alice saw the newer session at 1_500 and then marked it unread.
+    monkeypatch.setitem(sessions._read_last_seen, ALICE_ID, {newer: 1_500})
+    monkeypatch.setitem(sessions._read_explicit_unread, ALICE_ID, {newer})
     SqlAlchemyTaskAssetStore(db_uri).upsert(
         uuid.uuid4().hex,
         owner_user_id=ALICE_ID,
@@ -161,12 +164,14 @@ async def test_a_card_lists_its_workers_busy_first_then_most_recent_and_its_asse
             worker["title"],
             worker["session"]["title"],
             worker["session"]["status"],
+            worker["session"]["viewer_last_seen"],
+            worker["session"]["viewer_unread"],
         )
         for worker in card["workers"]
     ] == [
-        (busy, None, "Ran tests", "running"),
-        (newer, "Fixing retries", "Wrote the fix", "idle"),
-        (older, None, "Read the logs", "idle"),
+        (busy, None, "Ran tests", "running", None, False),
+        (newer, "Fixing retries", "Wrote the fix", "idle", 1_500, True),
+        (older, None, "Read the logs", "idle", None, False),
     ]
     assert [
         (asset["title"], asset["category"], asset["related_session_ids"])

@@ -1539,7 +1539,7 @@
         "type": "object"
       },
       "AgentTaskBoardSession": {
-        "description": "A worker's or a role's session, with the title and live state the session list shows.",
+        "description": "A worker's or a role's session, with the title and live state the session list shows.\n\n`viewer_last_seen` and `viewer_unread` are the caller's read state of the\nsession, as in the session list.",
         "properties": {
           "background_work_running": {
             "title": "Background Work Running",
@@ -1586,6 +1586,23 @@
             "format": "int64",
             "title": "Updated At",
             "type": "integer"
+          },
+          "viewer_last_seen": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Viewer Last Seen"
+          },
+          "viewer_unread": {
+            "default": false,
+            "title": "Viewer Unread",
+            "type": "boolean"
           }
         },
         "required": [
@@ -17124,7 +17141,7 @@
         ]
       },
       "patch": {
-        "description": "Change fields of one of the caller's tasks.\n\nSetting `state` also moves the task on the board: `agent-resolved`\nto the end, any other state to the top so revived work surfaces.",
+        "description": "Change fields of one of the caller's tasks.\n\nA change of `state` also moves the task on the board: `agent-resolved`\nto the end, any other state to the top so revived work surfaces. A\n`state` equal to the task's current state moves nothing.",
         "operationId": "update_task_v1_agent_tasks__task_id__patch",
         "parameters": [
           {
