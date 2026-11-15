@@ -5889,9 +5889,14 @@ class GlobalHubRoleProfile(BaseModel):
 
 
 class GlobalHubRoleProfileDetail(GlobalHubRoleProfile):
-    """A role definition with the manual attached to every turn of its sessions."""
+    """A role definition with the manual attached to every turn of its sessions.
+
+    ``default_description`` and ``default_manual`` are what a reset restores.
+    """
 
     manual: str
+    default_description: str
+    default_manual: str
 
 
 class GlobalHubRoleProfileList(BaseModel):

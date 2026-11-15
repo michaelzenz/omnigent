@@ -5377,7 +5377,7 @@
         "type": "object"
       },
       "GlobalHubRoleProfileDetail": {
-        "description": "A role definition with the manual attached to every turn of its sessions.",
+        "description": "A role definition with the manual attached to every turn of its sessions.\n\n`default_description` and `default_manual` are what a reset restores.",
         "properties": {
           "customized": {
             "items": {
@@ -5385,6 +5385,14 @@
             },
             "title": "Customized",
             "type": "array"
+          },
+          "default_description": {
+            "title": "Default Description",
+            "type": "string"
+          },
+          "default_manual": {
+            "title": "Default Manual",
+            "type": "string"
           },
           "description": {
             "title": "Description",
@@ -5431,7 +5439,9 @@
           "description",
           "model",
           "customized",
-          "manual"
+          "manual",
+          "default_description",
+          "default_manual"
         ],
         "title": "GlobalHubRoleProfileDetail",
         "type": "object"
@@ -16672,7 +16682,7 @@
         ]
       },
       "put": {
-        "description": "Override fields of the caller's role definition.\n\nOmitted fields keep their value; null or blank restores the field's default.",
+        "description": "Override fields of the caller's role definition.\n\nOmitted fields keep their value; null or blank restores the field's default.\nA model must pass the same check as a session's model override, because\nthe role's sessions start with it.",
         "operationId": "update_role_profile_v1_agent_tasks_roles__role__profile_put",
         "parameters": [
           {

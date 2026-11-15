@@ -191,6 +191,8 @@ async def test_role_profile_override_and_reset(client: httpx.AsyncClient) -> Non
     saved = await client.put(
         MANAGER_PROFILE_ROUTE, json={"manual": "  Route nothing.\n", "model": "example-model"}
     )
+    # The role's sessions start with this model, so it gets a session override's check.
+    unsafe = await client.put(MANAGER_PROFILE_ROUTE, json={"model": "example; rm -rf /"})
 
     assert saved.status_code == 200, saved.text
     assert (saved.json()["manual"], saved.json()["model"], saved.json()["customized"]) == (
@@ -198,6 +200,12 @@ async def test_role_profile_override_and_reset(client: httpx.AsyncClient) -> Non
         "example-model",
         ["model", "manual"],
     )
+    # A reset needs the defaults even while the fields are overridden.
+    assert (saved.json()["default_manual"], saved.json()["default_description"]) == (
+        default["manual"],
+        default["description"],
+    )
+    assert unsafe.status_code == 400
 
     reset = await client.put(MANAGER_PROFILE_ROUTE, json={"manual": None})
 

@@ -16,6 +16,7 @@ from omnigent.agent_tasks.roles import (
     role_definition,
 )
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.models.model_override import validate_model_override
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.server.routes._sessions.helpers import _announce_session_added
@@ -77,9 +78,16 @@ def create_agent_task_roles_router(
         """Override fields of the caller's role definition.
 
         Omitted fields keep their value; null or blank restores the field's default.
+        A model must pass the same check as a session's model override, because
+        the role's sessions start with it.
         """
         user_id = require_user(request, auth_provider)
         defined_role = _require_role(role)
+        if body.model and body.model.strip():
+            try:
+                validate_model_override(body.model)
+            except ValueError as exc:
+                raise OmnigentError(f"invalid model: {exc}", code=ErrorCode.INVALID_INPUT) from exc
 
         def update() -> RoleDefinition:
             overrides = store.get_globalhub_role_overrides(defined_role.key, user_id=user_id)
@@ -144,5 +152,8 @@ def _profile(definition: RoleDefinition) -> GlobalHubRoleProfile:
 
 def _profile_detail(definition: RoleDefinition) -> GlobalHubRoleProfileDetail:
     return GlobalHubRoleProfileDetail(
-        **_profile(definition).model_dump(), manual=definition.manual
+        **_profile(definition).model_dump(),
+        manual=definition.manual,
+        default_description=definition.role.description,
+        default_manual=definition.role.default_manual(),
     )
