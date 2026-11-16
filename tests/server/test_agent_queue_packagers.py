@@ -324,7 +324,7 @@ async def test_a_manager_notice_lists_its_events_by_id_and_ends_with_the_roster(
             f"- [event:{turn}] session.turn.finished: Session 'Fix S3' finished a turn",
             f"  Session ID: {live_session}",
             "  Read the recent session transcript to see what was done. "
-            "Update the task overview and stamp all assets.",
+            "Update the task overview, stamp all assets, then assign the event to its task.",
             f"- [event:{deleted}] session.deleted: Session 'Old work' was deleted",
             f"  Session ID: {gone_session}",
             "  The session no longer exists; the user deleted it. "

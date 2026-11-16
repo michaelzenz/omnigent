@@ -6072,17 +6072,19 @@ class WatchItemObservation(BaseModel):
     """What the calling watcher sees now for one item, e.g. a pull request.
 
     ``source`` names the system and ``source_key`` the item; together they
-    identify it. ``offsets`` maps a name to the value to compare with the last
-    run, and null removes the name; names left out keep their value. A null
-    ``title`` or ``task_id`` keeps the saved one. ``summary`` and ``details``
-    explain a change in its event. ``announce`` records an event for a new item.
+    identify it. The server keeps the ``session`` source for its session
+    events. Task subscriptions match ``source_key`` exactly, so it is the
+    item's canonical form, e.g. ``https://github.com/<org>/<repo>/pull/<number>``.
+    ``offsets`` maps a name to the value to compare with the last run, and null
+    removes the name; names left out keep their value. A null ``title`` keeps
+    the saved one. ``summary`` and ``details`` explain a change in its events.
+    ``announce`` records events for a new item.
     """
 
     source: _WatchItemSource
     source_key: _WatchItemSourceKey
     offsets: dict[str, str | None] = Field(default_factory=dict)
     title: str | None = Field(default=None, max_length=256)
-    task_id: str | None = Field(default=None, max_length=64)
     summary: str | None = Field(default=None, max_length=512)
     details: dict[str, Any] | None = None
     announce: bool = False
@@ -6144,15 +6146,16 @@ class WatchItemObservationResult(BaseModel):
     """What an observation found for one item.
 
     ``outcome`` is ``"new"`` for an item the watcher had not tracked,
-    ``"changed"`` when an offset changed, else ``"unchanged"``. ``event_id``
-    is the task event recorded for the change, or for an announced new item.
+    ``"changed"`` when an offset changed, else ``"unchanged"``. ``event_ids``
+    are the task events recorded for the change, or for an announced new item:
+    one for each live task that follows the item, else one for the broker.
     """
 
     source: str
     source_key: str
     outcome: Literal["new", "changed", "unchanged"]
     changes: list[WatchItemChange]
-    event_id: str | None
+    event_ids: list[str]
 
 
 class ObserveWatchItemsResponse(BaseModel):
@@ -6200,7 +6203,6 @@ class WatchItemResponse(BaseModel):
     title: str
     offsets: dict[str, str]
     status: Literal["active", "done"]
-    task_id: str | None
     created_at: int
     checked_at: int
     changed_at: int | None
@@ -6562,11 +6564,13 @@ class AgentTaskEventList(BaseModel):
 
 
 class CreateAgentTaskEventRequest(BaseModel):
-    """Record an event for the broker to route.
+    """Record an event on the caller's board.
 
-    A report that names its ``source`` and ``source_key`` is recorded once:
-    sending it again returns the first event. ``session.*`` event types come
-    only from the server's session hooks.
+    Each live task that follows ``source_key`` (an exact match) gets the event
+    through its manager; without such a task, the broker routes it. A report
+    that names its ``source`` and ``source_key`` is recorded once: sending it
+    again returns the first event. ``session.*`` event types and the
+    ``session`` source come only from the server's session hooks.
     """
 
     event_type: _AgentTaskEventType
@@ -6588,6 +6592,36 @@ class RouteAgentTaskEventsRequest(BaseModel):
     manager_id: str
 
     model_config = ConfigDict(extra="forbid")
+
+
+class AssignAgentTaskEventRequest(BaseModel):
+    """Assign one of the caller's events to one of their tasks, and mark the event handled.
+
+    The task then follows the event's key, so later events with the key go to
+    the task's manager. A session event makes the session the task's worker,
+    with ``title`` as the worker's title; another event with a source key
+    subscribes the task to that key.
+    """
+
+    task_id: str = Field(min_length=1, max_length=64)
+    title: _AgentTaskWorkerTitle | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentTaskEventAssignment(BaseModel):
+    """An event assigned to a task, and what the task follows now.
+
+    ``worker_id`` is the session's worker on the task, for a session event.
+    ``subscription_id`` is the task's subscription to the event's key, for
+    another event. Both are null for an event without a key, or for a session
+    that is gone.
+    """
+
+    object: Literal["agent.task.event_assignment"] = "agent.task.event_assignment"
+    event: AgentTaskEventResponse
+    worker_id: str | None
+    subscription_id: str | None
 
 
 AgentFyiClusterState = Literal["pending", "dismissed"]
@@ -6675,6 +6709,53 @@ class AgentTaskAssetDeletedResponse(BaseModel):
     """An asset removed from one of the caller's tasks."""
 
     object: Literal["agent.task.asset"] = "agent.task.asset"
+    id: str
+    task_id: str
+    deleted: Literal[True] = True
+
+
+_AgentTaskSubscriptionKey = Annotated[
+    str, Field(max_length=512), AfterValidator(_strip_required_text)
+]
+
+
+class CreateAgentTaskSubscriptionRequest(BaseModel):
+    """Make one of the caller's tasks follow a key, e.g. a pull request URL.
+
+    While the task is live, events with the same key go to the task's manager.
+    Keys match exactly, so write the key in its canonical form, e.g.
+    ``https://github.com/<org>/<repo>/pull/<number>``. Subscribing again
+    returns the subscription the task has.
+    """
+
+    source_key: _AgentTaskSubscriptionKey
+    source: str | None = Field(default=None, min_length=1, max_length=64)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentTaskSubscriptionResponse(BaseModel):
+    """A key that one of the caller's tasks follows; the task's manager subscribed it."""
+
+    object: Literal["agent.task.subscription"] = "agent.task.subscription"
+    id: str
+    task_id: str
+    source_key: str
+    source: str | None
+    created_at: int
+
+
+class AgentTaskSubscriptionList(BaseModel):
+    """Keys that the caller's tasks follow, oldest first."""
+
+    object: Literal["list"] = "list"
+    data: list[AgentTaskSubscriptionResponse]
+
+
+class AgentTaskSubscriptionDeletedResponse(BaseModel):
+    """A key that one of the caller's tasks no longer follows."""
+
+    object: Literal["agent.task.subscription"] = "agent.task.subscription"
     id: str
     task_id: str
     deleted: Literal[True] = True

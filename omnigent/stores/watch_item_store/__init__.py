@@ -1,9 +1,10 @@
 """Persistence for what each GlobalHub watcher tracks.
 
 Every read and write is scoped to the watcher's owner. An observation saves
-what the watcher sees now and, in the same transaction, records a task event
-for each change it finds. A watcher can track any number of items; lists come
-in pages.
+what the watcher sees now and, in the same transaction, records the task events
+for each change it finds: one for each live task that follows the item's key,
+or one for the broker. A watcher can track any number of items; lists come in
+pages.
 """
 
 from __future__ import annotations
@@ -35,17 +36,15 @@ class WatchObservation:
     :param offsets: The values to compare with the last run, by name; ``None``
         removes a name. Names the observation leaves out keep their value.
     :param title: A short label; ``None`` keeps the saved one.
-    :param task_id: The task the item belongs to; ``None`` keeps the saved one.
-    :param summary: A one-line explanation of a change, used as its event's title.
-    :param details: More about a change for its event, e.g. failing check names.
-    :param announce: Whether a new item records a ``watch.new`` event.
+    :param summary: A one-line explanation of a change, used as its events' title.
+    :param details: More about a change for its events, e.g. failing check names.
+    :param announce: Whether a new item records ``watch.new`` events.
     """
 
     source: str
     source_key: str
     offsets: Mapping[str, str | None]
     title: str | None = None
-    task_id: str | None = None
     summary: str | None = None
     details: Mapping[str, Any] | None = None
     announce: bool = False
@@ -69,14 +68,15 @@ class WatchObservationResult:
     :param source_key: What the item tracks.
     :param outcome: ``"new"``, ``"changed"`` or ``"unchanged"``.
     :param changes: The offsets that changed, in the observation's order.
-    :param event_id: The task event recorded for the change or the new item, if any.
+    :param event_ids: The task events recorded for the change or the new item:
+        one for each live task that follows the item, else one for the broker.
     """
 
     source: str
     source_key: str
     outcome: Literal["new", "changed", "unchanged"]
     changes: tuple[WatchChange, ...] = ()
-    event_id: str | None = None
+    event_ids: tuple[str, ...] = ()
 
 
 class WatchItemStore(ABC):
@@ -97,7 +97,6 @@ class WatchItemStore(ABC):
         owner_user_id: str | None,
         statuses: Collection[str] = ("active",),
         source: str | None = None,
-        task_id: str | None = None,
         limit: int = 100,
         after: str | None = None,
     ) -> PagedList[WatchItem]:
@@ -111,7 +110,6 @@ class WatchItemStore(ABC):
         :param owner_user_id: The watcher's owner, or ``None`` in single-user mode.
         :param statuses: The statuses to include, e.g. ``("active",)``.
         :param source: Only this system's items, when given.
-        :param task_id: Only this task's items, when given.
         :param limit: At most this many items in the page.
         :param after: The ``last_id`` of the previous page.
         :raises omnigent.errors.StaleCursorError: When ``after`` names no item
@@ -148,9 +146,9 @@ class WatchItemStore(ABC):
 
         All observations are saved in one transaction with their events. A new
         item is a silent baseline unless its observation announces it; an item
-        the watcher marked done becomes active again. An event goes to the
-        manager of the item's task when that task is live and has one, else to
-        the broker.
+        the watcher marked done becomes active again. Each live task that
+        follows the item's key gets an event through its manager; when no live
+        task follows it, one event goes to the broker.
 
         :param watcher: The watcher that observes.
         :param observations: What it sees now, at most one per source and key.

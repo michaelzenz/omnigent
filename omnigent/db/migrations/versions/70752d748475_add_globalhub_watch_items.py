@@ -41,7 +41,6 @@ def upgrade() -> None:
         sa.Column("title", sa.String(256), nullable=False),
         sa.Column("offsets", sa.Text(), nullable=False),
         sa.Column("status", sa.SmallInteger(), nullable=False, server_default="1"),
-        sa.Column("task_id", Uuid16(), nullable=True),
         sa.Column("version", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("created_at", sa.Integer(), nullable=False),
         sa.Column("checked_at", sa.Integer(), nullable=False),

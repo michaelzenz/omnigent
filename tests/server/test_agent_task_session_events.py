@@ -117,20 +117,43 @@ def test_a_session_on_no_task_reports_a_finished_turn_to_the_broker_once(hub: _H
     }
 
 
-def test_a_session_on_live_tasks_reports_to_each_of_their_managers_once(hub: _Hub) -> None:
+def test_a_session_reports_once_to_each_live_task_that_it_works_on(hub: _Hub) -> None:
     session_id = hub.session()
     storage, compute, former = hub.manager(), hub.manager(), hub.manager()
-    hub.attach(session_id, manager_id=storage)
-    hub.attach(session_id, manager_id=compute, state="idle")
-    hub.attach(session_id, manager_id=storage, state="agent-resolved")
+    active = hub.attach(session_id, manager_id=storage)
+    idle = hub.attach(session_id, manager_id=compute, state="idle")
+    resolved = hub.attach(session_id, manager_id=storage, state="agent-resolved")
     hub.attach(session_id, manager_id=former, state="archived")
 
     hub.reporter.report_turn_finished(session_id)
     hub.reporter.report_turn_finished(session_id)
 
     reports = hub.reports()
-    assert sorted(event.manager_id or "" for event in reports) == sorted([storage, compute])
+    assert sorted((event.task_id or "", event.manager_id or "") for event in reports) == sorted(
+        [(active, storage), (idle, compute), (resolved, storage)]
+    )
     assert {(event.state, len(event.tags)) for event in reports} == {("routed", 0)}
+
+
+def test_a_task_without_a_manager_hears_of_the_session_it_follows_through_the_broker(
+    hub: _Hub, db_uri: str
+) -> None:
+    UserSettingsStore(db_uri).save_globalhub_report_new_sessions(False, user_id=ALICE)
+    session_id = hub.session()
+    task = hub.board.tasks.create(uuid.uuid4().hex, owner_user_id=ALICE, title="Review", goal="g")
+    hub.board.subscriptions.subscribe(
+        uuid.uuid4().hex, owner_user_id=ALICE, task_id=task.id, source_key=session_id
+    )
+
+    hub.reporter.report_turn_finished(session_id)
+
+    [event] = hub.reports()
+    assert (event.state, event.task_id, event.manager_id, event.tags) == (
+        "unrouted",
+        task.id,
+        None,
+        [EventTag(tag_type="host", tag=HOST_ID)],
+    )
 
 
 def test_a_finished_turn_tops_the_sessions_open_tasks_and_wakes_idle_ones(hub: _Hub) -> None:

@@ -18,6 +18,8 @@ from typing import Any
 
 # The task states in a manager's portfolio; an archived task is no longer in it.
 LIVE_TASK_STATES = ("active", "idle", "agent-resolved")
+#: The source of the events that the server records about a session; its key is the session id.
+SESSION_EVENT_SOURCE = "session"
 #: Starts a watcher's role key, which names its schedule, e.g. ``"watcher:<id>"``.
 WATCHER_ROLE_KEY_PREFIX = "watcher:"
 #: The most offsets one tracked item keeps.
@@ -425,7 +427,6 @@ class WatchItem:
     :param status: ``"active"`` or ``"done"``.
     :param created_at: Unix epoch seconds at row creation.
     :param checked_at: When the watcher last observed it.
-    :param task_id: The task it belongs to, or ``None``.
     :param version: How many changes it had.
     :param changed_at: When an offset last changed, or ``None`` before the first change.
     :param done_at: When the watcher marked it done, or ``None``.
@@ -441,7 +442,31 @@ class WatchItem:
     status: str
     created_at: int
     checked_at: int
-    task_id: str | None = None
     version: int = 0
     changed_at: int | None = None
     done_at: int | None = None
+
+
+@dataclass
+class TaskSubscription:
+    """
+    A key that a GlobalHub task follows, e.g. a pull request URL.
+
+    The task's manager subscribes the task. An event whose source key a live
+    task follows goes to that task's manager.
+
+    :param id: UUID primary key (bare 32-char hex string, no dashes).
+    :param owner_user_id: Owning user (the task's owner), or ``None`` in
+        single-user mode.
+    :param task_id: The task that follows the key.
+    :param source_key: The key, matched exactly.
+    :param created_at: Unix epoch seconds at row creation.
+    :param source: The system of the key, e.g. ``"github"``, or ``None``.
+    """
+
+    id: str
+    owner_user_id: str | None
+    task_id: str
+    source_key: str
+    created_at: int
+    source: str | None = None

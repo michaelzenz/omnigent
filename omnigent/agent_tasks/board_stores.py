@@ -20,6 +20,10 @@ from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+from omnigent.stores.task_subscription_store import TaskSubscriptionStore
+from omnigent.stores.task_subscription_store.sqlalchemy_store import (
+    SqlAlchemyTaskSubscriptionStore,
+)
 from omnigent.stores.watch_item_store import WatchItemStore
 from omnigent.stores.watch_item_store.sqlalchemy_store import SqlAlchemyWatchItemStore
 from omnigent.stores.watcher_store import WatcherStore
@@ -44,6 +48,7 @@ class BoardStores:
     :param role_schedules: When each user's role sessions get their scheduled runs.
     :param watchers: The watchers that report changes in the things they watch.
     :param watch_items: What each watcher tracks, with what it saw last.
+    :param subscriptions: The keys that the tasks follow, which route events.
     """
 
     tasks: TaskStore
@@ -57,6 +62,7 @@ class BoardStores:
     role_schedules: RoleScheduleStore
     watchers: WatcherStore
     watch_items: WatchItemStore
+    subscriptions: TaskSubscriptionStore
 
 
 def open_board_stores(conversation_store: object) -> BoardStores | None:
@@ -81,4 +87,5 @@ def open_board_stores(conversation_store: object) -> BoardStores | None:
         role_schedules=SqlAlchemyRoleScheduleStore(location),
         watchers=SqlAlchemyWatcherStore(location),
         watch_items=SqlAlchemyWatchItemStore(location),
+        subscriptions=SqlAlchemyTaskSubscriptionStore(location),
     )

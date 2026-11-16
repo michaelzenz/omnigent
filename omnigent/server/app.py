@@ -143,6 +143,9 @@ from omnigent.server.routes.agent_task_fyi import create_agent_task_fyi_router
 from omnigent.server.routes.agent_task_managers import create_agent_task_managers_router
 from omnigent.server.routes.agent_task_role_board import create_agent_task_role_board_router
 from omnigent.server.routes.agent_task_roles import create_agent_task_roles_router
+from omnigent.server.routes.agent_task_subscriptions import (
+    create_agent_task_subscriptions_router,
+)
 from omnigent.server.routes.agent_task_system_notice import (
     create_agent_task_system_notice_router,
 )
@@ -4231,8 +4234,8 @@ def create_app(
             artifact_store=artifact_store,
             liveness_lookup=_bulk_session_liveness,
         )
-        # The board, managers, watchers and system notice routers go before the
-        # tasks router, whose /agent-tasks/{task_id} matches their literal paths.
+        # The board, managers, watchers, system notice and subscriptions routers go
+        # before the tasks router, whose /agent-tasks/{task_id} matches their paths.
         app.include_router(
             create_agent_task_board_router(
                 board_stores, conversation_store, send_deps, auth_provider
@@ -4277,6 +4280,11 @@ def create_app(
             tags=["agent-tasks"],
         )
         app.include_router(
+            create_agent_task_subscriptions_router(board_stores, auth_provider),
+            prefix="/v1",
+            tags=["agent-tasks"],
+        )
+        app.include_router(
             create_agent_tasks_router(board_stores, auth_provider),
             prefix="/v1",
             tags=["agent-tasks"],
@@ -4307,7 +4315,9 @@ def create_app(
             tags=["agent-tasks"],
         )
         app.include_router(
-            create_agent_task_events_router(board_stores, auth_provider),
+            create_agent_task_events_router(
+                board_stores, auth_provider, conversation_store=conversation_store
+            ),
             prefix="/v1",
             tags=["agent-tasks"],
         )

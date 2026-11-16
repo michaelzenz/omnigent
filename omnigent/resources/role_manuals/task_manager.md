@@ -129,39 +129,26 @@ pmv2_api(
 
 Skip the update when the event changes nothing material.
 
-**Step 2b — link the session to the task (turn-finished events).**
-`session.turn.finished` events come from a real session that worked on
-something. When you route one to a task, also attach that session to the
-task as a worker — the user can then find every session that worked on
-the task from the task card:
+**Maintain the worker title.** When you assign a `session.turn.finished`
+event (Step 3), its session becomes the task's worker. Every worker lane has
+its own title (separate from the underlying session's title) shown on the task
+card instead of the static provider name. Set it with `title` when you assign
+the event: a short, concrete phrase for what the session has been doing (e.g.
+"Fixing S3 retry flakiness"; one line, max 20 words). Assign again with a new
+`title` whenever the lane's focus changes. To change a title without an event:
 
 ```
 pmv2_api(
   method="POST",
   path="/v1/agent-tasks/sessions/<session_id>/adopt",
-  body={
-    "task_id": "<task_id>",
-    "title": "<recent work>"
-  }
+  body={"task_id": "<task_id>", "title": "<recent work>"}
 )
 ```
 
-Call it unconditionally when you
-route a turn-finished event. The session's id is in the event's payload
-(`session_id`), not the event id.
-
-**Maintain the worker title.** Every worker lane has its own title (separate
-from the underlying session's title) shown on the task card instead of the
-static provider name. Set it during adoption to a short, concrete phrase for
-what the session has been doing (e.g. "Fixing S3 retry flakiness"; one line,
-max 20 words). Adoption is idempotent: call the same endpoint again with a new
-`title` whenever the lane's focus changes. Do not leave a stale title from
-finished work.
-
 The worker roster (`GET /v1/agent-tasks/<task_id>/workers`) returns the current
-`title` per worker. Adoption is deduplicated: one worker row per (task,
-session) — calling the endpoint again only updates the existing lane, never
-creates a second one.
+`title` per worker. A session has one worker per task: assigning or adopting
+again only updates the existing lane, never creates a second one. The
+session's id is in the event's payload (`session_id`), not the event id.
 
 **Step 2c — harvest artifacts as task assets (turn-finished events).**
 When the transcript shows the session created an online artifact — a
@@ -192,7 +179,23 @@ fits: docs → `documents`, source changes → `code`, query/notebook →
 
 **Step 3 - ALWAYS PROCESS AN EVENT**:
 
-After you finish, ALWAYS dismiss it(this is idempotent so it's safe):
+After you finish, ALWAYS process the event (both calls are idempotent, so they
+are safe). When it belongs to a task, assign it:
+
+```
+pmv2_api(
+  method="POST",
+  path="/v1/task-events/<event_id>/assign",
+  body={"task_id": "<task_id>", "title": "<worker title, for a session event>"}
+)
+```
+
+The task then follows the event's source, so later events from that source
+come straight to you with the task's label: a session event makes the session
+the task's worker, and an event about a pull request, ticket or thread
+subscribes the task to it.
+
+When it belongs to no task, dismiss it (or file it to FYI, below):
 
 ```
 pmv2_api(
@@ -244,6 +247,31 @@ the links, and what done means.
 work that a worker already does.
 - **Failures.** The first message goes out in the background. If it cannot be
 sent, a `session.start.failed` event tells you why.
+
+## Subscriptions
+
+A task follows keys. An event with a key that a live task follows comes
+straight to the task's manager, labeled with the task; other events go to the
+broker. You decide what a task follows; nothing else subscribes it. A task
+follows:
+
+- its worker sessions;
+- the keys of the events that you assign to it;
+- the keys that you subscribe it to, e.g. a pull request or a ticket that you
+  want news about. An asset does not subscribe the task: subscribe it to an
+  asset's URL when you want news about it.
+
+```
+pmv2_api(method="POST", path="/v1/agent-tasks/<task_id>/subscriptions",
+         body={"source_key": "<key, e.g. a pull request URL>"})
+pmv2_api(method="GET", path="/v1/agent-tasks/<task_id>/subscriptions")
+pmv2_api(method="DELETE", path="/v1/agent-tasks/<task_id>/subscriptions/<subscription_id>")
+```
+
+Keys match exactly, so write each key in its canonical form, the same way
+every time: a pull request as `https://github.com/<org>/<repo>/pull/<number>`
+(no query, fragment, trailing slash or page such as `/files`), a ticket as its
+key. An archived task follows nothing, so its events go to the broker again.
 
 ## Task lifecycle
 

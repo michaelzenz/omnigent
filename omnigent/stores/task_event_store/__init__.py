@@ -140,3 +140,16 @@ class TaskEventStore(ABC):
 
         :returns: The event, or ``None`` when missing or someone else's.
         """
+
+    @abstractmethod
+    def assign(
+        self, event_id: str, *, owner_user_id: str | None, task_id: str
+    ) -> TaskEvent | None:
+        """
+        Record the task that the owner's event belongs to, and mark the event handled.
+
+        :param event_id: The event.
+        :param owner_user_id: The event's owner, or ``None`` in single-user mode.
+        :param task_id: The task, e.g. the one its manager filed the event into.
+        :returns: The event, or ``None`` when missing or someone else's.
+        """

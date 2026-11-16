@@ -12,6 +12,9 @@ from omnigent.errors import StaleCursorError
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
+from omnigent.stores.task_subscription_store.sqlalchemy_store import (
+    SqlAlchemyTaskSubscriptionStore,
+)
 from omnigent.stores.watch_item_store import (
     WATCH_CHANGED_EVENT_TYPE,
     WATCH_NEW_EVENT_TYPE,
@@ -40,7 +43,6 @@ def _seen(
     *,
     offsets: dict[str, str | None] | None = None,
     title: str | None = None,
-    task_id: str | None = None,
     summary: str | None = None,
     details: dict[str, Any] | None = None,
     announce: bool = False,
@@ -50,7 +52,6 @@ def _seen(
         source_key=source_key,
         offsets=offsets if offsets is not None else {"state": "open", "checks": "pending@abc"},
         title=title,
-        task_id=task_id,
         summary=summary,
         details=details,
         announce=announce,
@@ -71,17 +72,17 @@ def test_a_first_look_is_silent_and_a_change_records_one_event(db_uri: str) -> N
         now=300,
     )
 
-    assert [(result.outcome, result.event_id) for result in first + same] == [
-        ("new", None),
-        ("unchanged", None),
+    assert [(result.outcome, result.event_ids) for result in first + same] == [
+        ("new", ()),
+        ("unchanged", ()),
     ]
     (result,) = changed
     assert (result.outcome, result.changes) == (
         "changed",
         (WatchChange(offset="checks", before="pending@abc", after="failure@abc"),),
     )
-    assert result.event_id is not None
-    event = events.get(result.event_id, owner_user_id=ALICE)
+    (event_id,) = result.event_ids
+    event = events.get(event_id, owner_user_id=ALICE)
     assert event is not None
     assert (event.event_type, event.state, event.manager_id) == (
         WATCH_CHANGED_EVENT_TYPE,
@@ -121,7 +122,8 @@ def test_null_removes_an_offset_and_names_left_out_keep_their_value(db_uri: str)
     assert [change.offset for change in result.changes] == ["checks", "review"]
     (item,) = store.list(watcher.id, owner_user_id=ALICE).data
     assert item.offsets == {"state": "open", "review": "approved"}
-    event = SqlAlchemyTaskEventStore(db_uri).get(result.event_id or "", owner_user_id=ALICE)
+    (event_id,) = result.event_ids
+    event = SqlAlchemyTaskEventStore(db_uri).get(event_id, owner_user_id=ALICE)
     assert event is not None and event.title == "Approved"
 
 
@@ -133,7 +135,8 @@ def test_an_announced_new_item_records_a_new_event(db_uri: str) -> None:
         watcher, [_seen(title="Review requested", announce=True)], session_id=None, now=100
     )
 
-    event = SqlAlchemyTaskEventStore(db_uri).get(result.event_id or "", owner_user_id=ALICE)
+    (event_id,) = result.event_ids
+    event = SqlAlchemyTaskEventStore(db_uri).get(event_id, owner_user_id=ALICE)
     assert result.outcome == "new"
     assert event is not None
     assert (event.event_type, event.title, event.source_offset) == (
@@ -143,15 +146,18 @@ def test_an_announced_new_item_records_a_new_event(db_uri: str) -> None:
     )
 
 
-def test_a_change_on_a_live_managed_task_goes_straight_to_its_manager(db_uri: str) -> None:
+def test_a_change_goes_to_each_live_task_that_follows_the_item_else_to_the_broker(
+    db_uri: str,
+) -> None:
     store = SqlAlchemyWatchItemStore(db_uri)
     tasks = SqlAlchemyTaskStore(db_uri)
     manager = SqlAlchemyManagerStore(db_uri).create(
         uuid.uuid4().hex, owner_user_id=ALICE, title="Storage"
     )
-    live = tasks.create(
+    managed = tasks.create(
         uuid.uuid4().hex, owner_user_id=ALICE, title="S3 retries", goal="g", manager_id=manager.id
     )
+    unmanaged = tasks.create(uuid.uuid4().hex, owner_user_id=ALICE, title="Review", goal="g")
     archived = tasks.create(
         uuid.uuid4().hex,
         owner_user_id=ALICE,
@@ -160,15 +166,15 @@ def test_a_change_on_a_live_managed_task_goes_straight_to_its_manager(db_uri: st
         manager_id=manager.id,
         state="archived",
     )
+    subscriptions = SqlAlchemyTaskSubscriptionStore(db_uri)
+    for task_id, key in ((managed.id, PR), (unmanaged.id, PR), (archived.id, OTHER_PR)):
+        subscriptions.subscribe(
+            uuid.uuid4().hex, owner_user_id=ALICE, task_id=task_id, source_key=key
+        )
     watcher = _watcher(db_uri)
-    store.observe(
-        watcher,
-        [_seen(task_id=live.id), _seen(OTHER_PR, task_id=archived.id)],
-        session_id=None,
-        now=100,
-    )
+    store.observe(watcher, [_seen(), _seen(OTHER_PR)], session_id=None, now=100)
 
-    results = store.observe(
+    followed, unfollowed = store.observe(
         watcher,
         [_seen(offsets={"state": "merged"}), _seen(OTHER_PR, offsets={"state": "merged"})],
         session_id=None,
@@ -176,21 +182,16 @@ def test_a_change_on_a_live_managed_task_goes_straight_to_its_manager(db_uri: st
     )
 
     events = SqlAlchemyTaskEventStore(db_uri)
-    routed, unrouted = (
-        events.get(result.event_id or "", owner_user_id=ALICE) for result in results
-    )
-    assert routed is not None and unrouted is not None
-    assert (routed.state, routed.manager_id, routed.task_id, routed.tags) == (
-        "routed",
-        manager.id,
-        live.id,
-        [],
-    )
-    assert (unrouted.state, unrouted.manager_id, unrouted.task_id) == (
-        "unrouted",
-        None,
-        archived.id,
-    )
+    copies = [events.get(event_id, owner_user_id=ALICE) for event_id in followed.event_ids]
+    assert {
+        (event.task_id, event.manager_id, event.state, len(event.tags))
+        for event in copies
+        if event is not None
+    } == {(managed.id, manager.id, "routed", 0), (unmanaged.id, None, "unrouted", 2)}
+    (broker_event_id,) = unfollowed.event_ids
+    to_broker = events.get(broker_event_id, owner_user_id=ALICE)
+    assert to_broker is not None
+    assert (to_broker.task_id, to_broker.manager_id, to_broker.state) == (None, None, "unrouted")
 
 
 def test_an_observation_that_would_keep_too_many_offsets_saves_nothing(db_uri: str) -> None:

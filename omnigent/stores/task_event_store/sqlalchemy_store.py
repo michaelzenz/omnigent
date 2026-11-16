@@ -321,3 +321,24 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             return _to_entity(row)
 
         return run_write_transaction(self._session_immediate, "dismiss_task_event", write)
+
+    def assign(
+        self, event_id: str, *, owner_user_id: str | None, task_id: str
+    ) -> TaskEvent | None:
+        """Record the task that the owner's event belongs to, and mark the event handled."""
+        task = normalize_uuid(task_id) or task_id
+        now = now_epoch()
+
+        def write(session: Session) -> TaskEvent | None:
+            require_active_account(session, owner_user_id)
+            row = _owned_row(session, event_id, owner_user_id)
+            if row is None:
+                return None
+            if (row.state, row.task_id) != (_DISMISSED, task):
+                row.state = _DISMISSED
+                row.task_id = task
+                row.processed_at = row.processed_at or now
+                row.updated_at = now
+            return _to_entity(row)
+
+        return run_write_transaction(self._session_immediate, "assign_task_event", write)

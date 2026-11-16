@@ -1428,7 +1428,6 @@ class SqlWatchItem(OmnigentBase):
     :param title: A short label for events and the watcher card; may be empty.
     :param offsets: JSON object of the values the watcher saw last, by name.
     :param status: A ``WATCH_ITEM_STATUS`` code.
-    :param task_id: The task the item belongs to, or ``None``.
     :param version: How many changes the item had; names its change events.
     :param created_at: Unix epoch seconds at row creation.
     :param checked_at: When the watcher last observed it.
@@ -1455,7 +1454,6 @@ class SqlWatchItem(OmnigentBase):
     # MySQL rejects a server default on TEXT, so the store always writes it.
     offsets: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
-    task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     checked_at: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -1486,6 +1484,50 @@ class SqlWatchItem(OmnigentBase):
             "created_at",
             "id",
         ),
+    )
+
+
+class SqlTaskSubscription(OmnigentBase):
+    """
+    SQLAlchemy model for the ``task_subscriptions`` table: keys that GlobalHub tasks follow.
+
+    An event whose source key a live task follows goes to that task's manager.
+    The task's manager subscribes the task; a task follows a key once.
+    Ownership is stamped on the row; there are no foreign keys (Rule R032).
+
+    :param id: Uuid16 primary key (bare 32-char hex in Python).
+    :param owner_user_id: Owning user (the task's owner), or ``None`` in
+        single-user mode.
+    :param task_id: The task that follows the key.
+    :param source_key: The key, e.g. a pull request URL, matched exactly.
+    :param source: The system of the key, e.g. ``"github"``, or ``None``.
+    :param created_at: Unix epoch seconds at row creation.
+    """
+
+    __tablename__ = "task_subscriptions"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    source_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        # A task follows a key once; also serves a task's subscriptions.
+        Index(
+            "ix_task_subscriptions_task_key", "workspace_id", "task_id", "source_key", unique=True
+        ),
+        # The owner's tasks that follow a key, for routing an event.
+        Index("ix_task_subscriptions_key", "workspace_id", "owner_user_id", "source_key"),
     )
 
 

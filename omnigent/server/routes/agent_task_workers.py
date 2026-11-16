@@ -27,6 +27,7 @@ from omnigent.server.schemas import (
 )
 from omnigent.stores import ConversationStore
 from omnigent.stores.permission_store import PermissionStore
+from omnigent.stores.worker_store import WorkerStore
 
 if TYPE_CHECKING:
     from omnigent.server.agent_task_worker_sessions import WorkerSessionStarter
@@ -79,34 +80,14 @@ def create_agent_task_workers_router(
         user_id = require_user(request, auth_provider)
         await require_owned_task(body.task_id, user_id)
         await require_owned_session(session_id, user_id)
-
-        def adopt() -> tuple[Worker, bool]:
-            existing = workers.get_for_task_and_session(
-                body.task_id, session_id, owner_user_id=user_id
-            )
-            if existing is None:
-                try:
-                    created = workers.create(
-                        uuid.uuid4().hex,
-                        owner_user_id=user_id,
-                        task_id=body.task_id,
-                        session_id=session_id,
-                        title=body.title,
-                    )
-                    return created, True
-                except IntegrityError:
-                    # A concurrent adoption attached the session first.
-                    existing = workers.get_for_task_and_session(
-                        body.task_id, session_id, owner_user_id=user_id
-                    )
-                    if existing is None:
-                        raise
-            if body.title is None or body.title == existing.title:
-                return existing, False
-            retitled = workers.update(existing.id, owner_user_id=user_id, title=body.title)
-            return retitled or existing, False
-
-        worker, created = await asyncio.to_thread(adopt)
+        worker, created = await asyncio.to_thread(
+            adopt_worker,
+            workers,
+            owner_user_id=user_id,
+            task_id=body.task_id,
+            session_id=session_id,
+            title=body.title,
+        )
         return AgentTaskSessionAdoption(
             session_id=session_id,
             task_id=body.task_id,
@@ -155,6 +136,48 @@ def create_agent_task_workers_router(
         return AgentTaskWorkerDeletedResponse(id=worker_id)
 
     return router
+
+
+def adopt_worker(
+    workers: WorkerStore,
+    *,
+    owner_user_id: str | None,
+    task_id: str,
+    session_id: str,
+    title: str | None,
+) -> tuple[Worker, bool]:
+    """
+    Attach a session to a task as its worker, or retitle the worker it has. Blocking.
+
+    :param workers: Holds the workers.
+    :param owner_user_id: The task's owner, or ``None`` in single-user mode.
+    :param task_id: The task.
+    :param session_id: The session.
+    :param title: The worker's title; ``None`` keeps the current one.
+    :returns: The worker, and whether this call created it.
+    """
+    existing = workers.get_for_task_and_session(task_id, session_id, owner_user_id=owner_user_id)
+    if existing is None:
+        try:
+            created = workers.create(
+                uuid.uuid4().hex,
+                owner_user_id=owner_user_id,
+                task_id=task_id,
+                session_id=session_id,
+                title=title,
+            )
+            return created, True
+        except IntegrityError:
+            # A concurrent adoption attached the session first.
+            existing = workers.get_for_task_and_session(
+                task_id, session_id, owner_user_id=owner_user_id
+            )
+            if existing is None:
+                raise
+    if title is None or title == existing.title:
+        return existing, False
+    retitled = workers.update(existing.id, owner_user_id=owner_user_id, title=title)
+    return retitled or existing, False
 
 
 def worker_response(worker: Worker) -> AgentTaskWorkerResponse:

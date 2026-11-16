@@ -63,7 +63,7 @@ _BROKER_PROMPT = "[System: route these events to managers]\n"
 _ROSTER_MAX_CHARS = 80_000
 _TURN_FINISHED_ADVICE = (
     "Read the recent session transcript to see what was done. "
-    "Update the task overview and stamp all assets."
+    "Update the task overview, stamp all assets, then assign the event to its task."
 )
 _CLICK_TEXT_SHOWN_CHARS = 500
 #: The most tasks one request for managers lists.
@@ -631,10 +631,8 @@ def _task_line(task: Task) -> str:
 
 def _watch_item_line(item: WatchItem) -> str:
     title = f' "{item.title}"' if item.title else ""
-    task = f" task {item.task_id}" if item.task_id else ""
     offsets = ", ".join(f"{name}={value}" for name, value in item.offsets.items())
     checked = datetime.fromtimestamp(item.checked_at, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
     return (
-        f"- {item.source} {item.source_key}{title}{task}: "
-        f"{offsets or 'no offsets'} (checked {checked})"
+        f"- {item.source} {item.source_key}{title}: {offsets or 'no offsets'} (checked {checked})"
     )

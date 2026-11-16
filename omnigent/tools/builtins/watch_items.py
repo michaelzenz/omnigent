@@ -15,7 +15,12 @@ _ITEM_SCHEMA: dict[str, Any] = {
         },
         "source_key": {
             "type": "string",
-            "description": "What you track there, e.g. a pull request URL or a ticket key.",
+            "description": (
+                "What you track there, in its canonical form: a pull request as "
+                "https://github.com/<org>/<repo>/pull/<number> (no query, fragment, trailing "
+                "slash or page such as /files), a ticket as its key. Tasks follow keys by an "
+                "exact match, so always write a key the same way."
+            ),
         },
         "offsets": {
             "type": "object",
@@ -31,13 +36,6 @@ _ITEM_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": (
                 'A short label, e.g. "repo#12 Fix retry"; omit it to keep the saved one.'
-            ),
-        },
-        "task_id": {
-            "type": "string",
-            "description": (
-                "The id of the GlobalHub task the item belongs to. Its manager then gets the "
-                "item's changes directly. Omit it to keep the saved one."
             ),
         },
         "summary": {
@@ -73,8 +71,9 @@ class WatchItemsTool(Tool):
         return (
             "Track the things you watch across your runs; you can track any number of items. "
             "'observe' sends each item's current state as named offsets; the server compares "
-            "them with the last run and reports each change to the user's task managers, so "
-            "do not report changes any other way. A new item is a silent first look unless "
+            "them with the last run and reports each change to the managers of the tasks that "
+            "follow the item's source_key, else to the broker, so do not report changes any "
+            "other way. A new item is a silent first look unless "
             "you set announce. 'list' returns a page of your items with the offsets you saw "
             "last, in the order you started to track them; while has_more is true, pass the "
             "page's last_id as after for the next page. 'done' stops checking items, e.g. "

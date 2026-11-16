@@ -87,7 +87,7 @@ async def test_only_the_watchers_own_session_uses_its_tracker(
     }
 
 
-async def test_observe_reports_changes_to_the_broker_or_the_tasks_manager(
+async def test_observe_reports_changes_to_the_broker_or_the_following_tasks_manager(
     auth_client: httpx.AsyncClient, db_uri: str
 ) -> None:
     watcher_id, own_runner = await _watcher_session(auth_client, db_uri)
@@ -100,10 +100,16 @@ async def test_observe_reports_changes_to_the_broker_or_the_tasks_manager(
         headers=ALICE,
     )
     task_id = task.json()["id"]
+    # The manager subscribes the task to the pull request.
+    await auth_client.post(
+        f"/v1/agent-tasks/{task_id}/subscriptions",
+        json={"source_key": OTHER_PR, "source": "github"},
+        headers=ALICE,
+    )
 
     first = await auth_client.post(
         f"{OWN_ITEMS}/observe",
-        json={"items": [_item(title="repo#12"), _item(OTHER_PR, task_id=task_id)]},
+        json={"items": [_item(title="repo#12"), _item(OTHER_PR)]},
         headers=own_runner,
     )
     second = await auth_client.post(
@@ -117,9 +123,9 @@ async def test_observe_reports_changes_to_the_broker_or_the_tasks_manager(
         headers=own_runner,
     )
 
-    assert [(row["outcome"], row["event_id"]) for row in first.json()["data"]] == [
-        ("new", None),
-        ("new", None),
+    assert [(row["outcome"], row["event_ids"]) for row in first.json()["data"]] == [
+        ("new", []),
+        ("new", []),
     ]
     merged, closed = second.json()["data"]
     assert (merged["outcome"], merged["changes"]) == (
@@ -127,8 +133,10 @@ async def test_observe_reports_changes_to_the_broker_or_the_tasks_manager(
         [{"offset": "state", "before": "open", "after": "merged"}],
     )
     events = SqlAlchemyTaskEventStore(db_uri)
-    to_broker = events.get(merged["event_id"], owner_user_id=ALICE_ID)
-    to_manager = events.get(closed["event_id"], owner_user_id=ALICE_ID)
+    (broker_event_id,) = merged["event_ids"]
+    (manager_event_id,) = closed["event_ids"]
+    to_broker = events.get(broker_event_id, owner_user_id=ALICE_ID)
+    to_manager = events.get(manager_event_id, owner_user_id=ALICE_ID)
     assert to_broker is not None and to_manager is not None
     assert (to_broker.state, to_broker.title, to_broker.payload["watcher"]["id"]) == (
         "unrouted",
@@ -150,9 +158,7 @@ async def test_observe_refuses_a_bad_call_and_saves_nothing(
     path = f"{OWN_ITEMS}/observe"
 
     responses = [
-        await auth_client.post(
-            path, json={"items": [_item(task_id="not-a-task")]}, headers=own_runner
-        ),
+        # Subscriptions route a watcher's changes, so an item names no task.
         await auth_client.post(
             path, json={"items": [_item(task_id=uuid.uuid4().hex)]}, headers=own_runner
         ),
@@ -163,9 +169,13 @@ async def test_observe_refuses_a_bad_call_and_saves_nothing(
             headers=own_runner,
         ),
         await auth_client.post(path, json={"items": []}, headers=own_runner),
+        # The server keeps the session source for its session events.
+        await auth_client.post(
+            path, json={"items": [_item(), _item(source="session")]}, headers=own_runner
+        ),
     ]
 
-    assert [response.status_code for response in responses] == [400, 400, 422, 422, 422]
+    assert [response.status_code for response in responses] == [422, 422, 422, 422, 400]
     assert (await auth_client.get(OWN_ITEMS, headers=own_runner)).json()["total"] == 0
 
 

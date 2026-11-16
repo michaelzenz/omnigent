@@ -165,7 +165,7 @@ class TaskStore(ABC):
 
     @abstractmethod
     def delete(self, task_id: str, *, owner_user_id: str | None) -> bool:
-        """Permanently delete the owner's task, its workers and its assets.
+        """Permanently delete the owner's task, its workers, assets and subscriptions.
 
         :returns: Whether the task existed.
         """

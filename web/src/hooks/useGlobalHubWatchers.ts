@@ -67,7 +67,6 @@ export interface WatchItem {
   title: string;
   offsets: Record<string, string>;
   status: "active" | "done";
-  task_id: string | null;
   created_at: number;
   checked_at: number;
   changed_at: number | null;

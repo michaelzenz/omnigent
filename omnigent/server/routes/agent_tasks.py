@@ -191,7 +191,7 @@ def create_agent_tasks_router(
 
     @router.delete("/agent-tasks/{task_id}/permanent", response_model=AgentTaskDeletedResponse)
     async def delete_task_permanently(request: Request, task_id: str) -> AgentTaskDeletedResponse:
-        """Permanently delete one of the caller's tasks, its workers and its assets.
+        """Permanently delete one of the caller's tasks, its workers, assets and subscriptions.
 
         The manager's and workers' sessions keep running as ordinary sessions.
         """

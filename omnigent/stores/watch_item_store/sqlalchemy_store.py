@@ -13,19 +13,14 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from omnigent.db.account_authority import require_active_account
-from omnigent.db.db_models import SqlTask, SqlWatchItem, current_workspace_id
-from omnigent.db.enum_codecs import (
-    decode_watch_item_status,
-    encode_task_state,
-    encode_watch_item_status,
-)
+from omnigent.db.db_models import SqlWatchItem, current_workspace_id
+from omnigent.db.enum_codecs import decode_watch_item_status, encode_watch_item_status
 from omnigent.db.utils import (
     get_or_create_engine,
     make_named_managed_session_maker,
     run_write_transaction,
 )
 from omnigent.entities import (
-    LIVE_TASK_STATES,
     MAX_WATCH_ITEM_OFFSETS,
     EventTag,
     PagedList,
@@ -34,6 +29,7 @@ from omnigent.entities import (
 )
 from omnigent.errors import StaleCursorError
 from omnigent.stores.task_event_store.sqlalchemy_store import new_task_event_row
+from omnigent.stores.task_subscription_store.sqlalchemy_store import live_followers
 from omnigent.stores.watch_item_store import (
     WATCH_CHANGED_EVENT_TYPE,
     WATCH_NEW_EVENT_TYPE,
@@ -43,11 +39,10 @@ from omnigent.stores.watch_item_store import (
     WatchObservation,
     WatchObservationResult,
 )
-from omnigent.util.uuid import InvalidUuidError, normalize_uuid, uuid_to_bytes
+from omnigent.util.uuid import InvalidUuidError, uuid_to_bytes
 
 _ACTIVE = encode_watch_item_status("active")
 _DONE = encode_watch_item_status("done")
-_LIVE_TASK_CODES = frozenset(encode_task_state(state) for state in LIVE_TASK_STATES)
 _EVENT_TITLE_MAX_CHARS = 512
 
 
@@ -63,7 +58,6 @@ def _to_entity(row: SqlWatchItem) -> WatchItem:
         status=decode_watch_item_status(row.status),
         created_at=row.created_at,
         checked_at=row.checked_at,
-        task_id=row.task_id,
         version=row.version,
         changed_at=row.changed_at,
         done_at=row.done_at,
@@ -150,7 +144,6 @@ class SqlAlchemyWatchItemStore(WatchItemStore):
         owner_user_id: str | None,
         statuses: Collection[str] = ("active",),
         source: str | None = None,
-        task_id: str | None = None,
         limit: int = 100,
         after: str | None = None,
     ) -> PagedList[WatchItem]:
@@ -161,8 +154,6 @@ class SqlAlchemyWatchItemStore(WatchItemStore):
         )
         if source is not None:
             stmt = stmt.where(SqlWatchItem.source == source)
-        if task_id is not None:
-            stmt = stmt.where(SqlWatchItem.task_id == normalize_uuid(task_id))
         with self._session("list_watch_items") as session:
             if after:
                 try:
@@ -249,12 +240,14 @@ class SqlAlchemyWatchItemStore(WatchItemStore):
                     row = _new_row(watcher, observation, now)
                     session.add(row)
                     rows[key] = row
-                    event_id = (
+                    event_ids = (
                         _record(session, watcher, row, observation, (), session_id, now)
                         if observation.announce
-                        else None
+                        else ()
                     )
-                    results.append(WatchObservationResult(*key, outcome="new", event_id=event_id))
+                    results.append(
+                        WatchObservationResult(*key, outcome="new", event_ids=event_ids)
+                    )
                     continue
                 results.append(_observe_row(session, watcher, row, observation, session_id, now))
             return results
@@ -338,7 +331,6 @@ def _new_row(watcher: Watcher, observation: WatchObservation, now: int) -> SqlWa
         title=observation.title or "",
         offsets=_keep_offsets(offsets),
         status=_ACTIVE,
-        task_id=observation.task_id,
         version=0,
         created_at=now,
         checked_at=now,
@@ -355,14 +347,12 @@ def _observe_row(
     session_id: str | None,
     now: int,
 ) -> WatchObservationResult:
-    """Apply an observation to a tracked item; record an event when an offset changed."""
+    """Apply an observation to a tracked item; record events when an offset changed."""
     if row.status == _DONE:
         row.status = _ACTIVE
         row.done_at = None
     if observation.title is not None:
         row.title = observation.title
-    if observation.task_id is not None:
-        row.task_id = observation.task_id
     row.checked_at = now
     merged, changes = _merge(json.loads(row.offsets), observation.offsets)
     key = (row.source, row.source_key)
@@ -371,9 +361,9 @@ def _observe_row(
     row.offsets = _keep_offsets(merged)
     row.version += 1
     row.changed_at = now
-    event_id = _record(session, watcher, row, observation, changes, session_id, now)
+    event_ids = _record(session, watcher, row, observation, changes, session_id, now)
     return WatchObservationResult(
-        *key, outcome="changed", changes=tuple(changes), event_id=event_id
+        *key, outcome="changed", changes=tuple(changes), event_ids=event_ids
     )
 
 
@@ -385,15 +375,18 @@ def _record(
     changes: Sequence[WatchChange],
     session_id: str | None,
     now: int,
-) -> str:
-    """Add the event for a change, or for a new item without changes; return its id."""
-    manager_id = _live_task_manager(session, row.task_id, row.owner_user_id)
+) -> tuple[str, ...]:
+    """
+    Add the events for a change, or for a new item without changes; return their ids.
+
+    Each live task that follows the item's key gets an event with the task's
+    label, through its manager. Without such a task, one event goes to the broker.
+    """
     payload: dict[str, Any] = {
         "watcher": {"id": watcher.id, "name": watcher.name},
         "source": row.source,
         "source_key": row.source_key,
         "title": row.title,
-        "task_id": row.task_id,
         "offsets": json.loads(row.offsets),
         "changes": [
             {"offset": change.offset, "before": change.before, "after": change.after}
@@ -402,40 +395,37 @@ def _record(
     }
     if observation.details is not None:
         payload["details"] = dict(observation.details)
-    event_id = uuid.uuid4().hex
-    session.add(
-        new_task_event_row(
-            event_id,
-            owner_user_id=row.owner_user_id,
-            event_type=WATCH_CHANGED_EVENT_TYPE if changes else WATCH_NEW_EVENT_TYPE,
-            title=_event_title(row, observation, changes),
-            now=now,
-            payload=payload,
-            source=row.source,
-            source_key=row.source_key,
-            source_offset=f"v{row.version}" if changes else "new",
-            source_session_id=session_id,
-            # The broker clusters unrouted events by their tags.
-            tags=(
-                ()
-                if manager_id is not None
-                else (
-                    EventTag(tag_type="source", tag=row.source),
-                    EventTag(tag_type="watcher", tag=watcher.name),
-                )
-            ),
-            task_id=row.task_id,
-            manager_id=manager_id,
-        )
+    followers = live_followers(
+        session, owner_user_id=row.owner_user_id, source=row.source, source_key=row.source_key
     )
-    return event_id
-
-
-def _live_task_manager(session: Session, task_id: str | None, owner: str | None) -> str | None:
-    """Return the manager of the owner's live task, or ``None`` to send events to the broker."""
-    if task_id is None:
-        return None
-    task = session.get(SqlTask, (current_workspace_id(), task_id))
-    if task is None or task.owner_user_id != owner or task.state not in _LIVE_TASK_CODES:
-        return None
-    return task.manager_id
+    targets = [(follower.task_id, follower.manager_id) for follower in followers]
+    event_ids: list[str] = []
+    for task_id, manager_id in targets or [(None, None)]:
+        event_id = uuid.uuid4().hex
+        session.add(
+            new_task_event_row(
+                event_id,
+                owner_user_id=row.owner_user_id,
+                event_type=WATCH_CHANGED_EVENT_TYPE if changes else WATCH_NEW_EVENT_TYPE,
+                title=_event_title(row, observation, changes),
+                now=now,
+                payload=payload,
+                source=row.source,
+                source_key=row.source_key,
+                source_offset=f"v{row.version}" if changes else "new",
+                source_session_id=session_id,
+                # The broker clusters unrouted events by their tags.
+                tags=(
+                    ()
+                    if manager_id is not None
+                    else (
+                        EventTag(tag_type="source", tag=row.source),
+                        EventTag(tag_type="watcher", tag=watcher.name),
+                    )
+                ),
+                task_id=task_id,
+                manager_id=manager_id,
+            )
+        )
+        event_ids.append(event_id)
+    return tuple(event_ids)

@@ -85,7 +85,6 @@ function item(id: string, fields: Partial<WatchItem> = {}): WatchItem {
     title: `PR ${id}`,
     offsets: { state: "open" },
     status: "active",
-    task_id: null,
     created_at: 1,
     checked_at: Math.floor(Date.now() / 1000) - 5 * 60,
     changed_at: null,

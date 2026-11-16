@@ -17,7 +17,7 @@ from fastapi import APIRouter, Query, Request
 from omnigent.agent_tasks.board_stores import BoardStores
 from omnigent.agent_tasks.role_sessions import RoleSessionStores
 from omnigent.db.utils import now_epoch
-from omnigent.entities import Conversation, Watcher, WatchItem
+from omnigent.entities import SESSION_EVENT_SOURCE, Conversation, Watcher, WatchItem
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._agent_task_callers import runner_bound_caller
@@ -40,7 +40,6 @@ from omnigent.stores.watch_item_store import (
     WatchObservation,
     WatchObservationResult,
 )
-from omnigent.util.uuid import InvalidUuidError, uuid_to_bytes
 
 _STATUSES: dict[str, tuple[str, ...]] = {
     "active": ("active",),
@@ -58,7 +57,7 @@ def create_agent_task_watch_items_router(
 ) -> APIRouter:
     """Build the router for what the caller's GlobalHub watchers track.
 
-    :param board: Holds the watchers, their items and the tasks items name.
+    :param board: Holds the watchers and their items.
     :param sessions: Finds the session behind a watcher's call.
     :param auth_provider: Identifies the caller; ``None`` is single-user mode.
     :returns: A configured :class:`APIRouter`.
@@ -85,7 +84,6 @@ def create_agent_task_watch_items_router(
         statuses: Collection[str],
         *,
         source: str | None = None,
-        task_id: str | None = None,
         limit: int,
         after: str | None,
     ) -> WatchItemList:
@@ -94,7 +92,6 @@ def create_agent_task_watch_items_router(
             owner_user_id=user_id,
             statuses=statuses,
             source=source,
-            task_id=task_id,
             limit=limit,
             after=after,
         )
@@ -106,39 +103,11 @@ def create_agent_task_watch_items_router(
             total=items.count(watcher_id, owner_user_id=user_id, statuses=statuses),
         )
 
-    def observation(
-        index: int, item: WatchItemObservation, user_id: str | None
-    ) -> WatchObservation:
-        task_id: str | None = None
-        if item.task_id is not None and item.task_id.strip():
-            try:
-                task_id = uuid_to_bytes(item.task_id.strip()).hex()
-            except InvalidUuidError as exc:
-                raise OmnigentError(
-                    f"items[{index}]: {item.task_id!r} is not a task id",
-                    code=ErrorCode.INVALID_INPUT,
-                ) from exc
-            if board.tasks.get(task_id, owner_user_id=user_id) is None:
-                raise OmnigentError(
-                    f"items[{index}]: task {item.task_id} not found", code=ErrorCode.INVALID_INPUT
-                )
-        return WatchObservation(
-            source=item.source,
-            source_key=item.source_key,
-            offsets=item.offsets,
-            title=item.title.strip() if item.title is not None else None,
-            task_id=task_id,
-            summary=item.summary,
-            details=item.details,
-            announce=item.announce,
-        )
-
     @router.get("/agent-tasks/watchers/self/items", response_model=WatchItemList)
     async def list_own_items(
         request: Request,
         status: WatchItemStatusFilter = "active",
         source: str | None = None,
-        task_id: str | None = None,
         limit: int = Query(default=100, ge=1, le=_PAGE_MAX),
         after: str | None = None,
     ) -> WatchItemList:
@@ -156,7 +125,6 @@ def create_agent_task_watch_items_router(
                 user_id,
                 _STATUSES[status],
                 source=source,
-                task_id=task_id,
                 limit=limit,
                 after=after,
             )
@@ -169,20 +137,23 @@ def create_agent_task_watch_items_router(
     async def observe_own_items(
         request: Request, body: ObserveWatchItemsRequest
     ) -> ObserveWatchItemsResponse:
-        """Save what the calling watcher sees now; each change records a task event.
+        """Save what the calling watcher sees now; each change records task events.
 
-        A new item is a silent baseline unless ``announce`` is set. An event goes
-        to the manager of the item's task when that task is live and has one,
-        else to the broker. Every item is checked before anything is saved, so a
-        refused call changes nothing.
+        A new item is a silent baseline unless ``announce`` is set. Each live
+        task that follows the item's key gets an event through its manager;
+        without such a task, the broker gets one. Every item is checked before
+        anything is saved, so a refused call changes nothing.
         """
         user_id = require_user(request, auth_provider)
+        if any(item.source == SESSION_EVENT_SOURCE for item in body.items):
+            raise OmnigentError(
+                f"the source {SESSION_EVENT_SOURCE!r} is the server's own, for session events",
+                code=ErrorCode.INVALID_INPUT,
+            )
 
         def observe() -> list[WatchObservationResult]:
             watcher, session = calling_watcher(request, user_id)
-            observations = [
-                observation(index, item, user_id) for index, item in enumerate(body.items)
-            ]
+            observations = [_observation(item) for item in body.items]
             try:
                 return items.observe(watcher, observations, session_id=session.id, now=now_epoch())
             except WatchItemLimitError as exc:
@@ -234,6 +205,18 @@ def create_agent_task_watch_items_router(
     return router
 
 
+def _observation(item: WatchItemObservation) -> WatchObservation:
+    return WatchObservation(
+        source=item.source,
+        source_key=item.source_key,
+        offsets=item.offsets,
+        title=item.title.strip() if item.title is not None else None,
+        summary=item.summary,
+        details=item.details,
+        announce=item.announce,
+    )
+
+
 def _item(item: WatchItem) -> WatchItemResponse:
     return WatchItemResponse(
         id=item.id,
@@ -242,7 +225,6 @@ def _item(item: WatchItem) -> WatchItemResponse:
         title=item.title,
         offsets=item.offsets,
         status=cast(Literal["active", "done"], item.status),
-        task_id=item.task_id,
         created_at=item.created_at,
         checked_at=item.checked_at,
         changed_at=item.changed_at,
@@ -259,5 +241,5 @@ def _result(result: WatchObservationResult) -> WatchItemObservationResult:
             WatchItemChange(offset=change.offset, before=change.before, after=change.after)
             for change in result.changes
         ],
-        event_id=result.event_id,
+        event_ids=list(result.event_ids),
     )
