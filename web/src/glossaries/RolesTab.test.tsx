@@ -92,6 +92,7 @@ function serveRoles(profiles: RoleProfile[]): void {
     const path = decodeURIComponent(String(input));
     if (path === "/v1/agent-tasks/roles/profiles")
       return jsonResponse({ data: [...byRole.values()] });
+    if (path === "/v1/agent-tasks/watchers") return jsonResponse({ data: [] });
     if (path === "/v1/agent-tasks/board/roles") {
       return jsonResponse({
         data: [

@@ -7,9 +7,10 @@ const BACKGROUND_ROLE_VALUES: ReadonlySet<string> = new Set([
   "task_broker",
   "task_manager",
   "task_custodian",
+  "task_watcher",
 ]);
 
-/** Whether a session is a GlobalHub role: the broker, a manager, or the custodian. */
+/** Whether a session is a GlobalHub role: the broker, a manager, the custodian or a watcher. */
 export function isBackgroundRoleSession(labels: Record<string, string> | undefined): boolean {
   const role = labels?.[ROLE_LABEL_KEY];
   return role !== undefined && BACKGROUND_ROLE_VALUES.has(role);

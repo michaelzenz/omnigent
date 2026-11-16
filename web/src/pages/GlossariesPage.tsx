@@ -7,7 +7,9 @@ export function GlossariesPage() {
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="glossaries-page">
       <div className="border-b px-4 py-3">
         <h1 className="text-lg font-semibold">Glossaries</h1>
-        <p className="text-sm text-muted-foreground">How your Global Hub roles behave.</p>
+        <p className="text-sm text-muted-foreground">
+          How your Global Hub roles and watchers behave.
+        </p>
       </div>
       <Tabs defaultValue="roles" className="min-h-0 flex-1 gap-0">
         <div className="shrink-0 border-b px-4 py-2">

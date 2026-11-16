@@ -54,6 +54,11 @@ export function scheduleChange(
   };
 }
 
+/** The schedule a draft saves as when nothing is saved yet, even while it is off. */
+export function scheduleSettings(draft: RoleScheduleDraft): RoleScheduleSettings {
+  return { enabled: draft.enabled, rrule: buildRRule(draft.model), timezone: draft.timezone };
+}
+
 /** Why the draft cannot be saved, or `null`; a schedule that is off always saves. */
 export function scheduleError(draft: RoleScheduleDraft): string | null {
   return draft.enabled ? validateSchedule(draft.model, ROLE_SCHEDULE_LIMITS) : null;

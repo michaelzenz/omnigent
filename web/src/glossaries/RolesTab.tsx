@@ -1,14 +1,5 @@
-import { type ReactNode, useId, useState } from "react";
-import { MessageResponse } from "@/components/ai-elements/message";
-import { Badge } from "@/components/ui/badge";
+import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -20,9 +11,7 @@ import {
   useRoleProfiles,
   useSaveRoleProfile,
 } from "@/hooks/useGlobalHubRoleProfiles";
-import { useGlobalHubSettings } from "@/hooks/useGlobalHubSettings";
-import { useHostModelOptions } from "@/hooks/useHosts";
-import { nativeModelLabel } from "@/lib/composerModelLabel";
+import { ManualRow, RoleModelSelect, SavedStatus, SettingRow } from "./RoleFields";
 import {
   RoleScheduleField,
   type RoleScheduleDraft,
@@ -30,34 +19,39 @@ import {
   scheduleDraft,
   scheduleError,
 } from "./RoleScheduleField";
+import { WatchersSection } from "./WatchersSection";
 
-// The harness that the GlobalHub role agents run.
-const ROLE_HARNESS = "pi";
-const ROLE_DEFAULT_MODEL = "__role_default__";
-
-/** The user's GlobalHub roles, each with its description, model and manual. */
+/** The user's GlobalHub roles: the built-in roles, then the watchers that the user defines. */
 export function RolesTab() {
-  const profiles = useRoleProfiles();
-  if (profiles.isPending) {
-    return (
-      <div className="flex justify-center p-8">
-        <Spinner className="size-5 text-muted-foreground" aria-label="Loading roles" />
-      </div>
-    );
-  }
-  if (profiles.isError) {
-    return (
-      <p role="alert" className="p-8 text-center text-sm text-destructive">
-        Could not load the roles: {profiles.error.message}
-      </p>
-    );
-  }
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-4" data-testid="glossaries-roles">
-      {profiles.data.map((summary) => (
-        <RoleCard key={summary.role} summary={summary} />
-      ))}
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-8" data-testid="glossaries-roles">
+      <BuiltinRoles />
+      <WatchersSection />
     </div>
+  );
+}
+
+/** The broker, the manager and the custodian, each with its description, model and manual. */
+function BuiltinRoles() {
+  const profiles = useRoleProfiles();
+  return (
+    <section className="flex flex-col gap-4">
+      <div>
+        <h2 className="text-lg font-semibold">Built-in roles</h2>
+        <p className="text-sm text-muted-foreground">The roles that run your board.</p>
+      </div>
+      {profiles.isPending ? (
+        <div className="flex justify-center p-8">
+          <Spinner className="size-5 text-muted-foreground" aria-label="Loading roles" />
+        </div>
+      ) : profiles.isError ? (
+        <p role="alert" className="p-8 text-center text-sm text-destructive">
+          Could not load the roles: {profiles.error.message}
+        </p>
+      ) : (
+        profiles.data.map((summary) => <RoleCard key={summary.role} summary={summary} />)
+      )}
+    </section>
   );
 }
 
@@ -73,7 +67,7 @@ function RoleCard({ summary }: { summary: RoleProfileSummary }) {
       className="space-y-4 rounded-xl border border-border bg-card p-4"
       data-testid={`role-card-${summary.role}`}
     >
-      <h2 className="text-base font-semibold">{summary.title}</h2>
+      <h3 className="text-base font-semibold">{summary.title}</h3>
       {profile.data ? (
         <RoleForm
           key={formVersion}
@@ -132,7 +126,6 @@ function RoleForm({
   const [model, setModel] = useState(profile.model);
   const [manual, setManual] = useState(profile.manual);
   const [schedule, setSchedule] = useState(() => scheduleDraft(profile.schedule));
-  const [previewManual, setPreviewManual] = useState(false);
   const changes = changesFrom(profile, { description, model, manual, schedule });
   const changed = Object.keys(changes).length > 0;
   const invalid = profile.schedulable && scheduleError(schedule) !== null;
@@ -182,39 +175,14 @@ function RoleForm({
           />
         </SettingRow>
       )}
-      <SettingRow
+      <ManualRow
         id={`${ids}-manual`}
-        label="Manual"
+        value={manual}
+        defaultValue={profile.default_manual}
         customized={customized("manual")}
         hint="Sent with every turn of the role's sessions, from the next turn."
-        onReset={
-          manual === profile.default_manual ? undefined : () => setManual(profile.default_manual)
-        }
-        trailing={
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-pressed={previewManual}
-            onClick={() => setPreviewManual((value) => !value)}
-          >
-            {previewManual ? "Edit" : "Preview"}
-          </Button>
-        }
-      >
-        {previewManual ? (
-          <div className="max-h-96 overflow-auto rounded-md border border-border p-3 text-ui">
-            <MessageResponse>{manual}</MessageResponse>
-          </div>
-        ) : (
-          <Textarea
-            id={`${ids}-manual`}
-            rows={16}
-            className="font-mono text-xs"
-            value={manual}
-            onChange={(event) => setManual(event.target.value)}
-          />
-        )}
-      </SettingRow>
+        onChange={setManual}
+      />
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
@@ -245,92 +213,5 @@ function RoleForm({
         </p>
       )}
     </div>
-  );
-}
-
-function SettingRow({
-  id,
-  label,
-  customized,
-  hint,
-  onReset,
-  trailing,
-  children,
-}: {
-  id: string;
-  label: string;
-  customized: boolean;
-  hint?: string;
-  /** Puts the default back in the field; absent while the field holds the default. */
-  onReset?: () => void;
-  trailing?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <label htmlFor={id} className="text-sm font-medium">
-          {label}
-        </label>
-        {customized && <Badge variant="outline">Customized</Badge>}
-        <div className="ml-auto flex items-center gap-1">
-          {trailing}
-          {onReset && (
-            <Button variant="ghost" size="sm" onClick={onReset}>
-              Reset to default
-            </Button>
-          )}
-        </div>
-      </div>
-      {children}
-      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-    </div>
-  );
-}
-
-/** The models the user's GlobalHub host offers for the role harness, and the role default. */
-function RoleModelSelect({
-  id,
-  value,
-  onChange,
-}: {
-  id: string;
-  value: string | null;
-  onChange: (model: string | null) => void;
-}) {
-  const settings = useGlobalHubSettings();
-  const hostId = settings.data?.host_id ?? null;
-  const options = useHostModelOptions(hostId, ROLE_HARNESS, hostId !== null, { poll: false });
-  const models = options.data ?? [];
-  const listed = value === null || models.some((option) => option.id === value);
-  return (
-    <Select
-      value={value ?? ROLE_DEFAULT_MODEL}
-      onValueChange={(next) => onChange(next === ROLE_DEFAULT_MODEL ? null : next)}
-    >
-      <SelectTrigger id={id} className="w-full max-w-sm">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={ROLE_DEFAULT_MODEL}>Role default</SelectItem>
-        {!listed && value !== null && <SelectItem value={value}>{value}</SelectItem>}
-        {models.map((option) => (
-          <SelectItem key={option.id} value={option.id}>
-            {nativeModelLabel(option)}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
-function SavedStatus({ switched, notSwitched }: { switched: number; notSwitched: string[] }) {
-  const sessions = (count: number) => `${count} running session${count === 1 ? "" : "s"}`;
-  return (
-    <p role="status" className="text-xs text-muted-foreground">
-      Saved.
-      {switched > 0 && ` ${sessions(switched)} switched to the new model.`}
-      {notSwitched.length > 0 && ` Could not switch: ${notSwitched.join(", ")}.`}
-    </p>
   );
 }
