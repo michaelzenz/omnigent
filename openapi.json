@@ -1,6 +1,58 @@
 {
   "components": {
     "schemas": {
+      "AddAgentTextCommentRequest": {
+        "additionalProperties": false,
+        "description": "A comment on a span of a completed agent message, with offsets in UTF-16 units.",
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "title": "Body",
+            "type": "string"
+          },
+          "conversation_item_id": {
+            "title": "Conversation Item Id",
+            "type": "string"
+          },
+          "end_offset": {
+            "format": "int64",
+            "title": "End Offset",
+            "type": "integer"
+          },
+          "prefix_context": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Prefix Context",
+            "type": "string"
+          },
+          "selected_text": {
+            "maxLength": 100000,
+            "title": "Selected Text",
+            "type": "string"
+          },
+          "start_offset": {
+            "format": "int64",
+            "minimum": 0.0,
+            "title": "Start Offset",
+            "type": "integer"
+          },
+          "suffix_context": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Suffix Context",
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_item_id",
+          "start_offset",
+          "end_offset",
+          "selected_text",
+          "body"
+        ],
+        "title": "AddAgentTextCommentRequest",
+        "type": "object"
+      },
       "AddCommentRequest": {
         "description": "Request body for `POST /sessions/{id}/comments`.",
         "properties": {
@@ -2466,6 +2518,103 @@
         "title": "AgentTaskWorkerResponse",
         "type": "object"
       },
+      "AgentTextCommentDeleted": {
+        "description": "A deleted comment.",
+        "properties": {
+          "deleted": {
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "title": "AgentTextCommentDeleted",
+        "type": "object"
+      },
+      "AgentTextCommentResponse": {
+        "description": "One of the caller's unsent comments on a completed agent message.",
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "conversation_id": {
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "conversation_item_id": {
+            "title": "Conversation Item Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "int64",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "end_offset": {
+            "format": "int64",
+            "title": "End Offset",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "prefix_context": {
+            "title": "Prefix Context",
+            "type": "string"
+          },
+          "selected_text": {
+            "title": "Selected Text",
+            "type": "string"
+          },
+          "start_offset": {
+            "format": "int64",
+            "title": "Start Offset",
+            "type": "integer"
+          },
+          "suffix_context": {
+            "title": "Suffix Context",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "int64",
+            "title": "Updated At",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "conversation_item_id",
+          "start_offset",
+          "end_offset",
+          "selected_text",
+          "prefix_context",
+          "suffix_context",
+          "body",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AgentTextCommentResponse",
+        "type": "object"
+      },
+      "AgentTextCommentsDeleted": {
+        "description": "The ids of the caller's comments that were deleted.",
+        "properties": {
+          "deleted_comment_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Deleted Comment Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "deleted_comment_ids"
+        ],
+        "title": "AgentTextCommentsDeleted",
+        "type": "object"
+      },
       "AssignAgentTaskEventRequest": {
         "additionalProperties": false,
         "description": "Assign one of the caller's events to one of their tasks, and mark the event handled.\n\nThe task then follows the event's key, so later events with the key go to\nthe task's manager. A session event makes the session the task's worker,\nwith `title` as the worker's title; another event with a source key\nsubscribes the task to that key.",
@@ -4476,6 +4625,25 @@
           "day"
         ],
         "title": "DailyCost",
+        "type": "object"
+      },
+      "DeleteAgentTextCommentsRequest": {
+        "additionalProperties": false,
+        "description": "The ids of the caller's comments to delete, e.g. a batch just sent.",
+        "properties": {
+          "comment_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Comment Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "comment_ids"
+        ],
+        "title": "DeleteAgentTextCommentsRequest",
         "type": "object"
       },
       "ElicitationRequestEvent": {
@@ -16596,6 +16764,22 @@
         "title": "UpdateAgentTaskRequest",
         "type": "object"
       },
+      "UpdateAgentTextCommentRequest": {
+        "additionalProperties": false,
+        "description": "A new body for one of the caller's comments.",
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "title": "Body",
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "title": "UpdateAgentTextCommentRequest",
+        "type": "object"
+      },
       "UpdateCodexGoalStatusRequest": {
         "additionalProperties": false,
         "description": "Request body for `PATCH /v1/sessions/{id}/codex_goal/status`.\n\nCodex app-server represents pause/resume as `thread/goal/set` status\nupdates. Omnigent exposes the two user-driven transitions explicitly:\n`\"paused\"` pauses an active goal, and `\"active\"` resumes a paused,\nblocked, or usage-limited goal.",
@@ -24318,6 +24502,269 @@
         "summary": "Update Session Agent",
         "tags": [
           "sessions"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/agent-text-comments": {
+      "get": {
+        "description": "List the caller's unsent comments in the session, oldest first.",
+        "operationId": "list_agent_text_comments_v1_sessions__session_id__agent_text_comments_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AgentTextCommentResponse"
+                  },
+                  "title": "Response List Agent Text Comments V1 Sessions  Session Id  Agent Text Comments Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Agent Text Comments",
+        "tags": [
+          "comments"
+        ]
+      },
+      "post": {
+        "description": "Add a comment on a completed agent message to the caller's batch.",
+        "operationId": "add_agent_text_comment_v1_sessions__session_id__agent_text_comments_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddAgentTextCommentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTextCommentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Agent Text Comment",
+        "tags": [
+          "comments"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/agent-text-comments/delete-batch": {
+      "post": {
+        "description": "Delete the caller's comments among the ids, e.g. a batch that was just sent.",
+        "operationId": "delete_agent_text_comments_v1_sessions__session_id__agent_text_comments_delete_batch_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteAgentTextCommentsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTextCommentsDeleted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Agent Text Comments",
+        "tags": [
+          "comments"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/agent-text-comments/{comment_id}": {
+      "delete": {
+        "description": "Delete one of the caller's comments.",
+        "operationId": "delete_agent_text_comment_v1_sessions__session_id__agent_text_comments__comment_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "comment_id",
+            "required": true,
+            "schema": {
+              "title": "Comment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTextCommentDeleted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Agent Text Comment",
+        "tags": [
+          "comments"
+        ]
+      },
+      "patch": {
+        "description": "Replace the body of one of the caller's comments.",
+        "operationId": "update_agent_text_comment_v1_sessions__session_id__agent_text_comments__comment_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "comment_id",
+            "required": true,
+            "schema": {
+              "title": "Comment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAgentTextCommentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTextCommentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Agent Text Comment",
+        "tags": [
+          "comments"
         ]
       }
     },

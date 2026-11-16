@@ -1,22 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CornerUpLeftIcon, MessagesSquareIcon } from "lucide-react";
+import { CornerUpLeftIcon, MessageSquareTextIcon, MessagesSquareIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import type { AgentTextCommentAnchor } from "@/hooks/useAgentTextComments";
+import { captureAgentTextSelection } from "@/lib/agentTextSelection";
 import { getEmbedRoot } from "@/lib/host";
 
 export function SelectionPopup({
   containerRef,
   onReply,
   onAskInSideChat,
+  onComment,
 }: {
   containerRef: React.RefObject<HTMLElement | null>;
   onReply: (text: string) => void;
   // Present only when the session's harness supports side chat; renders the
   // "Ask in side chat" action beside Reply.
   onAskInSideChat?: (text: string) => void;
+  // Present when the user can comment; shows "Comment" for a selection in completed agent text.
+  onComment?: (anchor: AgentTextCommentAnchor) => void;
 }) {
   const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
   const selectedTextRef = useRef<string>("");
+  const commentAnchorRef = useRef<AgentTextCommentAnchor | null>(null);
 
   const updatePopup = useCallback(() => {
     const sel = window.getSelection();
@@ -55,6 +61,7 @@ export function SelectionPopup({
       y: rect.top,
     });
     selectedTextRef.current = text;
+    commentAnchorRef.current = captureAgentTextSelection(sel);
   }, [containerRef]);
 
   useEffect(() => {
@@ -125,6 +132,30 @@ export function SelectionPopup({
         >
           <MessagesSquareIcon className="size-3.5" />
           Ask in side chat
+        </Button>
+      ) : null}
+      {onComment && commentAnchorRef.current ? (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="gap-1 shadow-md hover:bg-secondary hover:brightness-95 dark:hover:brightness-110"
+          onMouseDown={(e) => {
+            e.preventDefault();
+          }}
+          onClick={() => {
+            const anchor = commentAnchorRef.current;
+            if (anchor) {
+              onComment(anchor);
+              window.getSelection()?.removeAllRanges();
+              setPopupPos(null);
+              selectedTextRef.current = "";
+              commentAnchorRef.current = null;
+            }
+          }}
+        >
+          <MessageSquareTextIcon className="size-3.5" />
+          Comment
         </Button>
       ) : null}
     </div>,

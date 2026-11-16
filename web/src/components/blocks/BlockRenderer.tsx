@@ -888,6 +888,9 @@ function renderItem(
         <div
           key={key}
           data-testid="assistant-text-section"
+          // Comments on agent replies anchor to completed text by its item id.
+          data-agent-text-item-id={item.itemId ?? undefined}
+          data-agent-text-final={item.final && item.itemId ? "true" : "false"}
           className={cn("min-w-0", followsText && "mt-2")}
         >
           <FilePathAwareMessageResponse

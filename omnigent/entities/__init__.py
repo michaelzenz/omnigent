@@ -2,6 +2,7 @@
 
 from omnigent.entities.account import Account, AccountToken
 from omnigent.entities.agent import Agent, LoadedAgent
+from omnigent.entities.agent_text_comment import AgentTextComment
 from omnigent.entities.comment import Comment, CommentsFingerprint
 from omnigent.entities.connection import ProviderConnection
 from omnigent.entities.conversation import (
@@ -77,6 +78,7 @@ __all__ = [
     "AccountToken",
     "Agent",
     "AgentQueueItem",
+    "AgentTextComment",
     "Comment",
     "CommentsFingerprint",
     "CompactionData",

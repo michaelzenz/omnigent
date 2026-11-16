@@ -55,6 +55,7 @@ import {
   KeyRoundIcon,
   Loader2Icon,
   LogOutIcon,
+  MessageSquareTextIcon,
   MessagesSquareIcon,
   MinusIcon,
   MonitorIcon,
@@ -466,6 +467,7 @@ const workspaceTabCards: {
   { value: "changes", label: "Changes", icon: FileDiffIcon },
   { value: "github", label: "Pull Requests", icon: GitPullRequestIcon },
   { value: "subagents", label: "Agents", icon: BotIcon },
+  { value: "comments", label: "Comments", icon: MessageSquareTextIcon },
 ];
 
 /** Inline icon and label for compact settings choices. */

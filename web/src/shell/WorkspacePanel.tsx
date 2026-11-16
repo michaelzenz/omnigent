@@ -97,6 +97,9 @@ import { ResponsiveViewerSlot } from "./ResponsiveViewerSlot";
 import { PullRequestPanel } from "./PullRequestPanel";
 import type { ChangedSort } from "./FlatFileList";
 import { SubagentsPanel } from "./SubagentsPanel";
+import { AgentTextCommentsPanel } from "./AgentTextCommentsPanel";
+import { useAgentTextCommentsUI } from "./AgentTextCommentsContext";
+import { useAgentTextComments } from "@/hooks/useAgentTextComments";
 import { useTerminalStatuses } from "./useTerminalStatuses";
 import type { RightRailTab } from "./railTabs";
 import {
@@ -1392,10 +1395,14 @@ function WorkspacePanelImpl({
     },
     [terminals],
   );
+  const agentTextCommentsUI = useAgentTextCommentsUI();
+  const commentCount =
+    useAgentTextComments(pending || !agentTextCommentsUI ? undefined : conversationId).data
+      ?.length ?? 0;
   const defaultTab = readDefaultWorkspaceTab();
   const tabOrder = [defaultTab, ...defaultWorkspaceTabs.filter((tab) => tab !== defaultTab)];
   const availablePanels = tabOrder.filter((tab) => {
-    if (tab === "subagents") return true;
+    if (tab === "subagents" || tab === "comments") return true;
     if (tab === "github") return pending || showGithubTab;
     return pending || showFilesPanel;
   });
@@ -1552,6 +1559,7 @@ function WorkspacePanelImpl({
       changedCount,
       agentCount,
       subagentsWorking,
+      commentCount,
       digit: shortcutFor(tab),
       digitAriaShortcut: tabAriaShortcut(tab),
     });
@@ -1584,11 +1592,13 @@ function WorkspacePanelImpl({
           ? "github"
           : rightRailTab === "subagents" && rootSessionId
             ? "subagents"
-            : rightRailTab === null
-              ? "empty"
-              : rightRailTab === "content-search" && showContentSearch
-                ? "content-search"
-                : "files";
+            : rightRailTab === "comments"
+              ? "comments"
+              : rightRailTab === null
+                ? "empty"
+                : rightRailTab === "content-search" && showContentSearch
+                  ? "content-search"
+                  : "files";
   // Stays mounted behind a file or shell to keep tree expansion, listing and scroll.
   const filesPanelMounted = showFilesPanel && !pending && scopeView === "files";
   const filesPanelActive = filesPanelMounted && !terminalShown && selectedFilePath === null;
@@ -2215,6 +2225,17 @@ function WorkspacePanelImpl({
             <SubagentPanelOpenerContext.Provider value={subagentPanelOpener ?? null}>
               <SubagentsPanel conversationId={conversationId} rootSessionId={rootSessionId} />
             </SubagentPanelOpenerContext.Provider>
+          ) : scopeView === "comments" ? (
+            agentTextCommentsUI && !pending ? (
+              <RenderErrorBoundary name="comments" resetKey={conversationId}>
+                <AgentTextCommentsPanel
+                  conversationId={conversationId}
+                  canEdit={agentTextCommentsUI.canEdit}
+                  ui={agentTextCommentsUI}
+                  showHeader={false}
+                />
+              </RenderErrorBoundary>
+            ) : null
           ) : scopeView === "empty" ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground">
               <PlusIcon className="size-6" />

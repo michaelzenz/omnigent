@@ -1,5 +1,7 @@
 import { RenderErrorBoundary } from "@/components/RenderErrorBoundary";
 import { isOwnerLevel } from "@/lib/permissionsApi";
+import { AgentTextCommentsPanel } from "./AgentTextCommentsPanel";
+import { useAgentTextCommentsUI } from "./AgentTextCommentsContext";
 import { ContentSearchPanel } from "./ContentSearchPanel";
 import { ExecutionLogsPanel } from "./ExecutionLogsPanel";
 import type { OpenFileOptions } from "./FileViewerContext";
@@ -33,6 +35,8 @@ export interface AppShellWorkspacePanelsProps {
   rootSessionId: string | null;
   subagentsPanelOpen: boolean;
   setSubagentsPanelOpen: (open: boolean) => void;
+  agentTextCommentsPanelOpen: boolean;
+  setAgentTextCommentsPanelOpen: (open: boolean) => void;
   shellsPanelOpen: boolean;
   setShellsPanelOpen: (open: boolean) => void;
   openTerminalsPanel: (key: string) => void;
@@ -73,6 +77,8 @@ export function AppShellWorkspacePanels({
   rootSessionId,
   subagentsPanelOpen,
   setSubagentsPanelOpen,
+  agentTextCommentsPanelOpen,
+  setAgentTextCommentsPanelOpen,
   shellsPanelOpen,
   setShellsPanelOpen,
   openTerminalsPanel,
@@ -85,6 +91,7 @@ export function AppShellWorkspacePanels({
   openContentSearchResult,
   setMobileFileTarget,
 }: AppShellWorkspacePanelsProps) {
+  const agentTextCommentsUI = useAgentTextCommentsUI();
   return (
     <>
       {/* Push panels — flex siblings to main, animate width. Only one is open at a time.
@@ -136,6 +143,21 @@ export function AppShellWorkspacePanels({
           testId="subagents-panel-drawer"
         >
           <SubagentsPanel conversationId={conversationId} rootSessionId={rootSessionId} />
+        </MobilePanelDrawer>
+      )}
+      {conversationId && agentTextCommentsUI && (
+        <MobilePanelDrawer
+          open={agentTextCommentsPanelOpen}
+          title="Comments"
+          onClose={() => setAgentTextCommentsPanelOpen(false)}
+          testId="agent-text-comments-panel-drawer"
+        >
+          <AgentTextCommentsPanel
+            conversationId={conversationId}
+            canEdit={agentTextCommentsUI.canEdit}
+            ui={agentTextCommentsUI}
+            showHeader={false}
+          />
         </MobilePanelDrawer>
       )}
       {conversationId && (

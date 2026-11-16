@@ -11,6 +11,7 @@ import {
   InfoIcon,
   ListIcon,
   Maximize2Icon,
+  MessageSquareTextIcon,
   MessagesSquareIcon,
   PanelLeftIcon,
   PanelRightCloseIcon,
@@ -105,6 +106,12 @@ interface MobileSessionMenuProps {
   onOpenShells: () => void;
   /** Open the mobile agents drawer. */
   onOpenSubagents: () => void;
+  /** True while the mobile drawer for comments on agent replies is open. */
+  commentsPanelOpen: boolean;
+  /** The signed-in user's unsent comments on agent replies (Comments entry badge). */
+  commentCount: number;
+  /** Open the mobile drawer for comments on agent replies. */
+  onOpenComments: () => void;
   /** True while the mobile Pull Requests drawer is open. */
   githubPanelOpen: boolean;
   /** Open the mobile Pull Requests drawer. */
@@ -385,6 +392,7 @@ export function ChatHeader({
     !mobileMenu.executionLogsOpen &&
     !mobileMenu.filesPanelOpen &&
     !mobileMenu.subagentsPanelOpen &&
+    !mobileMenu.commentsPanelOpen &&
     !mobileMenu.shellsPanelOpen &&
     !mobileMenu.githubPanelOpen &&
     !mobileMenu.contentSearchPanelOpen &&
@@ -454,6 +462,18 @@ export function ChatHeader({
               ? `${mobileMenu.subagentsWorking}/${mobileMenu.agentCount}`
               : mobileMenu.agentCount}
           </span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={mobileMenu.onOpenComments}
+          className="mobile-touch-target gap-2.5 px-2.5 py-2 text-ui"
+        >
+          <MessageSquareTextIcon className="size-4" />
+          Comments
+          {mobileMenu.commentCount > 0 && (
+            <span className={cn(TAB_BADGE_BASE, "ml-auto bg-muted text-muted-foreground")}>
+              {mobileMenu.commentCount}
+            </span>
+          )}
         </DropdownMenuItem>
         {mobileMenu.showSideChats && (
           <DropdownMenuItem

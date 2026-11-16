@@ -147,9 +147,12 @@ describe("workspaceTabPreferences — read/write", () => {
 });
 
 describe("normalizeDefaultWorkspaceTab", () => {
-  it.each(["files", "changes", "github", "subagents"] as const)("passes through %s", (value) => {
-    expect(normalizeDefaultWorkspaceTab(value)).toBe(value);
-  });
+  it.each(["files", "changes", "github", "subagents", "comments"] as const)(
+    "passes through %s",
+    (value) => {
+      expect(normalizeDefaultWorkspaceTab(value)).toBe(value);
+    },
+  );
 
   it.each(["browser", "terminals", "todos", "unknown", null, undefined])(
     "maps %s to files",

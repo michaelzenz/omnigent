@@ -15,6 +15,7 @@ const WORKSPACE_PANEL_TABS: readonly DefaultWorkspaceTab[] = [
   "changes",
   "github",
   "subagents",
+  "comments",
 ];
 const RAIL_TABS: readonly RightRailTab[] = [
   ...WORKSPACE_PANEL_TABS,

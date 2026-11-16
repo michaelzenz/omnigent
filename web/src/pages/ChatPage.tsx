@@ -1,4 +1,7 @@
 import { SelectionPopup } from "@/components/chat/SelectionPopup";
+import { type AgentTextComment, useAgentTextComments } from "@/hooks/useAgentTextComments";
+import { useAgentTextCommentHighlights } from "@/hooks/useAgentTextCommentHighlights";
+import { useAgentTextCommentsUI } from "@/shell/AgentTextCommentsContext";
 import {
   EditSentMessageContext,
   useEditSentMessage,
@@ -353,6 +356,8 @@ import { useIsCoarsePointer } from "@/hooks/useIsCoarsePointer";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { ConnectionIndicator } from "./ChatIndicators";
 import { Transcript } from "@/components/chat/Transcript";
+
+const NO_AGENT_TEXT_COMMENTS: AgentTextComment[] = [];
 
 /** Server-info as consumers see it: the probe's result, or "loading". */
 type ServerInfoValue = ServerInfo | "loading";
@@ -1786,6 +1791,23 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
   }, []);
   // Typing in the conversation starts a message in the composer.
   useTypeToComposer(() => composerRef.current?.focus(), conversationRef, !showTerminal);
+  // The signed-in user's unsent comments on agent replies, highlighted in the transcript.
+  const agentTextCommentsUI = useAgentTextCommentsUI();
+  const agentTextComments =
+    useAgentTextComments(agentTextCommentsUI ? (conversationId ?? undefined) : undefined).data ??
+    NO_AGENT_TEXT_COMMENTS;
+  const activateAgentTextComment = useCallback(
+    (commentId: string | null) => agentTextCommentsUI?.activateComment(commentId),
+    [agentTextCommentsUI],
+  );
+  useAgentTextCommentHighlights({
+    containerRef: conversationRef,
+    comments: agentTextComments,
+    pendingAnchor: agentTextCommentsUI?.pendingAnchor ?? null,
+    activeCommentId: agentTextCommentsUI?.activeCommentId ?? null,
+    onActivate: activateAgentTextComment,
+    enabled: agentTextCommentsUI !== null,
+  });
   const [terminalSurfaceEl, setTerminalSurfaceEl] = useState<HTMLElement | null>(null);
   // True only while the chat/terminal surface is the frontmost thing on screen.
   // Drives both native overlays so neither floats over an opened drawer.
@@ -2027,6 +2049,7 @@ const MainAgentSurface = memo(function MainAgentSurfaceImpl({
                   ? (text) => composerRef.current?.startSideChat(text)
                   : undefined
               }
+              onComment={agentTextCommentsUI?.canEdit ? agentTextCommentsUI.openDraft : undefined}
             />
           )}
 

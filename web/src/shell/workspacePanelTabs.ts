@@ -1,7 +1,8 @@
 /**
  * Labels, icons and trigger presentation for the Workspace rail's fixed panel
- * tabs (Files, Changes, Pull Requests, Agents, Content search). `WorkspacePanel`
- * draws every trigger from these descriptors with one tab-agnostic renderer.
+ * tabs (Files, Changes, Pull Requests, Agents, Comments, Content search).
+ * `WorkspacePanel` draws every trigger from these descriptors with one
+ * tab-agnostic renderer.
  */
 
 import {
@@ -10,6 +11,7 @@ import {
   FolderTreeIcon,
   GitPullRequestIcon,
   type LucideIcon,
+  MessageSquareTextIcon,
   SearchIcon,
 } from "lucide-react";
 import { ARIA_MOD_KEY, MOD_KEY, SHIFT_KEY } from "@/components/KeyboardShortcut";
@@ -28,13 +30,15 @@ export interface WorkspacePanelTabContext {
   changedCount: number;
   agentCount: number;
   subagentsWorking: number;
+  /** The signed-in user's unsent comments on agent replies in this session. */
+  commentCount: number;
   /** This tab's ⌃N digit among the visible fixed tabs, if it has one. */
   digit: string | undefined;
   /** `aria-keyshortcuts` for that digit. */
   digitAriaShortcut: string | undefined;
 }
 
-/** A trailing visually hidden badge, such as the Changes count. */
+/** A trailing badge, such as the Changes count; only the Comments count is visible. */
 export interface WorkspacePanelTabBadge {
   text: string | number;
   className: string;
@@ -96,6 +100,23 @@ export const WORKSPACE_PANEL_TABS: Record<WorkspacePanelTab, WorkspacePanelTabDe
         subagentsWorking > 0 ? "text-success" : "text-muted-foreground",
       ),
     }),
+  },
+  comments: {
+    label: "Comments",
+    icon: MessageSquareTextIcon,
+    shown: () => true,
+    ariaLabel: ({ commentCount }) => (commentCount > 0 ? `Comments ${commentCount}` : "Comments"),
+    badge: ({ commentCount }) =>
+      commentCount > 0
+        ? {
+            text: commentCount,
+            className: cn(
+              TAB_BADGE_BASE,
+              "pointer-events-none absolute -top-1 -right-1 h-3.5 min-w-3.5 px-0.5",
+              "bg-primary text-primary-foreground",
+            ),
+          }
+        : null,
   },
 };
 

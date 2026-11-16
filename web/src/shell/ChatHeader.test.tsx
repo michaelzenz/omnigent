@@ -58,6 +58,9 @@ const mobileMenu = {
   onOpenChanges: () => {},
   onOpenShells: () => {},
   onOpenSubagents: () => {},
+  commentsPanelOpen: false,
+  commentCount: 0,
+  onOpenComments: () => {},
   githubPanelOpen: false,
   onOpenGithub: () => {},
   contentSearchPanelOpen: false,
@@ -1095,6 +1098,7 @@ describe("ChatHeader — title-adjacent conversation actions", () => {
       "Changes",
       "Pull Requests",
       "Agents1",
+      "Comments",
       "Archive",
       "Delete",
     ]);

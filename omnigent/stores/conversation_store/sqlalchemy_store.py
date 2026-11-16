@@ -40,6 +40,7 @@ from omnigent.db.converters import sql_agent_to_entity
 from omnigent.db.db_models import (
     LABEL_VALUE_MAX_LEN,
     SqlAgent,
+    SqlAgentTextComment,
     SqlComment,
     SqlConversation,
     SqlConversationItem,
@@ -6880,6 +6881,12 @@ class SqlAlchemyConversationStore(ConversationStore):
                 delete(SqlComment).where(
                     SqlComment.workspace_id == current_workspace_id(),
                     SqlComment.conversation_id.in_(batch_ids),
+                )
+            )
+            session.execute(
+                delete(SqlAgentTextComment).where(
+                    SqlAgentTextComment.workspace_id == current_workspace_id(),
+                    SqlAgentTextComment.conversation_id.in_(batch_ids),
                 )
             )
             session.execute(

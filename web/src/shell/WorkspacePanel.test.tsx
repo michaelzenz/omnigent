@@ -487,10 +487,10 @@ describe("WorkspacePanel surface presentation", () => {
     const searchTab = screen.getByRole("tab", { name: "Content search" });
     expect(searchTab).toHaveAttribute(
       "aria-keyshortcuts",
-      expect.stringContaining(` ${workspaceTabAriaShortcut("5")}`),
+      expect.stringContaining(` ${workspaceTabAriaShortcut("6")}`),
     );
     enabled.onRightRailTabChange.mockClear();
-    pressTabNumber(5);
+    pressTabNumber(6);
     expect(enabled.onRightRailTabChange).toHaveBeenLastCalledWith("content-search");
 
     writePinnedWorkspaceTabs([]);
@@ -542,10 +542,10 @@ describe("WorkspacePanel surface presentation", () => {
   });
 
   it.each([
-    ["files", ["Files", "Changes", "Pull Requests", "Agents 1"]],
-    ["changes", ["Changes", "Files", "Pull Requests", "Agents 1"]],
-    ["github", ["Pull Requests", "Files", "Changes", "Agents 1"]],
-    ["subagents", ["Agents 1", "Files", "Changes", "Pull Requests"]],
+    ["files", ["Files", "Changes", "Pull Requests", "Agents 1", "Comments"]],
+    ["changes", ["Changes", "Files", "Pull Requests", "Agents 1", "Comments"]],
+    ["github", ["Pull Requests", "Files", "Changes", "Agents 1", "Comments"]],
+    ["subagents", ["Agents 1", "Files", "Changes", "Pull Requests", "Comments"]],
   ] as const)("places the %s default first without reordering the remaining tabs", (tab, order) => {
     writeDefaultWorkspaceTab(tab);
     renderWorkspace({ showGithubTab: true, showBrowserTab: true, rightRailTab: "files" });
@@ -605,8 +605,8 @@ describe("WorkspacePanel surface presentation", () => {
     );
 
     expect(pressTabNumber(2)).toBe(false);
-    // No fifth fixed tab: the key passes through.
-    expect(pressTabNumber(5)).toBe(true);
+    // No sixth fixed tab: the key passes through.
+    expect(pressTabNumber(6)).toBe(true);
     expect(pressTabNumber(4)).toBe(false);
     // A bare digit types as usual.
     fireEvent.keyDown(changes, { key: "3", code: "Digit3" });
@@ -661,6 +661,7 @@ describe("WorkspacePanel surface presentation", () => {
       "Files",
       "Changes",
       "Agents 1",
+      "Comments",
     ]);
   });
 

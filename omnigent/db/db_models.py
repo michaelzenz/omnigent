@@ -1531,6 +1531,59 @@ class SqlTaskSubscription(OmnigentBase):
     )
 
 
+class SqlAgentTextComment(OmnigentBase):
+    """
+    SQLAlchemy model for the ``agent_text_comments`` table: users' unsent comments on agent text.
+
+    Each row is one user's comment on a span of a completed assistant message.
+    A user's comments in a session form their unsent batch; sending it deletes
+    the batch. There are no foreign keys (Rule R032); deleting a session
+    deletes its rows.
+
+    :param id: Uuid16 primary key (bare 32-char hex in Python).
+    :param owner_user_id: The author, or ``None`` in single-user mode.
+    :param conversation_item_id: The completed assistant message.
+    :param start_offset: UTF-16 offset of the selection's start.
+    :param end_offset: UTF-16 offset just after the selection's end.
+    :param selected_text: The selected text.
+    :param prefix_context: Text just before the selection.
+    :param suffix_context: Text just after the selection.
+    :param body: The comment.
+    :param created_at: Unix epoch seconds at row creation.
+    :param updated_at: Unix epoch seconds of the last edit.
+    """
+
+    __tablename__ = "agent_text_comments"
+
+    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    conversation_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    conversation_item_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
+    selected_text: Mapped[str] = mapped_column(CompressedText, nullable=False)
+    prefix_context: Mapped[str] = mapped_column(CompressedText, nullable=False)
+    suffix_context: Mapped[str] = mapped_column(CompressedText, nullable=False)
+    body: Mapped[str] = mapped_column(CompressedText, nullable=False)
+    created_at: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("start_offset >= 0", name="ck_agent_text_comments_start"),
+        CheckConstraint("end_offset > start_offset", name="ck_agent_text_comments_range"),
+        # One user's batch in a session.
+        Index("ix_agent_text_comments_owner", "workspace_id", "conversation_id", "owner_user_id"),
+    )
+
+
 class SqlConversation(ConversationBase):
     """
     SQLAlchemy model for the ``conversations`` table.

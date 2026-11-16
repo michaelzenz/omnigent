@@ -207,6 +207,8 @@ import { toast } from "sonner";
 export interface SendOptions {
   /** Compact is a control event, not a user-message turn. */
   command?: "compact";
+  /** Tells the caller that policy refused the message; it is not a transport error. */
+  onPolicyDenied?: () => void;
   /** Client-only quote provenance, retained if the composer needs to retry. */
   replyDraft?: StoredReplyDraft;
   /**
@@ -2981,6 +2983,7 @@ export const useChatStore = create<ChatState>((_rootSet, get) => ({
       // bubble. Settle local state from the POST response instead of
       // depending on the live stream being connected.
       if (postResult.denied) {
+        opts?.onPolicyDenied?.();
         // Target the session this send posted to: the user may have navigated
         // away while the POST was open, and settling the VISIBLE conversation
         // would clobber an unrelated chat's composer state.

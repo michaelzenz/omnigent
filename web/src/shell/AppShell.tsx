@@ -48,7 +48,8 @@ import { useIOSViewportLock } from "@/hooks/useIOSViewportLock";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { readFilesPanelPreferences, writeFilesPanelPreferences } from "@/lib/filesPanelPreferences";
 import { useOptimisticTitle } from "@/lib/optimisticTitles";
-import { derivePermissionLevel, isOwnerLevel } from "@/lib/permissionsApi";
+import { derivePermissionLevel, isOwnerLevel, LEVEL_EDIT } from "@/lib/permissionsApi";
+import { type AgentTextCommentAnchor, useAgentTextComments } from "@/hooks/useAgentTextComments";
 import {
   closeDesktopWindow,
   confirmDesktopQuit,
@@ -152,6 +153,11 @@ import {
   type TerminalFirstContextValue,
 } from "./TerminalFirstContext";
 import { AppShellWorkspacePanels } from "./AppShellWorkspacePanels";
+import {
+  type AgentTextCommentSendState,
+  type AgentTextCommentsUI,
+  AgentTextCommentsProvider,
+} from "./AgentTextCommentsContext";
 import { PermissionsModal } from "@/components/PermissionsModal";
 import { AppShellOverlays } from "./AppShellOverlays";
 import { CloseShellDialog } from "./CloseShellDialog";
@@ -206,6 +212,11 @@ import type { RightRailTab } from "./railTabs";
 // means "use the configured default." Keep an explicit marker so choosing Chat
 // can override a Terminal default when the user returns to that conversation.
 const CHAT_VIEW_STORAGE_VALUE = "__chat__";
+
+const AGENT_TEXT_COMMENTS_NOT_SENDING: AgentTextCommentSendState = {
+  isSending: false,
+  sentBatchIds: null,
+};
 
 /**
  * Resolve the terminal-view target for `?view=terminal`.
@@ -589,6 +600,14 @@ function AppShellImpl() {
   const [githubPanelOpen, setGithubPanelOpen] = useState(false);
   const [contentSearchPanelOpen, setContentSearchPanelOpen] = useState(false);
   const [sideChatsPanelOpen, setSideChatsPanelOpen] = useState(false);
+  const [agentTextCommentsPanelOpen, setAgentTextCommentsPanelOpen] = useState(false);
+  // The signed-in user's draft comment on an agent reply; the chat and the rail share it.
+  const [pendingAgentTextComment, setPendingAgentTextComment] =
+    useState<AgentTextCommentAnchor | null>(null);
+  const [agentTextCommentDraftBody, setAgentTextCommentDraftBody] = useState("");
+  const [activeAgentTextCommentId, setActiveAgentTextCommentId] = useState<string | null>(null);
+  const [agentTextCommentSendState, setAgentTextCommentSendState] =
+    useState<AgentTextCommentSendState>(AGENT_TEXT_COMMENTS_NOT_SENDING);
   // The right "Workspace" rail (WorkspacePanel) remembers its open/closed
   // state per session. A brand-new session (no saved `open`) follows the
   // Appearance "Workspace panel" default; reopening a session restores how
@@ -1127,6 +1146,8 @@ function AppShellImpl() {
         // Agents tab is unconditional: the panel always lists at least
         // the main agent (its "main" row), so there's never a dead end.
         subagents: true,
+        // Comments tab is unconditional: it holds the user's comments on agent replies.
+        comments: true,
         // Shells have no nav tab — they open as closable soft tabs in the
         // rail's tab strip (see WorkspacePanel's TerminalTabsStrip / "+"
         // menu). Mobile keeps a shells drawer (see ``showShellsTab`` below).
@@ -1315,6 +1336,12 @@ function AppShellImpl() {
     setGithubPanelOpen(false);
     setContentSearchPanelOpen(false);
     setSideChatsPanelOpen(false);
+    setAgentTextCommentsPanelOpen(false);
+    // A draft comment anchors to a reply in the session it came from.
+    setPendingAgentTextComment(null);
+    setAgentTextCommentDraftBody("");
+    setActiveAgentTextCommentId(null);
+    setAgentTextCommentSendState(AGENT_TEXT_COMMENTS_NOT_SENDING);
     setFilesPanelShowHidden(true);
     // An open "Close shell?" dialog would target a terminal absent from the
     // new session's list.
@@ -2039,6 +2066,68 @@ function AppShellImpl() {
     },
     [selectedFilePath, selectedTerminalKey, clearFileViewerUrl, selectRightRailTab],
   );
+  // Phones show the comments on agent replies as a full-screen drawer, not a rail tab.
+  const openAgentTextCommentsPanel = useCallback(() => {
+    setSelectedFilePath(null);
+    clearFileViewerUrl();
+    setPanelInitialKey(null);
+    setExecutionLogsKey(null);
+    setFilesPanelOpen(false);
+    setSubagentsPanelOpen(false);
+    setShellsPanelOpen(false);
+    setGithubPanelOpen(false);
+    setContentSearchPanelOpen(false);
+    setSideChatsPanelOpen(false);
+    setAgentTextCommentsPanelOpen(true);
+  }, [clearFileViewerUrl, setPanelInitialKey]);
+  const showAgentTextComments = useCallback(() => {
+    if (isMobileViewport()) {
+      openAgentTextCommentsPanel();
+      return;
+    }
+    handleRightRailTabChange("comments");
+    setRightPanelOpenImmediately(true);
+  }, [openAgentTextCommentsPanel, handleRightRailTabChange, setRightPanelOpenImmediately]);
+  const agentTextCommentsUI = useMemo<AgentTextCommentsUI>(
+    () => ({
+      canEdit: permissionLevel === null || permissionLevel >= LEVEL_EDIT,
+      pendingAnchor: pendingAgentTextComment,
+      draftBody: agentTextCommentDraftBody,
+      setDraftBody: setAgentTextCommentDraftBody,
+      activeCommentId: activeAgentTextCommentId,
+      sendState: agentTextCommentSendState,
+      openDraft: (anchor) => {
+        setAgentTextCommentDraftBody("");
+        setPendingAgentTextComment(anchor);
+        setActiveAgentTextCommentId(null);
+        showAgentTextComments();
+      },
+      cancelDraft: () => {
+        setPendingAgentTextComment(null);
+        setAgentTextCommentDraftBody("");
+      },
+      activateComment: (commentId) => {
+        setActiveAgentTextCommentId(commentId);
+        if (commentId) {
+          setPendingAgentTextComment(null);
+          setAgentTextCommentDraftBody("");
+          showAgentTextComments();
+        }
+      },
+      setSendState: setAgentTextCommentSendState,
+    }),
+    [
+      permissionLevel,
+      pendingAgentTextComment,
+      agentTextCommentDraftBody,
+      activeAgentTextCommentId,
+      agentTextCommentSendState,
+      showAgentTextComments,
+    ],
+  );
+  const agentTextCommentCount =
+    useAgentTextComments(conversationId && !pendingConversation ? conversationId : undefined).data
+      ?.length ?? 0;
   const closeWorkspacePanel = useCallback(
     (tab: DefaultWorkspaceTab) => {
       const remaining = openPanels.filter((panel) => panel !== tab);
@@ -2736,7 +2825,7 @@ function AppShellImpl() {
     focusWorkspaceTabs();
   }, [workspacePanelVisible, focusWorkspaceTabs]);
 
-  return (
+  const shellLayout = (
     <FileViewerContext.Provider value={fileViewerContextValue}>
       <TerminalFirstContextProvider value={terminalFirstContextValue}>
         <ForkDialogContextProvider value={forkDialogContextValue}>
@@ -2928,6 +3017,9 @@ function AppShellImpl() {
                       onOpenChanges: openChangesPanel,
                       onOpenShells: openShellsPanel,
                       onOpenSubagents: openSubagentsPanel,
+                      commentsPanelOpen: agentTextCommentsPanelOpen,
+                      commentCount: agentTextCommentCount,
+                      onOpenComments: openAgentTextCommentsPanel,
                       onOpenGithub: openGithubPanel,
                       showContentSearch: railTabsAvailable["content-search"],
                       onOpenContentSearch: openContentSearchPanel,
@@ -3058,6 +3150,8 @@ function AppShellImpl() {
                 rootSessionId={rootSessionId}
                 subagentsPanelOpen={subagentsPanelOpen}
                 setSubagentsPanelOpen={setSubagentsPanelOpen}
+                agentTextCommentsPanelOpen={agentTextCommentsPanelOpen}
+                setAgentTextCommentsPanelOpen={setAgentTextCommentsPanelOpen}
                 shellsPanelOpen={shellsPanelOpen}
                 setShellsPanelOpen={setShellsPanelOpen}
                 openTerminalsPanel={openTerminalsPanel}
@@ -3176,6 +3270,9 @@ function AppShellImpl() {
         </ForkDialogContextProvider>
       </TerminalFirstContextProvider>
     </FileViewerContext.Provider>
+  );
+  return (
+    <AgentTextCommentsProvider value={agentTextCommentsUI}>{shellLayout}</AgentTextCommentsProvider>
   );
 }
 

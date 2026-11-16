@@ -16,6 +16,7 @@ const READY: WorkspacePanelTabContext = {
   changedCount: 0,
   agentCount: 0,
   subagentsWorking: 0,
+  commentCount: 0,
   digit: undefined,
   digitAriaShortcut: undefined,
 };
@@ -28,27 +29,40 @@ function shownTabs(context: WorkspacePanelTabContext): WorkspacePanelTab[] {
 
 describe("workspacePanelTabPresentation", () => {
   it("draws every tab once the session's panels are available", () => {
-    expect(shownTabs(READY)).toEqual(["content-search", "files", "changes", "github", "subagents"]);
+    expect(shownTabs(READY)).toEqual([
+      "content-search",
+      "files",
+      "changes",
+      "github",
+      "subagents",
+      "comments",
+    ]);
   });
 
   it("keeps Files, Changes and Pull Requests drawn but not Content search while pending", () => {
     const pending = { ...READY, pending: true, showFilesPanel: false, showGithubTab: false };
-    expect(shownTabs(pending)).toEqual(["files", "changes", "github", "subagents"]);
+    expect(shownTabs(pending)).toEqual(["files", "changes", "github", "subagents", "comments"]);
   });
 
   it("hides file-backed tabs without a files panel, and Pull Requests without GitHub", () => {
-    expect(shownTabs({ ...READY, showFilesPanel: false })).toEqual(["github", "subagents"]);
+    expect(shownTabs({ ...READY, showFilesPanel: false })).toEqual([
+      "github",
+      "subagents",
+      "comments",
+    ]);
     expect(shownTabs({ ...READY, showGithubTab: false })).toEqual([
       "content-search",
       "files",
       "changes",
       "subagents",
+      "comments",
     ]);
     expect(shownTabs({ ...READY, showContentSearch: false })).toEqual([
       "files",
       "changes",
       "github",
       "subagents",
+      "comments",
     ]);
   });
 
@@ -122,6 +136,19 @@ describe("workspacePanelTabPresentation", () => {
       ariaLabel: "Agents 1/3",
       badge: { text: "1/3", className: `${TAB_BADGE_BASE} sr-only text-success` },
     });
+  });
+
+  it("shows a visible Comments count only while the user has unsent comments", () => {
+    expect(workspacePanelTabPresentation(WORKSPACE_PANEL_TABS.comments, READY)).toMatchObject({
+      ariaLabel: "Comments",
+      badge: null,
+    });
+    const withComments = workspacePanelTabPresentation(WORKSPACE_PANEL_TABS.comments, {
+      ...READY,
+      commentCount: 2,
+    });
+    expect(withComments).toMatchObject({ ariaLabel: "Comments 2", badge: { text: 2 } });
+    expect(withComments?.badge?.className).not.toContain("sr-only");
   });
 
   it("lets a composed descriptor suppress a default shortcut by returning undefined", () => {

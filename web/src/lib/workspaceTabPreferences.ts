@@ -9,7 +9,13 @@ import {
 const STORAGE_KEY = "omnigent:default-workspace-tab";
 export const PINNED_WORKSPACE_TABS_STORAGE_KEY = "omnigent:pinned-workspace-tabs";
 
-export const defaultWorkspaceTabs = ["files", "changes", "github", "subagents"] as const;
+export const defaultWorkspaceTabs = [
+  "files",
+  "changes",
+  "github",
+  "subagents",
+  "comments",
+] as const;
 export type DefaultWorkspaceTab = (typeof defaultWorkspaceTabs)[number];
 
 /** Match today's product default: sessions without remembered state open Files. */

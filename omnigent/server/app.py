@@ -153,6 +153,7 @@ from omnigent.server.routes.agent_task_watch_items import create_agent_task_watc
 from omnigent.server.routes.agent_task_watchers import create_agent_task_watchers_router
 from omnigent.server.routes.agent_task_workers import create_agent_task_workers_router
 from omnigent.server.routes.agent_tasks import create_agent_tasks_router
+from omnigent.server.routes.agent_text_comments import create_agent_text_comments_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
 from omnigent.server.routes.default_policies import create_default_policies_router
@@ -4128,6 +4129,23 @@ def create_app(
                 auth_provider=auth_provider,
                 permission_store=permission_store,
                 conversation_store=conversation_store,
+            ),
+            prefix="/v1",
+            tags=["comments"],
+        )
+    # Users' unsent comments on agent replies live beside the session metadata.
+    agent_text_comments_location = getattr(conversation_store, "storage_location", None)
+    if isinstance(agent_text_comments_location, str) and agent_text_comments_location:
+        from omnigent.stores.agent_text_comment_store.sqlalchemy_store import (
+            SqlAlchemyAgentTextCommentStore,
+        )
+
+        app.include_router(
+            create_agent_text_comments_router(
+                SqlAlchemyAgentTextCommentStore(agent_text_comments_location),
+                conversation_store,
+                auth_provider=auth_provider,
+                permission_store=permission_store,
             ),
             prefix="/v1",
             tags=["comments"],
