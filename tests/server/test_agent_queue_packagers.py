@@ -329,9 +329,6 @@ async def test_a_manager_notice_lists_its_events_by_id_and_ends_with_the_roster(
             f"  Session ID: {gone_session}",
             "  The session no longer exists; the user deleted it. "
             "Its task may already be finished.",
-            "",
-            "[Task roster]",
-            f"{task_id} — S3 retries (active)",
         ]
     )
     dismissed = board.events.get(stale_turn, owner_user_id=ALICE)

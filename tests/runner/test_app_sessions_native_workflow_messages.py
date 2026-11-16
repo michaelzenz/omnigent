@@ -75,6 +75,34 @@ async def test_native_shell_authorization_requires_server_transport(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True], ids=["background", "stream"])
+async def test_turn_context_reaches_the_harness_request(stream: bool) -> None:
+    from omnigent.runtime.harnesses._scaffold import MessageEvent
+
+    app, _pm, harness = _build_lifecycle_app()
+    async with _runner_client(app) as client:
+        response = await client.post(
+            "/v1/sessions/turn-context/events",
+            params={"stream": stream},
+            json={
+                "type": "message",
+                "role": "user",
+                "agent_id": "manager-agent",
+                "model": "test-agent",
+                "content": [{"type": "input_text", "text": "Route these events."}],
+                "turn_context": "[Task roster]",
+            },
+        )
+        assert response.status_code == (200 if stream else 202), response.text
+        await poll_until_async(
+            lambda: bool(harness.posted_bodies) and not app.state.active_turns,
+            timeout_s=budget(5),
+        )
+    [body] = harness.posted_bodies
+    assert MessageEvent.model_validate(body).to_create_request().turn_context == "[Task roster]"
+
+
+@pytest.mark.asyncio
 async def test_native_shell_authorization_stays_with_each_buffered_message() -> None:
     from omnigent.runtime.harnesses._scaffold import MessageEvent
 

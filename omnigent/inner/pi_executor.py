@@ -753,31 +753,77 @@ module.exports = function(pi) {{
 """
 
 
-def _generate_history_window_extension_js(window: int) -> str:
-    """Generate a Pi extension that limits each model call to the last *window* user turns.
+_CONTEXT_EXTENSION_FILE = "omnigent_context.js"
+_TURN_CONTEXT_FILE = "omnigent_turn_context.txt"
+
+
+def _generate_context_extension_js(window: int, turn_context_path: str) -> str:
+    """Generate a Pi extension that shapes the messages of each model call.
 
     Pi fires ``context`` before every model call and sends the messages the
-    hook returns instead. Cutting at a user message keeps each tool call
-    with its result.
+    hook returns instead; its stored session does not change. A *window*
+    above ``0`` keeps only the last *window* user turns, and a cut at a user
+    message keeps each tool call with its result. The hook then adds the
+    text of *turn_context_path*, when there is some, to the latest user
+    message, so the model sees the turn's context and history never keeps it.
 
-    :param window: Trailing user turns to keep, e.g. ``5``.
+    :param window: Trailing user turns to keep, e.g. ``5``; ``0`` keeps all.
+    :param turn_context_path: The file that holds the current turn's context.
     """
     return f"""\
-// Auto-generated Omnigent history window extension for Pi.
+// Auto-generated Omnigent context extension for Pi.
+const fs = require("fs");
 const WINDOW = {window};
+const TURN_CONTEXT_PATH = {json.dumps(turn_context_path)};
+
+function readTurnContext() {{
+  try {{
+    return fs.readFileSync(TURN_CONTEXT_PATH, "utf8");
+  }} catch (error) {{
+    return "";
+  }}
+}}
+
+function withTurnContext(message, context) {{
+  if (Array.isArray(message.content)) {{
+    return {{ ...message, content: [...message.content, {{ type: "text", text: context }}] }};
+  }}
+  const text = typeof message.content === "string" ? message.content : "";
+  return {{ ...message, content: text ? `${{text}}\\n\\n${{context}}` : context }};
+}}
 
 module.exports = function(pi) {{
   pi.on("context", async (event) => {{
     if (!event || !Array.isArray(event.messages)) return;
-    const userIndexes = [];
-    event.messages.forEach((message, index) => {{
+    let messages = event.messages;
+    let userIndexes = [];
+    messages.forEach((message, index) => {{
       if (message && message.role === "user") userIndexes.push(index);
     }});
-    if (userIndexes.length <= WINDOW) return;
-    return {{ messages: event.messages.slice(userIndexes[userIndexes.length - WINDOW]) }};
+    if (WINDOW > 0 && userIndexes.length > WINDOW) {{
+      const start = userIndexes[userIndexes.length - WINDOW];
+      messages = messages.slice(start);
+      userIndexes = userIndexes.slice(-WINDOW).map((index) => index - start);
+    }}
+    const context = readTurnContext();
+    if (context && userIndexes.length) {{
+      const last = userIndexes[userIndexes.length - 1];
+      messages = messages.slice();
+      messages[last] = withTurnContext(messages[last], context);
+    }}
+    if (messages === event.messages) return;
+    return {{ messages }};
   }});
 }};
 """
+
+
+def _write_turn_context(tmp_dir: object, turn_context: str | None) -> None:
+    """Save the turn's context where the context extension reads it; no context empties it."""
+    if not isinstance(tmp_dir, str):
+        return
+    with open(os.path.join(tmp_dir, _TURN_CONTEXT_FILE), "w") as f:
+        f.write(turn_context or "")
 
 
 # ---------------------------------------------------------------------------
@@ -2467,6 +2513,9 @@ class PiExecutor(Executor):
     def handles_tools_internally(self) -> bool:
         return True
 
+    def delivers_turn_context(self) -> bool:
+        return True
+
     def supports_live_message_queue(self) -> bool:
         return True
 
@@ -2898,11 +2947,15 @@ class PiExecutor(Executor):
             if tool_names:
                 extra_args.extend(["--tools", ",".join(tool_names)])
 
-        if self._history_window_turns:
-            window_path = os.path.join(tmp_dir, "omnigent_history_window.js")
-            with open(window_path, "w") as f:
-                f.write(_generate_history_window_extension_js(self._history_window_turns))
-            extra_args.extend(["--extension", window_path])
+        # Every process gets it: a turn's context is known only when the turn starts.
+        context_path = os.path.join(tmp_dir, _CONTEXT_EXTENSION_FILE)
+        with open(context_path, "w") as f:
+            f.write(
+                _generate_context_extension_js(
+                    self._history_window_turns, os.path.join(tmp_dir, _TURN_CONTEXT_FILE)
+                )
+            )
+        extra_args.extend(["--extension", context_path])
 
         return PiSubprocessConfig(env=env, tmp_dir=tmp_dir, extra_args=extra_args)
 
@@ -3185,6 +3238,15 @@ class PiExecutor(Executor):
                 )
             except Exception as exc:  # noqa: BLE001 — executor boundary: an effort failure must not sink the turn
                 logger.warning("PiExecutor: could not apply thinking level: %s", exc)
+
+        try:
+            await run_sync_on_thread(
+                _write_turn_context,
+                getattr(rpc, "_tmp_dir", None),
+                config.turn_context if config is not None else None,
+            )
+        except OSError as exc:
+            logger.warning("PiExecutor: could not save the turn context: %s", exc)
 
         # Build the prompt to send to Pi.  On the first turn of a new Pi
         # process, if there are prior messages (e.g. parent history passed

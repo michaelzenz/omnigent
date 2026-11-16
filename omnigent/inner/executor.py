@@ -100,12 +100,16 @@ class ExecutorConfig:
         model response.
     :param extra: Arbitrary executor-specific kwargs merged into the
         underlying SDK call, e.g. ``{"stepwise_internal_turns": True}``.
+    :param turn_context: Text the model sees on this turn only, e.g. a
+        GlobalHub manager's task roster. Set only for an executor whose
+        :meth:`Executor.delivers_turn_context` is true.
     """
 
     model: str | None = None
     temperature: float = 0.0
     max_tokens: int = 100000
     extra: ExecutorExtra = field(default_factory=dict)
+    turn_context: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -784,6 +788,14 @@ class Executor:
 
     def preserves_empty_initiating_message(self) -> bool:
         """Whether an empty final user message must survive history filtering."""
+        return False
+
+    def delivers_turn_context(self) -> bool:
+        """Whether the model sees ``ExecutorConfig.turn_context`` on its turn without storing it.
+
+        Off by default: the adapter then adds the context to the turn's
+        instructions instead.
+        """
         return False
 
     def supports_tool_boundary_interrupt(self) -> bool:

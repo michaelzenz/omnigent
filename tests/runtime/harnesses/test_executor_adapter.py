@@ -1425,6 +1425,48 @@ async def test_adapter_only_preserves_empty_input_for_opted_in_executors(
         assert captured[-1]["input_item_id"] == "msg_empty"
 
 
+@pytest.mark.parametrize("delivers", [True, False], ids=["turn-context", "instructions"])
+async def test_adapter_gives_the_turn_context_to_the_executor_else_to_the_instructions(
+    delivers, monkeypatch
+) -> None:
+    import asyncio
+
+    from omnigent.inner.executor import MockExecutor, TurnComplete
+    from omnigent.runtime.harnesses._executor_adapter import ExecutorAdapter
+    from omnigent.runtime.harnesses._scaffold import TurnContext
+    from omnigent.server.schemas import CreateResponseRequest
+
+    executor = MockExecutor()
+    captured: dict[str, object] = {}
+
+    async def capture(messages, tools, system_prompt, config=None):
+        captured.update(system_prompt=system_prompt, turn_context=config.turn_context)
+        yield TurnComplete(response=None)
+
+    monkeypatch.setattr(executor, "run_turn", capture)
+    monkeypatch.setattr(executor, "delivers_turn_context", lambda: delivers)
+    adapter = ExecutorAdapter(executor_factory=lambda: executor)
+    request = CreateResponseRequest(
+        model="test-agent",
+        input=[{"type": "message", "role": "user", "id": "msg_1", "content": "Route these."}],
+        instructions="Manager manual.",
+        turn_context="[Task roster]",
+    )
+    ctx = TurnContext(
+        response_id=f"resp_{uuid.uuid4().hex}",
+        event_queue=asyncio.Queue(),
+        cancelled=asyncio.Event(),
+    )
+
+    await adapter.run_turn(request, ctx)
+
+    assert captured == (
+        {"system_prompt": "Manager manual.", "turn_context": "[Task roster]"}
+        if delivers
+        else {"system_prompt": "Manager manual.\n\n[Task roster]", "turn_context": None}
+    )
+
+
 @pytest.mark.parametrize("has_output", [False, True], ids=["tool-call", "tool-call-and-output"])
 def test_translate_input_to_messages_tool_resume_has_no_input_item_id(has_output) -> None:
     """A tool tail must not reuse the user ID when the agent produced no text."""

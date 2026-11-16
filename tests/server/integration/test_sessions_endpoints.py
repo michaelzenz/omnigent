@@ -54,6 +54,8 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
     SqlAlchemyConversationStore,
 )
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.tools.builtins.load_skill import format_skill_meta_text
 from tests.debug_log_helpers import capture_debug_rows
 from tests.server.helpers import create_test_agent
@@ -386,6 +388,60 @@ async def test_role_session_message_carries_role_manual_outside_history(
     persisted = json.dumps(items.json()["data"])
     assert "Task manager manual" not in persisted
     assert "Custom manager manual." not in persisted
+
+
+async def test_manager_session_message_carries_its_roster_outside_history(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    db_uri: str,
+) -> None:
+    """A manager's turn carries its task roster with each note, which is never persisted."""
+    forwarded: list[dict[str, Any]] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path.endswith("/events"):
+            forwarded.append(json.loads(request.content))
+        return httpx.Response(202, json={"queued": True})
+
+    agent = await create_test_agent(client)
+    session = await _create_session(client, agent["id"])
+    conversations = SqlAlchemyConversationStore(db_uri)
+    conversations.set_labels(session["id"], {ROLE_LABEL: MANAGER_ROLE_VALUE})
+    owner = conversations.get_session_owner(session["id"], owner_only=True)
+    manager = SqlAlchemyManagerStore(db_uri).create(
+        uuid.uuid4().hex, owner_user_id=owner, title="Storage", conversation_id=session["id"]
+    )
+    task = SqlAlchemyTaskStore(db_uri).create(
+        uuid.uuid4().hex,
+        owner_user_id=owner,
+        title="S3 retries",
+        goal="Merge it",
+        internal_note="Waits for review in PR 12.",
+        manager_id=manager.id,
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(_handler), base_url="http://runner"
+    ) as fake_runner:
+        _route_to_runner(monkeypatch, fake_runner)
+        response = await client.post(
+            f"/v1/sessions/{session['id']}/events",
+            json={
+                "type": "message",
+                "data": {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "route these events"}],
+                },
+            },
+        )
+        assert response.status_code == 202, response.text
+
+    assert forwarded[0]["turn_context"] == (
+        f"[Task roster]\n{task.id} — S3 retries (active)\n  Note: Waits for review in PR 12."
+    )
+    items = await client.get(f"/v1/sessions/{session['id']}/items")
+    persisted = json.dumps(items.json()["data"])
+    assert "[Task roster]" not in persisted
+    assert "Waits for review in PR 12." not in persisted
 
 
 async def test_create_titled_session_keeps_title_after_first_message(

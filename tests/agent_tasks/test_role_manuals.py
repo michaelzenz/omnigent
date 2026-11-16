@@ -1,10 +1,11 @@
-"""Tests for the instructions attached to each turn of a GlobalHub role session."""
+"""Tests for the instructions and context attached to each turn of a GlobalHub role session."""
 
 from __future__ import annotations
 
+import uuid
 from types import SimpleNamespace
 
-from omnigent.agent_tasks.role_manuals import role_turn_instructions
+from omnigent.agent_tasks.role_manuals import role_turn_context, role_turn_instructions
 from omnigent.agent_tasks.roles import (
     BROKER_ROLE_KEY,
     MANAGER_ROLE_KEY,
@@ -13,12 +14,14 @@ from omnigent.agent_tasks.roles import (
     builtin_role,
 )
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.user_settings_store import UserSettingsStore
 from omnigent.stores.watcher_store.sqlalchemy_store import SqlAlchemyWatcherStore
 
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
 SESSION_ID = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+OTHER_SESSION_ID = "2d3c4b5a69788796a5b4c3d2e1f00f1e"
 
 
 def _manager() -> BuiltinRole:
@@ -86,6 +89,49 @@ def test_a_managers_turns_name_its_session_and_manager_ids(db_uri: str) -> None:
     # Another user's manager row, and other roles, add no ids.
     assert instructions(_manager(), BOB) == manual
     assert instructions(broker, ALICE) == broker.default_manual()
+
+
+def test_a_managers_turn_context_is_its_live_roster_with_each_tasks_note(db_uri: str) -> None:
+    managers, tasks = SqlAlchemyManagerStore(db_uri), SqlAlchemyTaskStore(db_uri)
+    manager_id = managers.create(
+        uuid.uuid4().hex, owner_user_id=ALICE, title="Storage", conversation_id=SESSION_ID
+    ).id
+    managers.create(
+        uuid.uuid4().hex, owner_user_id=ALICE, title="Docs", conversation_id=OTHER_SESSION_ID
+    )
+
+    def task(title: str, **fields: str) -> str:
+        return tasks.create(
+            uuid.uuid4().hex,
+            owner_user_id=ALICE,
+            title=title,
+            goal="Finish it",
+            manager_id=manager_id,
+            **fields,
+        ).id
+
+    task("Old work", state="archived")
+    plain = task("Docs page")
+    noted = task("S3 retries", internal_note="PR 12 in example-org/repo.\nWaits for review.")
+    broker = builtin_role(BROKER_ROLE_KEY)
+    assert broker is not None
+
+    def context(role: BuiltinRole, owner: str, session_id: str = SESSION_ID) -> str | None:
+        return role_turn_context(role, session_id, _conversation_store(db_uri, owner))
+
+    assert context(_manager(), ALICE) == "\n".join(
+        [
+            "[Task roster]",
+            f"{noted} — S3 retries (active)",
+            "  Note: PR 12 in example-org/repo.",
+            "  Waits for review.",
+            f"{plain} — Docs page (active)",
+        ]
+    )
+    assert context(_manager(), ALICE, OTHER_SESSION_ID) == "[Task roster]\n(no tasks yet)"
+    # Another user's manager row, and other roles, get no context.
+    assert context(_manager(), BOB) is None
+    assert context(broker, ALICE) is None
 
 
 def test_a_watchers_turns_carry_its_own_manual_else_the_template(db_uri: str) -> None:

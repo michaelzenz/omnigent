@@ -52,6 +52,7 @@ from omnigent.inner.pi_executor import (
     _sanitize_schema,
     _split_pi_prompt,
     _ToolServer,
+    _write_turn_context,
 )
 from omnigent.models.model_catalog import ModelEntry
 from omnigent.models.model_metadata import ModelCapability, ModelMetadata, ModelWireAPI
@@ -2368,6 +2369,74 @@ def test_pi_history_window_extension_keeps_last_user_turns() -> None:
             ["node", "-e", script], capture_output=True, text=True, check=True
         ).stdout
         assert json.loads(output) == ["u2", "a2", "t2", "u3", "a3"]
+    finally:
+        shutil.rmtree(config.tmp_dir, ignore_errors=True)
+
+
+def test_pi_context_extension_adds_the_turn_context_to_the_latest_user_message() -> None:
+    """
+    Each model call sees the turn's context at the end of the latest user
+    message; the messages Pi stores do not change, and no context adds nothing.
+    """
+    if not shutil.which("node"):
+        pytest.skip("node is required to run the generated extension")
+    with patch("omnigent.inner.pi_executor._find_pi_cli", return_value="/usr/bin/pi"):
+        executor = PiExecutor()
+    config = executor._build_env_and_dir([], None, None, None)
+
+    def context_hook(messages: list[dict[str, object]]) -> object:
+        extension = config.extra_args[config.extra_args.index("--extension") + 1]
+        script = textwrap.dedent(
+            f"""
+            const hooks = {{}};
+            require({json.dumps(extension)})({{ on: (name, fn) => {{ hooks[name] = fn; }} }});
+            const messages = {json.dumps(messages)};
+            hooks.context({{ messages }}).then((result) => {{
+              console.log(JSON.stringify({{ result: result ?? null, stored: messages }}));
+            }});
+            """
+        )
+        output = subprocess.run(
+            ["node", "-e", script], capture_output=True, text=True, check=True
+        ).stdout
+        return json.loads(output)
+
+    text_turn = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "answer"},
+        {"role": "user", "content": "second"},
+    ]
+    block_turn = [
+        {"role": "user", "content": [{"type": "text", "text": "look"}]},
+        {"role": "toolResult", "content": "out"},
+    ]
+    try:
+        _write_turn_context(config.tmp_dir, None)
+        without = context_hook(text_turn)
+        _write_turn_context(config.tmp_dir, "[Task roster]")
+        with_text = context_hook(text_turn)
+        with_blocks = context_hook(block_turn)
+
+        assert without == {"result": None, "stored": text_turn}
+        assert with_text == {
+            "result": {
+                "messages": [
+                    *text_turn[:2],
+                    {"role": "user", "content": "second\n\n[Task roster]"},
+                ]
+            },
+            "stored": text_turn,
+        }
+        assert with_blocks["result"]["messages"] == [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "look"},
+                    {"type": "text", "text": "[Task roster]"},
+                ],
+            },
+            block_turn[1],
+        ]
     finally:
         shutil.rmtree(config.tmp_dir, ignore_errors=True)
 

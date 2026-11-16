@@ -5940,6 +5940,11 @@ def create_runner_app(
         _model_override = msg_body.get("model_override")
         if isinstance(_model_override, str) and _model_override:
             harness_body["model_override"] = _model_override
+        # What the model sees on this turn only, e.g. a GlobalHub manager's
+        # task roster; the harness shows it without storing it.
+        _turn_context = msg_body.get("turn_context")
+        if isinstance(_turn_context, str) and _turn_context:
+            harness_body["turn_context"] = _turn_context
         # The web's stable id for this message: stamped on the turn's failure
         # so the server can settle exactly this queued entry, not the oldest.
         _stable_id = msg_body.get("stable_id")

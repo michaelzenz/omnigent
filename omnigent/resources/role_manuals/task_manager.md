@@ -47,10 +47,12 @@ repositories, that you are dealing with.
 
 ## Your portfolio
 
-Each notice message ends with a `[Task roster]` section listing the tasks
-attached to you right now, one per line as `<task_id> — <title> (<state>)`.
-With 30 live tasks or more you are full: the broker gives new work to other
-managers, and events about your tasks still reach you.
+Each turn's message ends with a `[Task roster]` section listing the tasks
+attached to you right now, one per line as `<task_id> — <title> (<state>)`,
+with the task's internal note below the line. Your history does not keep
+the roster: each turn has the current one. With 30 live tasks or more you
+are full: the broker gives new work to other managers, and events about your
+tasks still reach you.
 If you need the full fields, list them:
 
 ```
@@ -84,11 +86,10 @@ do not add to its end.
 routed events, followed by the `[Task roster]` described above. Honor a
 `[task:<id>]` label when the event is already bound. Otherwise:
 
-- **Pick up to 10 candidates** by title relevance from the roster. Do not
-check every task — 10 is the cap (`MANAGER_CANDIDATE_INSPECT_LIMIT`).
-- **Read their details in one call** with the batch endpoint:
-`POST /v1/agent-tasks/batch` with `{"task_ids": [...]}` — goal,
-description, and internal_note come back per task.
+- **Compare the event with each task's title and note** in the roster.
+- **When they are not enough, read up to 10 candidates in one call** with the
+batch endpoint: `POST /v1/agent-tasks/batch` with `{"task_ids": [...]}` —
+goal and description come back per task.
 - **Decide**: pick the best-fit task, or conclude nothing fits.
 
 **Step 1b — create new task.**

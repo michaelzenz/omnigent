@@ -1193,6 +1193,10 @@ class CreateResponseRequest(BaseModel):
         e.g. ``"openai/gpt-5.4-mini"``. Distinct from ``model``
         (agent name). Substitutes for the spec's ``llm.model`` for
         this single request. Drives the REPL's ``/model`` command.
+    :param turn_context: Text that the model sees on this turn only and
+        that history does not keep, e.g. a GlobalHub manager's task
+        roster. An executor that cannot show it so gets it after the
+        turn's instructions.
     :param context_management: Compaction strategy objects,
         e.g. ``[{"type": "compaction", ...}]``.
     :param temperature: Ignored — agent controls this. Silently
@@ -1255,6 +1259,7 @@ class CreateResponseRequest(BaseModel):
     # Per-request LLM model override (distinct from ``model``, which
     # carries the agent name). See class docstring for semantics.
     model_override: str | None = None
+    turn_context: str | None = None
     # Compaction strategy objects, e.g. [{"type": "compaction", ...}]
     context_management: list[dict[str, Any]] | None = None
     # Ignored fields — agent controls these; silently dropped.

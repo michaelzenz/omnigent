@@ -266,6 +266,13 @@ class ExecutorAdapter(HarnessApp):
         config = ExecutorConfig(model=request.model_override, extra=extra)
         tools = _normalize_tool_schemas(request.tools or [])
         system_prompt = request.instructions or ""
+        if request.turn_context:
+            if executor.delivers_turn_context():
+                config.turn_context = request.turn_context
+            else:
+                system_prompt = "\n\n".join(
+                    part for part in (system_prompt, request.turn_context) if part
+                )
         # Install stable bridges once on first use — the SDK closure-captures them from the first
         # turn; per-turn rebinding would leave later tool calls dispatching into a dead ctx.
         if getattr(executor, "_tool_executor", None) is None:

@@ -59,8 +59,6 @@ SESSION_DELETED_EVENT_TYPE = "session.deleted"
 SESSION_START_FAILED_EVENT_TYPE = "session.start.failed"
 SESSION_TURN_FINISHED_EVENT_TYPE = "session.turn.finished"
 _BROKER_PROMPT = "[System: route these events to managers]\n"
-# About 20,000 tokens, v2's roster limit.
-_ROSTER_MAX_CHARS = 80_000
 _TURN_FINISHED_ADVICE = (
     "Read the recent session transcript to see what was done. "
     "Update the task overview, stamp all assets, then assign the event to its task."
@@ -328,7 +326,7 @@ class EventNoticeWriter:
 
     def __init__(self, *, board: BoardStores, conversations: Any) -> None:
         """
-        :param board: Holds the events the items carry, the managers and their tasks.
+        :param board: Holds the events the items carry, and the unmanaged tasks.
         :param conversations: Finds the target and source sessions.
         """
         self._board = board
@@ -363,21 +361,11 @@ class EventNoticeWriter:
         )
 
     def _manager_notice(self, item: AgentQueueItem) -> str | None:
+        # The roster rides each turn as turn context (see role_turn_context).
         waiting = self._waiting_events(item, "routed")
         if not waiting:
             return None
-        owner = item.owner_user_id
-        manager = self._board.managers.get_by_conversation_id(
-            item.target_session_id, owner_user_id=owner
-        )
-        roster = (
-            self._board.tasks.list(
-                owner_user_id=owner, states=LIVE_TASK_STATES, manager_id=manager.id
-            )
-            if manager is not None
-            else []
-        )
-        return f"{_manager_events_text(waiting)}\n\n{_roster_text(roster)}"
+        return _manager_events_text(waiting)
 
     def _waiting_events(self, item: AgentQueueItem, state: str) -> list[TaskEvent]:
         owner = item.owner_user_id
@@ -604,25 +592,6 @@ def _session_entry(events: Sequence[TaskEvent]) -> str:
     if len(events) == 1:
         return _event_line(first)
     return f"- {ids_label} {len(events)} events for session '{title}' (routed)"
-
-
-def _roster_text(tasks: Sequence[Task]) -> str:
-    """Write the ``[Task roster]`` section: the manager's live tasks in board order."""
-    lines = ["[Task roster]"]
-    used = 0
-    for index, task in enumerate(tasks):
-        line = _task_line(task)
-        if index and used + len(line) > _ROSTER_MAX_CHARS:
-            lines.append(
-                f"… and {len(tasks) - index} more; list them with "
-                "GET /v1/agent-tasks?manager_conversation_id=<your session id>"
-            )
-            break
-        lines.append(line)
-        used += len(line) + 1
-    if not tasks:
-        lines.append("(no tasks yet)")
-    return "\n".join(lines)
 
 
 def _task_line(task: Task) -> str:
