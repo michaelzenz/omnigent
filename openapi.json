@@ -9680,7 +9680,7 @@
                 "type": "null"
               }
             ],
-            "description": "Sandbox provider being launched, e.g. `\"arclet\"`, or `None` when unknown.",
+            "description": "Sandbox provider being launched, e.g. `\"daytona\"`, or `None` when unknown.",
             "title": "Provider"
           },
           "stage": {
@@ -14340,7 +14340,7 @@
               }
             ],
             "default": null,
-            "description": "Sandbox provider being launched, e.g. `\"arclet\"`, or `None` when unknown.",
+            "description": "Sandbox provider being launched, e.g. `\"daytona\"`, or `None` when unknown.",
             "title": "Provider"
           },
           "sequence_number": {
@@ -30113,7 +30113,7 @@
         ]
       },
       "put": {
-        "description": "Set or clear where the caller's GlobalHub role sessions run.\n\nThe host must be the caller's own and online, and the workspace an\nexisting directory on it. The canonical path is stored. A caller's\nfirst placement turns on the custodian's daily sweep, unless the caller\nhas a custodian schedule already.",
+        "description": "Set or clear where the caller's GlobalHub role sessions run.\n\nThe host must be the caller's own and online, and the workspace an\nexisting directory on it. The canonical path is stored. A caller's\nfirst placement turns on the custodian's daily sweep, unless the caller\nhas a custodian schedule already. Each placement starts the custodian\nsession there, unless it runs there already.",
         "operationId": "save_globalhub_settings_v1_settings_globalhub_put",
         "requestBody": {
           "content": {
