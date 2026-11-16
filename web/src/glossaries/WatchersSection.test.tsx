@@ -116,8 +116,10 @@ function serveWatchers(saved: WatcherDetail[], items: WatchItem[] = []): void {
     }
     if (path === WATCHERS) return jsonResponse({ data: [...byId.values()] });
     const [, id, itemsPath] = path.match(/^\/v1\/agent-tasks\/watchers\/([^/]+)(\/items)?$/) ?? [];
-    const found = id === undefined ? undefined : byId.get(id);
-    if (found === undefined) return jsonResponse({});
+    // The session's stop and delete.
+    if (id === undefined) return jsonResponse({});
+    const found = byId.get(id);
+    if (found === undefined) return jsonResponse({ detail: "watcher not found" }, 404);
     if (itemsPath) {
       const listed = items.filter(
         (entry) => url.searchParams.get("status") === "all" || entry.status === "active",

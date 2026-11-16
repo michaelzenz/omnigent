@@ -181,9 +181,15 @@ export function useDeleteWatcher() {
       const { conversation_id } = await readJson<{ conversation_id: string | null }>(
         await authenticatedFetch(watcherPath(watcherId), { method: "DELETE" }),
       );
+      // Remove the card now, so it does not read the deleted watcher again.
+      queryClient.setQueryData<Watcher[]>(WATCHERS_QUERY_KEY, (watchers) =>
+        watchers?.filter((watcher) => watcher.id !== watcherId),
+      );
+      queryClient.removeQueries({ queryKey: [...WATCHERS_QUERY_KEY, watcherId] });
+      queryClient.removeQueries({ queryKey: [...WATCH_ITEMS_QUERY_KEY, watcherId] });
       if (conversation_id) await deleteSession.mutateAsync({ id: conversation_id });
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: WATCHERS_QUERY_KEY }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: WATCHERS_QUERY_KEY, exact: true }),
   });
 }
 
