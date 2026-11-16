@@ -84,6 +84,8 @@ CAP_MCP_INVENTORY = "mcp_inventory"
 CAP_HARNESS_STARTUP = "harness_startup"
 CAP_PLUGINS = "plugins"
 CAP_SKILL_CONTENT = "skill_content"
+# The host runs the ``skill.*`` sync operations of its file requests and writes:
+CAP_SKILL_SYNC = "skill_sync"
 CAP_MCP_TOOLS = "mcp_tools"
 CAP_MCP_SERVER_ENABLED = "mcp_server_enabled"
 CAP_REFRESH_HARNESSES = "refresh_harnesses"
@@ -101,6 +103,7 @@ HOST_CAPABILITIES: list[str] = [
     CAP_FILESYSTEM_ATTACHMENT_DELIVERY,
     CAP_PLUGINS,
     CAP_SKILL_CONTENT,
+    CAP_SKILL_SYNC,
     CAP_MCP_TOOLS,
     CAP_MCP_SERVER_ENABLED,
     CAP_MCP_REGISTRY,
@@ -1172,6 +1175,9 @@ class HostFsRequestFrame:
     :param op: Operation name — one of ``"list_or_read"``, ``"changes"``,
         ``"diff"``, ``"search"``, or PR resources including ``"github_info"``,
         ``"github_review_threads"`` and ``"github_review_thread_comments"``.
+        The skill sync reads (``"skill.inventory"``, ``"skill.roots"``,
+        ``"skill.read"``, ``"skill.export"``) use the home skill folders, and
+        ignore ``workspace`` and ``session_id``.
     :param workspace: Absolute path to the session's workspace on the
         host, e.g. ``"/Users/alice/project"``.
     :param session_id: Session id, forwarded to the change registry.
@@ -1213,6 +1219,9 @@ class HostFsWriteFrame:
         ``"github_reviewers_update"``, ``"github_details_update"``, ``"github_comment_create"``,
         ``"github_review_thread_reply"``, ``"github_review_thread_create"``,
         ``"github_attachment_upload"``, ``"github_merge"``, or ``"github_disable_auto_merge"``.
+        The skill sync writes (``"skill.settings"``, ``"skill.import"``,
+        ``"skill.write"``, ``"skill.files.write"``, ``"skill.delete"``) change
+        the home skill folders, and ignore ``workspace`` and ``session_id``.
     :param workspace: Absolute path to the session's workspace on the host.
     :param session_id: Session id, for parity with the read frame.
     :param params: Operation-specific arguments, e.g.

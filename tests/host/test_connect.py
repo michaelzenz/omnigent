@@ -11320,6 +11320,59 @@ async def test_dispatch_fs_write_op_unknown_op_raises() -> None:
         HostProcess._dispatch_fs_write_op("/ws", "bogus", {})
 
 
+def test_skill_ops_use_the_home_skill_folders_and_each_frame_runs_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Skill sync ignores the workspace; a read frame cannot delete a skill."""
+    from omnigent.host.frames import HostFsResultFrame, HostFsWriteFrame
+
+    home = tmp_path / "home"
+    skill = home / ".claude" / "skills" / "demo"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: Demo\n---\n\nbody\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("OMNIGENT_CONFIG_HOME", str(tmp_path / "config"))
+    demo = {"name": "demo", "rel_home_path": ".claude/skills/demo"}
+
+    def read(op: str, params: dict[str, object], workspace: str) -> HostFsResultFrame:
+        return host._handle_fs_request(
+            HostFsRequestFrame(
+                request_id=op, op=op, workspace=workspace, session_id="", params=params
+            )
+        )
+
+    def write(op: str, params: dict[str, object]) -> HostFsResultFrame:
+        return host._handle_fs_write(
+            HostFsWriteFrame(
+                request_id=op, op=op, workspace="/no/such/dir", session_id="", params=params
+            )
+        )
+
+    host = _make_host_process()
+    try:
+        inventory = read("skill.inventory", {}, "/no/such/dir")
+        read_delete = read("skill.delete", demo, str(tmp_path))
+        kept = skill.exists()
+        outside = write("skill.delete", {"name": "demo", "rel_home_path": "Documents/demo"})
+        deleted = write("skill.delete", demo)
+    finally:
+        _cleanup_host(host)
+
+    assert inventory.status == "ok"
+    assert inventory.payload is not None
+    assert [entry["name"] for entry in inventory.payload["inventory"]] == ["demo"]
+    assert (read_delete.status, kept) == ("error", True)
+    assert (outside.status, outside.error_status, outside.error_code) == (
+        "error",
+        400,
+        "invalid_request",
+    )
+    assert (deleted.status, deleted.payload) == ("ok", {"inventory": []})
+    assert not skill.exists()
+
+
 @pytest.mark.parametrize("action", ["attach", "remove"])
 async def test_github_pr_update_reports_lock_contention_on_host(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str

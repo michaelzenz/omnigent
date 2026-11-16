@@ -1,0 +1,543 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { authenticatedFetch } from "@/lib/identity";
+
+export interface SkillOccurrence {
+  name: string;
+  description: string;
+  hostId: string;
+  hostName: string;
+  harness: string;
+  relHomePath: string;
+  contentSha256: string;
+  online: boolean;
+}
+
+export interface SkillVariant {
+  contentSha256: string;
+  activeCount: number;
+  occurrences: SkillOccurrence[];
+}
+
+export interface SkillTreeFile {
+  path: string;
+  content: string;
+  binary: boolean;
+}
+
+export interface SkillHost {
+  hostId: string;
+  hostName: string;
+  online: boolean;
+  reported: boolean;
+  harnesses: SkillHarnessState[];
+}
+
+export interface SkillHarnessState {
+  harness: string;
+  installed: boolean;
+  enabled: boolean | null;
+  state:
+    | "present"
+    | "missing"
+    | "unavailable"
+    | "offline"
+    | "not_reported"
+    | "ignored"
+    | "ignored_variant";
+  occurrence: SkillOccurrence | null;
+}
+
+export interface AggregatedSkill {
+  name: string;
+  description: string;
+  synced: boolean;
+  syncStatus: "synced" | "partial" | "not_synced";
+  variants: SkillVariant[];
+  hosts: SkillHost[];
+}
+
+export interface HostSkillRoots {
+  hostId: string;
+  hostName: string;
+  online: boolean;
+  roots: { harness: string; relHomePath: string }[];
+  syncHarnesses: Record<string, boolean> | null;
+  installedHarnesses: Record<string, boolean>;
+  error: string | null;
+}
+
+interface WireOccurrence {
+  name: string;
+  description: string;
+  host_id: string;
+  host_name: string;
+  harness: string;
+  rel_home_path: string;
+  content_sha256: string;
+  online: boolean;
+}
+
+const SKILLS_KEY = ["skill-sync"];
+
+function mapOccurrence(raw: WireOccurrence): SkillOccurrence {
+  return {
+    name: raw.name,
+    description: raw.description,
+    hostId: raw.host_id,
+    hostName: raw.host_name,
+    harness: raw.harness,
+    relHomePath: raw.rel_home_path,
+    contentSha256: raw.content_sha256,
+    online: raw.online,
+  };
+}
+
+/**
+ * Deduplicate skills that share a variant content hash. Plugin skills are
+ * namespaced as `<plugin>:<skill>` but their file trees are identical to
+ * the non-namespaced copy. Union-find groups skills by shared
+ * contentSha256, then each group is merged into a single entry using the
+ * bare name as the title.
+ */
+function dedupSkills(skills: AggregatedSkill[]): AggregatedSkill[] {
+  const parent = skills.map((_, i) => i);
+  function find(index: number): number {
+    let current = index;
+    while (parent[current] !== current) {
+      parent[current] = parent[parent[current]];
+      current = parent[current];
+    }
+    return current;
+  }
+  function union(a: number, b: number): void {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  }
+
+  const hashToIndex = new Map<string, number>();
+  for (let i = 0; i < skills.length; i++) {
+    for (const variant of skills[i].variants) {
+      const prev = hashToIndex.get(variant.contentSha256);
+      if (prev !== undefined) union(prev, i);
+      else hashToIndex.set(variant.contentSha256, i);
+    }
+  }
+
+  const groups = new Map<number, AggregatedSkill[]>();
+  for (let i = 0; i < skills.length; i++) {
+    const root = find(i);
+    const group = groups.get(root) ?? [];
+    group.push(skills[i]);
+    groups.set(root, group);
+  }
+
+  return Array.from(groups.values(), (group) => mergeSkillGroup(group));
+}
+
+function mergeSkillGroup(group: AggregatedSkill[]): AggregatedSkill {
+  if (group.length === 1) return group[0];
+
+  const bareNamed = group.find((s) => !s.name.includes(":"));
+  const name = bareNamed?.name ?? group.map((s) => s.name).sort((a, b) => a.length - b.length)[0];
+
+  const variantMap = new Map<string, SkillVariant>();
+  for (const skill of group) {
+    for (const variant of skill.variants) {
+      const existing = variantMap.get(variant.contentSha256);
+      if (existing) {
+        const seen = new Set<string>();
+        const merged = [...existing.occurrences, ...variant.occurrences].filter((o) => {
+          const key = `${o.hostId}\0${o.harness}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        variantMap.set(variant.contentSha256, {
+          contentSha256: variant.contentSha256,
+          activeCount: Math.max(existing.activeCount, variant.activeCount),
+          occurrences: merged,
+        });
+      } else {
+        variantMap.set(variant.contentSha256, variant);
+      }
+    }
+  }
+  const variants = Array.from(variantMap.values()).sort((a, b) => b.activeCount - a.activeCount);
+
+  const hostMap = new Map<string, SkillHost>();
+  for (const skill of group) {
+    for (const host of skill.hosts) {
+      const existing = hostMap.get(host.hostId);
+      if (existing) {
+        const harnessMap = new Map<string, SkillHarnessState>();
+        for (const h of [...existing.harnesses, ...host.harnesses]) {
+          const prev = harnessMap.get(h.harness);
+          if (!prev || (prev.state !== "present" && h.state === "present")) {
+            harnessMap.set(h.harness, h);
+          }
+        }
+        hostMap.set(host.hostId, {
+          ...existing,
+          online: existing.online || host.online,
+          reported: existing.reported || host.reported,
+          harnesses: Array.from(harnessMap.values()),
+        });
+      } else {
+        hostMap.set(host.hostId, host);
+      }
+    }
+  }
+  const hosts = Array.from(hostMap.values());
+
+  const hashSet = new Set(variants.map((v) => v.contentSha256));
+  const hasUnavailable = hosts.some((h) => h.harnesses.some((hr) => hr.state === "unavailable"));
+  const hasFailure =
+    hosts.some((h) =>
+      h.harnesses.some(
+        (hr) => hr.state === "missing" || hr.state === "offline" || hr.state === "not_reported",
+      ),
+    ) || hashSet.size > 1;
+  const syncStatus: AggregatedSkill["syncStatus"] = hasFailure
+    ? "not_synced"
+    : hasUnavailable
+      ? "partial"
+      : "synced";
+
+  return {
+    name,
+    description: group[0].description,
+    synced: syncStatus === "synced",
+    syncStatus,
+    variants,
+    hosts,
+  };
+}
+
+async function fetchSkills(): Promise<AggregatedSkill[]> {
+  const response = await authenticatedFetch("/v1/skill-sync/skills");
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  const body = (await response.json()) as {
+    data: {
+      name: string;
+      description: string;
+      synced: boolean;
+      sync_status: "synced" | "partial" | "not_synced";
+      variants: {
+        content_sha256: string;
+        active_count: number;
+        occurrences: WireOccurrence[];
+      }[];
+      hosts: {
+        host_id: string;
+        host_name: string;
+        online: boolean;
+        reported: boolean;
+        harnesses: {
+          harness: string;
+          installed: boolean;
+          enabled: boolean | null;
+          state:
+            | "present"
+            | "missing"
+            | "unavailable"
+            | "offline"
+            | "not_reported"
+            | "ignored"
+            | "ignored_variant";
+          occurrence: WireOccurrence | null;
+        }[];
+      }[];
+    }[];
+  };
+  return dedupSkills(
+    body.data.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      synced: skill.synced,
+      syncStatus: skill.sync_status,
+      variants: skill.variants.map((variant) => ({
+        contentSha256: variant.content_sha256,
+        activeCount: variant.active_count,
+        occurrences: variant.occurrences.map(mapOccurrence),
+      })),
+      hosts: skill.hosts.map((host) => ({
+        hostId: host.host_id,
+        hostName: host.host_name,
+        online: host.online,
+        reported: host.reported,
+        harnesses: host.harnesses.map((harness) => ({
+          harness: harness.harness,
+          installed: harness.installed,
+          enabled: harness.enabled,
+          state: harness.state,
+          occurrence: harness.occurrence ? mapOccurrence(harness.occurrence) : null,
+        })),
+      })),
+    })),
+  );
+}
+
+async function fetchSkillRoots(): Promise<HostSkillRoots[]> {
+  const response = await authenticatedFetch("/v1/skill-sync/roots");
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  const body = (await response.json()) as {
+    data: {
+      host_id: string;
+      host_name: string;
+      online: boolean;
+      roots: { harness: string; rel_home_path: string }[];
+      sync_harnesses: Record<string, boolean> | null;
+      installed_harnesses: Record<string, boolean>;
+      error: string | null;
+    }[];
+  };
+  return body.data.map((host) => ({
+    hostId: host.host_id,
+    hostName: host.host_name,
+    online: host.online,
+    roots: host.roots.map((root) => ({
+      harness: root.harness,
+      relHomePath: root.rel_home_path,
+    })),
+    syncHarnesses: host.sync_harnesses,
+    installedHarnesses: host.installed_harnesses,
+    error: host.error,
+  }));
+}
+
+async function fetchSkillContent(name: string, hostId: string, harness: string): Promise<string> {
+  const params = new URLSearchParams({ host_id: hostId, harness });
+  const response = await authenticatedFetch(
+    `/v1/skill-sync/skills/${encodeURIComponent(name)}/content?${params}`,
+  );
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return ((await response.json()) as { content: string }).content;
+}
+
+async function fetchSkillTree(
+  name: string,
+  hostId: string,
+  harness: string,
+): Promise<SkillTreeFile[]> {
+  const params = new URLSearchParams({ host_id: hostId, harness });
+  const response = await authenticatedFetch(
+    `/v1/skill-sync/skills/${encodeURIComponent(name)}/tree?${params}`,
+  );
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return ((await response.json()) as { files: SkillTreeFile[] }).files;
+}
+
+async function saveSkillVariantFiles(
+  name: string,
+  contentSha256: string,
+  files: Record<string, string>,
+): Promise<{ contentSha256: string | null }> {
+  const response = await authenticatedFetch(
+    `/v1/skill-sync/skills/${encodeURIComponent(name)}/variants/${encodeURIComponent(contentSha256)}/files`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files }),
+    },
+  );
+  if (!response.ok) throw new Error((await response.text()) || `${response.status}`);
+  const body = (await response.json()) as {
+    content_sha256: string | null;
+    results: { status: string; error?: string }[];
+  };
+  const failed = body.results.filter((result) => result.status === "failed");
+  if (failed.length > 0) {
+    throw new Error(failed[0]?.error || `${failed.length} skill occurrence(s) failed to save.`);
+  }
+  return { contentSha256: body.content_sha256 };
+}
+
+async function syncSkill(name: string, sourceHostId: string, sourceHarness: string): Promise<void> {
+  const response = await authenticatedFetch(
+    `/v1/skill-sync/skills/${encodeURIComponent(name)}/sync`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_host_id: sourceHostId, source_harness: sourceHarness }),
+    },
+  );
+  if (!response.ok) throw new Error((await response.text()) || `${response.status}`);
+}
+
+async function createSkill(name: string, files: Record<string, string>): Promise<void> {
+  const response = await authenticatedFetch(
+    `/v1/skill-sync/skills/${encodeURIComponent(name)}/files`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files }),
+    },
+  );
+  if (!response.ok) throw new Error((await response.text()) || `${response.status}`);
+  const body = (await response.json()) as {
+    results: { status: string; error?: string }[];
+  };
+  const failed = body.results.filter((result) => result.status === "failed");
+  if (failed.length > 0) {
+    throw new Error(failed[0]?.error || `${failed.length} skill location(s) failed to create.`);
+  }
+}
+
+async function deleteSkillEverywhere(name: string): Promise<void> {
+  const response = await authenticatedFetch(`/v1/skill-sync/skills/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) throw new Error((await response.text()) || `${response.status}`);
+}
+
+export function useSyncedSkills() {
+  return useQuery({
+    queryKey: SKILLS_KEY,
+    queryFn: fetchSkills,
+    staleTime: 30_000,
+  });
+}
+
+/** Ask the hosts again: every skill list request rescans their skill folders. */
+export function useRefreshSkills() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => queryClient.invalidateQueries({ queryKey: SKILLS_KEY }),
+  });
+}
+
+export function useSkillRoots(enabled: boolean) {
+  return useQuery({
+    queryKey: [...SKILLS_KEY, "roots"],
+    queryFn: fetchSkillRoots,
+    enabled,
+  });
+}
+
+export function useUpdateSkillHarnessSetting() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ harness, enabled }: { harness: string; enabled: boolean }) => {
+      const response = await authenticatedFetch(
+        `/v1/skill-sync/roots/${encodeURIComponent(harness)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled }),
+        },
+      );
+      if (!response.ok) throw new Error((await response.text()) || `${response.status}`);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: SKILLS_KEY });
+    },
+  });
+}
+
+export function useSkillContent(
+  name: string | null,
+  hostId: string | null,
+  harness: string | null,
+) {
+  return useQuery({
+    queryKey: [...SKILLS_KEY, "content", name, hostId, harness],
+    queryFn: () => fetchSkillContent(name as string, hostId as string, harness as string),
+    enabled: Boolean(name && hostId && harness),
+  });
+}
+
+export function useSkillTree(name: string | null, hostId: string | null, harness: string | null) {
+  return useQuery({
+    queryKey: [...SKILLS_KEY, "tree", name, hostId, harness],
+    queryFn: () => fetchSkillTree(name as string, hostId as string, harness as string),
+    enabled: Boolean(name && hostId && harness),
+  });
+}
+
+export function useSyncSkills() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      name,
+      sourceHostId,
+      sourceHarness,
+    }: {
+      name: string;
+      sourceHostId: string;
+      sourceHarness: string;
+    }) => syncSkill(name, sourceHostId, sourceHarness),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: SKILLS_KEY });
+    },
+  });
+}
+
+export function useSaveSkillVariantFiles() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      name,
+      contentSha256,
+      files,
+    }: {
+      name: string;
+      contentSha256: string;
+      files: Record<string, string>;
+    }) => saveSkillVariantFiles(name, contentSha256, files),
+    onSuccess: (result, variables) => {
+      const nextHash = result.contentSha256;
+      if (nextHash) {
+        queryClient.setQueryData<AggregatedSkill[]>(SKILLS_KEY, (current) =>
+          current?.map((skill) => {
+            if (skill.name !== variables.name) return skill;
+            const variants = skill.variants.map((variant) =>
+              variant.contentSha256 === variables.contentSha256
+                ? {
+                    ...variant,
+                    contentSha256: nextHash,
+                    occurrences: variant.occurrences.map((occurrence) => ({
+                      ...occurrence,
+                      contentSha256: nextHash,
+                    })),
+                  }
+                : variant,
+            );
+            return { ...skill, variants };
+          }),
+        );
+      }
+      queryClient.setQueriesData<SkillTreeFile[]>(
+        { queryKey: [...SKILLS_KEY, "tree", variables.name] },
+        (current) =>
+          current?.map((file) =>
+            Object.hasOwn(variables.files, file.path)
+              ? { ...file, content: variables.files[file.path] as string }
+              : file,
+          ),
+      );
+    },
+  });
+}
+
+export function useDeleteSkillEverywhere() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: deleteSkillEverywhere,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: SKILLS_KEY });
+    },
+  });
+}
+
+export function useCreateSkill() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, files }: { name: string; files: Record<string, string> }) =>
+      createSkill(name, files),
+    // A failed creation can still have written to some hosts; the reload shows them.
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: SKILLS_KEY });
+    },
+  });
+}

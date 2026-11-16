@@ -28,7 +28,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, SupportsIndex, SupportsInt, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, SupportsInt, TypeVar, cast
 
 import click
 import httpx
@@ -3840,6 +3840,7 @@ class HostProcess:
         """
         from pathlib import Path
 
+        from omnigent.host.skill_ops import SKILL_READ_OPS
         from omnigent.runtime.filesystem_registry import detect_git_root
         from omnigent.workspace_fs import (
             WorkspaceReader,
@@ -3847,6 +3848,8 @@ class HostProcess:
             read_repository_branches,
         )
 
+        if frame.op in SKILL_READ_OPS:
+            return self._handle_skill_op(frame.request_id, frame.op, frame.params or {})
         try:
             expanded = os.path.expanduser(frame.workspace)
         except (TypeError, ValueError) as exc:
@@ -4466,6 +4469,45 @@ class HostProcess:
             return r.github_reviewers(session_id, cast("str | None", params.get("pr_url")))
         raise ValueError(f"unknown fs op: {op!r}")
 
+    def _handle_skill_op(
+        self, request_id: str, op: str, params: dict[str, Any]
+    ) -> HostFsResultFrame:
+        """Run a skill sync operation on this host's home skill folders.
+
+        The workspace of the frame does not apply. Errors carry no file text,
+        because a skill's text must not reach the logs.
+
+        :param request_id: The request to answer.
+        :param op: A ``skill.*`` operation, e.g. ``"skill.inventory"``.
+        :param params: The operation's arguments.
+        :returns: The operation's payload, or an error frame.
+        """
+        from omnigent.host.skill_ops import handle_skill_fs_op
+
+        def failed(status: int, code: str, message: str) -> HostFsResultFrame:
+            return HostFsResultFrame(
+                request_id=request_id,
+                status="error",
+                error_status=status,
+                error_code=code,
+                error=message,
+            )
+
+        try:
+            payload = handle_skill_fs_op(op, params)
+        except FileNotFoundError as exc:
+            return failed(404, "not_found", str(exc))
+        except FileExistsError as exc:
+            return failed(409, "conflict", str(exc))
+        except ValueError as exc:
+            return failed(400, "invalid_request", str(exc))
+        except Exception as exc:  # noqa: BLE001 — host boundary: a failed op answers the server
+            _logger.warning("host skill op %r failed: %s", op, type(exc).__name__)
+            return failed(
+                500, "skill_operation_failed", "skill operation failed; see the host log"
+            )
+        return HostFsResultFrame(request_id=request_id, status="ok", payload=payload)
+
     def _handle_fs_write(self, frame: HostFsWriteFrame) -> HostFsResultFrame:
         """Serve a workspace-mutating op from the host (runner-offline fallback).
 
@@ -4479,6 +4521,10 @@ class HostProcess:
         :param frame: The write frame (op + workspace + params).
         :returns: A result frame with the refreshed payload, or an error frame.
         """
+        from omnigent.host.skill_ops import SKILL_WRITE_OPS
+
+        if frame.op in SKILL_WRITE_OPS:
+            return self._handle_skill_op(frame.request_id, frame.op, frame.params or {})
         try:
             expanded = os.path.expanduser(frame.workspace)
         except (TypeError, ValueError) as exc:

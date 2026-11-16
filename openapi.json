@@ -15190,6 +15190,636 @@
         "title": "SkillSummary",
         "type": "object"
       },
+      "SkillSyncContent": {
+        "description": "The `SKILL.md` of one copy.",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host_id",
+          "name",
+          "content"
+        ],
+        "title": "SkillSyncContent",
+        "type": "object"
+      },
+      "SkillSyncFilesRequest": {
+        "additionalProperties": false,
+        "description": "Text files by path inside the skill folder, e.g. `{\"SKILL.md\": \"...\"}`.",
+        "properties": {
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "object"
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "title": "SkillSyncFilesRequest",
+        "type": "object"
+      },
+      "SkillSyncHarnessSettingRequest": {
+        "additionalProperties": false,
+        "description": "Whether a harness takes part in skill sync.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "SkillSyncHarnessSettingRequest",
+        "type": "object"
+      },
+      "SkillSyncHarnessSettingResult": {
+        "description": "The outcome of a harness setting change on each host.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "harness": {
+            "title": "Harness",
+            "type": "string"
+          },
+          "hosts": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSyncHostResult"
+            },
+            "title": "Hosts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "harness",
+          "enabled",
+          "hosts"
+        ],
+        "title": "SkillSyncHarnessSettingResult",
+        "type": "object"
+      },
+      "SkillSyncHarnessState": {
+        "description": "Where a skill stands for one harness on one host.\n\n`enabled` is the host's sync setting for the harness, null when unknown.\n`ignored_variant` is a harness that does not take part in sync but\nholds a copy that differs from the synced ones.",
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "harness": {
+            "title": "Harness",
+            "type": "string"
+          },
+          "installed": {
+            "title": "Installed",
+            "type": "boolean"
+          },
+          "occurrence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillSyncOccurrence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "enum": [
+              "present",
+              "missing",
+              "unavailable",
+              "offline",
+              "not_reported",
+              "ignored",
+              "ignored_variant"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "harness",
+          "installed",
+          "enabled",
+          "state",
+          "occurrence"
+        ],
+        "title": "SkillSyncHarnessState",
+        "type": "object"
+      },
+      "SkillSyncHostResult": {
+        "description": "The outcome of a change on one host, and harness when it applies.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "harness": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Harness"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host_id",
+          "status"
+        ],
+        "title": "SkillSyncHostResult",
+        "type": "object"
+      },
+      "SkillSyncHostRoots": {
+        "description": "A host's skill folders and sync settings; `error` says why they are unknown.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "host_name": {
+            "title": "Host Name",
+            "type": "string"
+          },
+          "installed_harnesses": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Installed Harnesses",
+            "type": "object"
+          },
+          "online": {
+            "title": "Online",
+            "type": "boolean"
+          },
+          "roots": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSyncRoot"
+            },
+            "title": "Roots",
+            "type": "array"
+          },
+          "sync_harnesses": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "boolean"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Harnesses"
+          }
+        },
+        "required": [
+          "host_id",
+          "host_name",
+          "online",
+          "roots",
+          "sync_harnesses",
+          "installed_harnesses",
+          "error"
+        ],
+        "title": "SkillSyncHostRoots",
+        "type": "object"
+      },
+      "SkillSyncHostRootsList": {
+        "description": "The skill folders and sync settings of each of the caller's hosts.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSyncHostRoots"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "object": {
+            "const": "list",
+            "default": "list",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SkillSyncHostRootsList",
+        "type": "object"
+      },
+      "SkillSyncHostState": {
+        "description": "A skill's state on one host; `reported` is false when its inventory is unknown.",
+        "properties": {
+          "harnesses": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSyncHarnessState"
+            },
+            "title": "Harnesses",
+            "type": "array"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "host_name": {
+            "title": "Host Name",
+            "type": "string"
+          },
+          "online": {
+            "title": "Online",
+            "type": "boolean"
+          },
+          "reported": {
+            "title": "Reported",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "host_id",
+          "host_name",
+          "online",
+          "reported",
+          "harnesses"
+        ],
+        "title": "SkillSyncHostState",
+        "type": "object"
+      },
+      "SkillSyncOccurrence": {
+        "description": "One copy of a skill: a harness's folder on one host.",
+        "properties": {
+          "content_sha256": {
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "harness": {
+            "title": "Harness",
+            "type": "string"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "host_name": {
+            "title": "Host Name",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "online": {
+            "title": "Online",
+            "type": "boolean"
+          },
+          "rel_home_path": {
+            "title": "Rel Home Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "harness",
+          "rel_home_path",
+          "content_sha256",
+          "host_id",
+          "host_name",
+          "online"
+        ],
+        "title": "SkillSyncOccurrence",
+        "type": "object"
+      },
+      "SkillSyncRequest": {
+        "additionalProperties": false,
+        "description": "Send one copy of a skill to the other hosts; no targets means every host.",
+        "properties": {
+          "source_harness": {
+            "title": "Source Harness",
+            "type": "string"
+          },
+          "source_host_id": {
+            "title": "Source Host Id",
+            "type": "string"
+          },
+          "target_host_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Host Ids"
+          }
+        },
+        "required": [
+          "source_host_id",
+          "source_harness"
+        ],
+        "title": "SkillSyncRequest",
+        "type": "object"
+      },
+      "SkillSyncResult": {
+        "description": "The outcome of a sync or a delete on each host and harness.",
+        "properties": {
+          "hosts": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSyncHostResult"
+            },
+            "title": "Hosts",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "object": {
+            "const": "skill_sync.result",
+            "default": "skill_sync.result",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "hosts"
+        ],
+        "title": "SkillSyncResult",
+        "type": "object"
+      },
+      "SkillSyncRoot": {
+        "description": "A home folder that a harness searches for skills.",
+        "properties": {
+          "harness": {
+            "title": "Harness",
+            "type": "string"
+          },
+          "rel_home_path": {
+            "title": "Rel Home Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "harness",
+          "rel_home_path"
+        ],
+        "title": "SkillSyncRoot",
+        "type": "object"
+      },
+      "SkillSyncSkill": {
+        "description": "A skill by name across the caller's hosts.\n\nIt is `synced` when every participating harness on every host has the\nsame copy; `partial` when the only gaps are harnesses that a host does\nnot have.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "hosts": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSyncHostState"
+            },
+            "title": "Hosts",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sync_status": {
+            "enum": [
+              "synced",
+              "partial",
+              "not_synced"
+            ],
+            "title": "Sync Status",
+            "type": "string"
+          },
+          "synced": {
+            "title": "Synced",
+            "type": "boolean"
+          },
+          "variants": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSyncVariant"
+            },
+            "title": "Variants",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "synced",
+          "sync_status",
+          "variants",
+          "hosts"
+        ],
+        "title": "SkillSyncSkill",
+        "type": "object"
+      },
+      "SkillSyncSkillList": {
+        "description": "The caller's skills by name, sorted.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSyncSkill"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "object": {
+            "const": "list",
+            "default": "list",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SkillSyncSkillList",
+        "type": "object"
+      },
+      "SkillSyncTree": {
+        "description": "Every file of one copy, `SKILL.md` first.",
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSyncTreeFile"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "rel_home_path": {
+            "title": "Rel Home Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host_id",
+          "name",
+          "rel_home_path",
+          "files"
+        ],
+        "title": "SkillSyncTree",
+        "type": "object"
+      },
+      "SkillSyncTreeFile": {
+        "description": "One file of a copy; a binary file shows its hash instead of its bytes.",
+        "properties": {
+          "binary": {
+            "title": "Binary",
+            "type": "boolean"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content",
+          "binary"
+        ],
+        "title": "SkillSyncTreeFile",
+        "type": "object"
+      },
+      "SkillSyncVariant": {
+        "description": "The copies of a skill with the same content; `active_count` counts online copies.",
+        "properties": {
+          "active_count": {
+            "format": "int64",
+            "title": "Active Count",
+            "type": "integer"
+          },
+          "content_sha256": {
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "occurrences": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSyncOccurrence"
+            },
+            "title": "Occurrences",
+            "type": "array"
+          }
+        },
+        "required": [
+          "content_sha256",
+          "active_count",
+          "occurrences"
+        ],
+        "title": "SkillSyncVariant",
+        "type": "object"
+      },
+      "SkillSyncWriteResult": {
+        "description": "The outcome on each copy; `content_sha256` is the new hash when all copies agree.",
+        "properties": {
+          "content_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Sha256"
+          },
+          "object": {
+            "const": "skill_sync.write_result",
+            "default": "skill_sync.write_result",
+            "title": "Object",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SkillSyncHostResult"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results",
+          "content_sha256"
+        ],
+        "title": "SkillSyncWriteResult",
+        "type": "object"
+      },
       "SkillsResponse": {
         "description": "User-invocable skill metadata discovered on a host.",
         "properties": {
@@ -28941,6 +29571,436 @@
         "summary": "Set Sharing",
         "tags": [
           "sharing"
+        ]
+      }
+    },
+    "/v1/skill-sync/roots": {
+      "get": {
+        "description": "List each host's skill folders, sync settings and installed harnesses.",
+        "operationId": "list_roots_v1_skill_sync_roots_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillSyncHostRootsList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Roots",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skill-sync/roots/{harness}": {
+      "put": {
+        "description": "Make a harness take part in skill sync, or not, on every online host.",
+        "operationId": "update_harness_setting_v1_skill_sync_roots__harness__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "harness",
+            "required": true,
+            "schema": {
+              "title": "Harness",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillSyncHarnessSettingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillSyncHarnessSettingResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Harness Setting",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skill-sync/skills": {
+      "get": {
+        "description": "List the caller's home skills by name, with their copies on each online host.",
+        "operationId": "list_skills_v1_skill_sync_skills_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillSyncSkillList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Skills",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skill-sync/skills/{name}": {
+      "delete": {
+        "description": "Delete every copy of a skill on every online host.",
+        "operationId": "delete_skill_v1_skill_sync_skills__name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillSyncResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Skill",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skill-sync/skills/{name}/content": {
+      "get": {
+        "description": "Read the `SKILL.md` of one copy.",
+        "operationId": "read_skill_v1_skill_sync_skills__name__content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "title": "Host Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "harness",
+            "required": true,
+            "schema": {
+              "title": "Harness",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillSyncContent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Skill",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skill-sync/skills/{name}/files": {
+      "post": {
+        "description": "Create a skill on every online host.\n\nIt goes into each participating harness folder and the Omnigent folder.",
+        "operationId": "create_skill_v1_skill_sync_skills__name__files_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillSyncFilesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillSyncWriteResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Skill",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skill-sync/skills/{name}/sync": {
+      "post": {
+        "description": "Copy one host's copy of a skill to every participating harness of the target hosts.",
+        "operationId": "sync_skill_v1_skill_sync_skills__name__sync_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillSyncRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillSyncResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sync Skill",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skill-sync/skills/{name}/tree": {
+      "get": {
+        "description": "Read every file of one copy.",
+        "operationId": "read_skill_tree_v1_skill_sync_skills__name__tree_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "host_id",
+            "required": true,
+            "schema": {
+              "title": "Host Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "harness",
+            "required": true,
+            "schema": {
+              "title": "Harness",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillSyncTree"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Skill Tree",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/v1/skill-sync/skills/{name}/variants/{content_sha256}/files": {
+      "put": {
+        "description": "Write edited text files to every copy of one variant.\n\nA copy that another copy's write already changed, such as a symlinked\nfolder, counts as saved.",
+        "operationId": "write_variant_files_v1_skill_sync_skills__name__variants__content_sha256__files_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "content_sha256",
+            "required": true,
+            "schema": {
+              "title": "Content Sha256",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillSyncFilesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillSyncWriteResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Write Variant Files",
+        "tags": [
+          "skills"
         ]
       }
     },
