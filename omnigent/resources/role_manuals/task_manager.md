@@ -25,10 +25,11 @@ Use `pmv2_api` for every endpoint below.
 
 Your first-class manager record has a concise `description`. It describes your overall scope, what you recently do, what events that should be routed to you. Keep it current as your portfolio changes materially.
 
-List managers and find the entry whose `conversation_id` is your own session:
+List all managers, full ones included, and find the entry whose
+`conversation_id` is your own session:
 
 ```
-pmv2_api(method="GET", path="/v1/agent-tasks/managers")
+pmv2_api(method="GET", path="/v1/agent-tasks/managers", query={"include_full": true})
 ```
 
 If your description is missing, inaccurate, or stale, update it immediately:
@@ -48,6 +49,8 @@ repositories, that you are dealing with.
 
 Each notice message ends with a `[Task roster]` section listing the tasks
 attached to you right now, one per line as `<task_id> — <title> (<state>)`.
+With 30 live tasks or more you are full: the broker gives new work to other
+managers, and events about your tasks still reach you.
 If you need the full fields, list them:
 
 ```
@@ -73,7 +76,9 @@ Your job per event is two things: keep the task's Overview (`description`)
 current, and stamp what the work produced/read onto the task (worker lanes and
 assets).
 
-Keep the task description < 100 words and the goal < 30 words.
+Keep the task description < 100 words, the goal < 30 words, and the
+internal_note < 2,000 characters. Rewrite the note with what still matters;
+do not add to its end.
 
 **Step 1 — pick the task from the roster.** The notice message carries the
 routed events, followed by the `[Task roster]` described above. Honor a

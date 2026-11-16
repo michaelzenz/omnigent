@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from omnigent.agent_tasks.session_labels import MANAGER_ROLE_VALUE, ROLE_LABEL
+from omnigent.entities import MANAGER_TASK_CAPACITY
 from omnigent.runner.identity import (
     ORCHESTRATION_SOURCE_HEADER,
     RUNNER_TUNNEL_TOKEN_HEADER,
@@ -18,6 +19,7 @@ from omnigent.server.routes import agent_task_managers
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
 
 ALICE_ID = "alice@example.com"
@@ -196,6 +198,51 @@ async def test_list_shows_portfolios_missing_sessions_and_only_the_callers_manag
         "Dashboards": (0, [], True),
     }
     assert (await auth_client.get(ROUTE, headers=BOB)).json()["data"] == []
+
+
+async def test_the_list_leaves_out_full_managers_unless_the_caller_asks(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    _install_manager_agent(db_uri)
+    _place_globalhub(db_uri)
+    full = (await _create_manager(auth_client, "Storage"))["id"]
+    with_room = (await _create_manager(auth_client, "Dashboards"))["id"]
+    tasks = SqlAlchemyTaskStore(db_uri)
+    # Every live state counts; an archived task does not.
+    live_states = ("active", "idle", "agent-resolved")
+    for manager_id, count in (
+        (full, MANAGER_TASK_CAPACITY),
+        (with_room, MANAGER_TASK_CAPACITY - 1),
+    ):
+        for index in range(count):
+            tasks.create(
+                uuid.uuid4().hex,
+                owner_user_id=ALICE_ID,
+                title=f"task {index}",
+                goal="Finish it",
+                manager_id=manager_id,
+                state=live_states[index % len(live_states)],
+            )
+    tasks.create(
+        uuid.uuid4().hex,
+        owner_user_id=ALICE_ID,
+        title="archived",
+        goal="Finish it",
+        manager_id=with_room,
+        state="archived",
+    )
+
+    listed = (await auth_client.get(ROUTE, headers=ALICE)).json()["data"]
+    everyone = (
+        await auth_client.get(ROUTE, params={"include_full": "true"}, headers=ALICE)
+    ).json()["data"]
+
+    assert [manager["id"] for manager in listed] == [with_room]
+    # Both managers share a creation second, so the test does not rely on their order.
+    assert {manager["id"]: manager["task_count"] for manager in everyone} == {
+        full: MANAGER_TASK_CAPACITY,
+        with_room: MANAGER_TASK_CAPACITY - 1,
+    }
 
 
 async def test_delete_unassigns_tasks_and_keeps_the_session(

@@ -24,6 +24,10 @@ SESSION_EVENT_SOURCE = "session"
 WATCHER_ROLE_KEY_PREFIX = "watcher:"
 #: The most offsets one tracked item keeps.
 MAX_WATCH_ITEM_OFFSETS = 10
+#: The longest internal note a task keeps; managers read the notes of up to 10 tasks at once.
+MAX_TASK_INTERNAL_NOTE_CHARS = 2_000
+#: A manager with this many live tasks is full, so the broker's manager list leaves it out.
+MANAGER_TASK_CAPACITY = 30
 
 
 @dataclass

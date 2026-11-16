@@ -596,7 +596,7 @@
         "type": "object"
       },
       "AgentManagerList": {
-        "description": "The caller's GlobalHub managers, in creation order.",
+        "description": "The caller's GlobalHub managers, in creation order; full managers only on request.",
         "properties": {
           "data": {
             "items": {
@@ -4014,7 +4014,7 @@
           "internal_note": {
             "anyOf": [
               {
-                "maxLength": 32000,
+                "maxLength": 2000,
                 "type": "string"
               },
               {
@@ -15899,7 +15899,7 @@
           "internal_note": {
             "anyOf": [
               {
-                "maxLength": 32000,
+                "maxLength": 2000,
                 "type": "string"
               },
               {
@@ -17720,8 +17720,20 @@
     },
     "/v1/agent-tasks/managers": {
       "get": {
-        "description": "List the caller's managers in creation order, each with its live tasks.",
+        "description": "List the caller's managers in creation order, each with its live tasks.\n\nA manager with `MANAGER_TASK_CAPACITY` live tasks or more is full, and\nthe list leaves it out, so the broker gives new work to other managers.\n`include_full` lists every manager, as the board does.",
         "operationId": "list_managers_v1_agent_tasks_managers_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_full",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Full",
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -17732,6 +17744,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "List Managers",

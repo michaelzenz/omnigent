@@ -133,7 +133,8 @@ async function fetchBoard(limit: number, query: string): Promise<AgentTaskBoard>
 }
 
 async function fetchManagers(): Promise<AgentManager[]> {
-  const res = await authenticatedFetch("/v1/agent-tasks/managers");
+  // The board shows full managers too; the broker's list leaves them out.
+  const res = await authenticatedFetch("/v1/agent-tasks/managers?include_full=true");
   return (await readJson<{ data: AgentManager[] }>(res)).data;
 }
 

@@ -46,7 +46,7 @@ from omnigent.entities import (
     TerminalCommandData,
 )
 from omnigent.entities.conversation import StartupInputOptions
-from omnigent.entities.task import MAX_WATCH_ITEM_OFFSETS
+from omnigent.entities.task import MAX_TASK_INTERNAL_NOTE_CHARS, MAX_WATCH_ITEM_OFFSETS
 from omnigent.inner.native_attachments import reject_authored_framework_notices
 from omnigent.onboarding.sandboxes.profiles import SandboxProfileSummary
 from omnigent.server.server_config import (
@@ -6286,7 +6286,7 @@ class CreateAgentTaskRequest(BaseModel):
     title: _AgentTaskTitle
     goal: _AgentTaskGoal
     description: str | None = Field(default=None, max_length=16_000)
-    internal_note: str | None = Field(default=None, max_length=32_000)
+    internal_note: str | None = Field(default=None, max_length=MAX_TASK_INTERNAL_NOTE_CHARS)
     priority: int = Field(default=2, ge=0, le=3)
     state: Literal["active"] = "active"
 
@@ -6303,7 +6303,7 @@ class UpdateAgentTaskRequest(BaseModel):
     title: _AgentTaskTitle | None = None
     goal: _AgentTaskGoal | None = None
     description: str | None = Field(default=None, max_length=16_000)
-    internal_note: str | None = Field(default=None, max_length=32_000)
+    internal_note: str | None = Field(default=None, max_length=MAX_TASK_INTERNAL_NOTE_CHARS)
     manager_id: str | None = None
     state: AgentTaskState | None = None
     priority: int | None = Field(default=None, ge=0, le=3)
@@ -6361,7 +6361,7 @@ class AgentManagerResponse(BaseModel):
 
 
 class AgentManagerList(BaseModel):
-    """The caller's GlobalHub managers, in creation order."""
+    """The caller's GlobalHub managers, in creation order; full managers only on request."""
 
     object: Literal["list"] = "list"
     data: list[AgentManagerResponse]

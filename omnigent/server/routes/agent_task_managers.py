@@ -20,7 +20,13 @@ from omnigent.agent_tasks.role_sessions import (
     require_globalhub_placement,
 )
 from omnigent.agent_tasks.roles import MANAGER_ROLE_KEY, builtin_role
-from omnigent.entities import LIVE_TASK_STATES, Conversation, Manager, Task
+from omnigent.entities import (
+    LIVE_TASK_STATES,
+    MANAGER_TASK_CAPACITY,
+    Conversation,
+    Manager,
+    Task,
+)
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._agent_task_callers import runner_bound_caller
@@ -56,16 +62,25 @@ def create_agent_task_managers_router(
     assert manager_role is not None
 
     @router.get("/agent-tasks/managers", response_model=AgentManagerList)
-    async def list_managers(request: Request) -> AgentManagerList:
-        """List the caller's managers in creation order, each with its live tasks."""
+    async def list_managers(request: Request, include_full: bool = False) -> AgentManagerList:
+        """List the caller's managers in creation order, each with its live tasks.
+
+        A manager with ``MANAGER_TASK_CAPACITY`` live tasks or more is full, and
+        the list leaves it out, so the broker gives new work to other managers.
+        ``include_full`` lists every manager, as the board does.
+        """
         user_id = require_user(request, auth_provider)
 
         def load() -> list[tuple[Manager, list[Task], Conversation | None]]:
-            managers = board.managers.list(owner_user_id=user_id)
             portfolios: defaultdict[str, list[Task]] = defaultdict(list)
             for task in board.tasks.list(owner_user_id=user_id, states=LIVE_TASK_STATES):
                 if task.manager_id is not None:
                     portfolios[task.manager_id].append(task)
+            managers = [
+                manager
+                for manager in board.managers.list(owner_user_id=user_id)
+                if include_full or len(portfolios[manager.id]) < MANAGER_TASK_CAPACITY
+            ]
             manager_sessions = sessions.conversation_store.get_conversations(
                 [manager.conversation_id for manager in managers if manager.conversation_id]
             )

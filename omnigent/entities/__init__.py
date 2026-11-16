@@ -44,6 +44,7 @@ from omnigent.entities.session_resources import (
 )
 from omnigent.entities.task import (
     LIVE_TASK_STATES,
+    MANAGER_TASK_CAPACITY,
     MAX_WATCH_ITEM_OFFSETS,
     SESSION_EVENT_SOURCE,
     WATCHER_ROLE_KEY_PREFIX,
@@ -66,6 +67,7 @@ __all__ = [
     "DEFAULT_ENVIRONMENT_ID",
     "DEFAULT_GENERATED_TITLE_MAX_CHARS",
     "LIVE_TASK_STATES",
+    "MANAGER_TASK_CAPACITY",
     "MAX_WATCH_ITEM_OFFSETS",
     "NON_CONTENT_ITEM_TYPES",
     "SESSION_EVENT_SOURCE",

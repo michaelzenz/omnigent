@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 
+from omnigent.entities.task import MAX_TASK_INTERNAL_NOTE_CHARS
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 
 ALICE = {"X-Forwarded-Email": "alice@example.com"}
@@ -65,12 +66,23 @@ async def test_tasks_need_an_owned_manager_and_list_in_board_order(
     blank_title = await auth_client.post(
         ROUTE, json={"manager_id": manager_id, "title": "  ", "goal": "y"}, headers=ALICE
     )
+    long_note = await auth_client.post(
+        ROUTE,
+        json={
+            "manager_id": manager_id,
+            "title": "x",
+            "goal": "y",
+            "internal_note": "n" * (MAX_TASK_INTERNAL_NOTE_CHARS + 1),
+        },
+        headers=ALICE,
+    )
 
     assert await _board(auth_client) == ["second", "first"]
     assert await _board(auth_client, BOB) == []
     assert with_bobs_manager.status_code == 404
     assert born_idle.status_code == 422
     assert blank_title.status_code == 422
+    assert long_note.status_code == 422
 
 
 async def test_list_filters_by_state_manager_session_and_limit(

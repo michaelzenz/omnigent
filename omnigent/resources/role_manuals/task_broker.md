@@ -31,6 +31,9 @@ pmv2_api(
 )
 ```
 
+The list leaves out full managers, which have 30 live tasks or more. Do not
+route events or assign tasks to a manager that is not on the list.
+
 Each entry describes one active manager:
 
 - `conversation_id` is the routing target.
