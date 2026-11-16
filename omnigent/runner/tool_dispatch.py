@@ -128,7 +128,12 @@ from omnigent.tools.builtins.timer import (
     # schema advertises.
     validate_timer_set_args,
 )
-from omnigent.tools.builtins.ui import OpenFileRequest, UiOpenFileTool
+from omnigent.tools.builtins.ui import (
+    OpenFileRequest,
+    StampFoldersRequest,
+    UiOpenFileTool,
+    UiStampFoldersTool,
+)
 from omnigent.tools.builtins.update_comment import UpdateCommentTool
 from omnigent.tools.builtins.upload_file import UploadFileTool, safe_resolve
 from omnigent.tools.builtins.watch_items import WatchItemsTool
@@ -358,7 +363,7 @@ _PMV2_API_TOOLS = frozenset({Pmv2ApiTool.name(), Pmv2ReadTool.name()})
 _SYSTEM_NOTICE_TOOLS = frozenset({SystemNoticeTool.name()})
 # Opt-in tracker of a GlobalHub watcher, called as the watcher's session.
 _WATCH_ITEMS_TOOLS = frozenset({WatchItemsTool.name()})
-_UI_TOOLS = frozenset({UiOpenFileTool.name()})
+_UI_TOOLS = frozenset({UiOpenFileTool.name(), UiStampFoldersTool.name()})
 
 # The title bound the rename tool advertises to the LLM — read once from the
 # tool schema so the dispatcher can never drift from the published contract.
@@ -645,6 +650,7 @@ def build_native_relay_tool_schemas(spec: AgentSpec | None) -> list[_JsonObject]
             SysSessionUpdateTool,
             SysProjectUpdateTool,
             UiOpenFileTool,
+            UiStampFoldersTool,
             SysAgentGetTool,
             SysAgentListTool,
             SysAgentDownloadTool,
@@ -6504,6 +6510,54 @@ async def _open_file_via_rest(
         return json.dumps({"error": f"ui_open_file failed: {exc}"})
 
 
+def _server_error_message(response: httpx.Response) -> str:
+    """Return the server's error message, or the status line when the body has none."""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, dict) and isinstance(error.get("message"), str):
+        return error["message"]
+    return f"{response.status_code} {response.reason_phrase}"
+
+
+async def _stamp_folders_via_rest(
+    args: _JsonObject,
+    conversation_id: str | None,
+    server_client: httpx.AsyncClient | None,
+) -> str:
+    """Check that each stamped folder exists on this machine, then save the stamp."""
+    if server_client is None or not conversation_id:
+        return json.dumps({"error": "ui_stamp_folders requires server access and a session id"})
+    try:
+        body = StampFoldersRequest.model_validate(args)
+    except ValueError as exc:
+        return json.dumps({"error": f"ui_stamp_folders failed: {exc}"})
+    paths = [folder.path for folder in body.folders]
+    missing = await asyncio.to_thread(lambda: [path for path in paths if not os.path.isdir(path)])
+    if missing:
+        return json.dumps(
+            {"error": "These paths are not folders on this machine: " + ", ".join(missing)}
+        )
+    try:
+        response = await server_client.post(
+            f"/v1/sessions/{conversation_id}/ui/open-folders",
+            json=body.model_dump(),
+            timeout=30.0,
+        )
+        if response.is_error:
+            return json.dumps(
+                {"error": f"ui_stamp_folders failed: {_server_error_message(response)}"}
+            )
+        result = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        return json.dumps({"error": f"ui_stamp_folders failed: {exc}"})
+    if not isinstance(result, dict) or not isinstance(result.get("folders"), list):
+        return json.dumps({"error": "ui_stamp_folders returned an invalid response"})
+    return json.dumps({"folders": result["folders"]})
+
+
 async def _rename_current_session_via_rest(
     args: _JsonObject,
     conversation_id: str | None,
@@ -7446,6 +7500,8 @@ async def execute_tool(
                 agent_spec=agent_spec,
                 runner_workspace=runner_workspace,
             )
+        elif tool_name == UiStampFoldersTool.name():
+            output = await _stamp_folders_via_rest(args, conversation_id, server_client)
         elif tool_name in _UI_TOOLS:
             output = await _open_file_via_rest(args, conversation_id, server_client)
         elif tool_name in _SESSION_SELF_WRITE_TOOLS:

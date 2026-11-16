@@ -68,6 +68,7 @@ import {
   cancelLocalElicitationResolution,
 } from "@/lib/localElicitationResolutions";
 import { emitUiOpenFile } from "@/lib/uiFileRequests";
+import { emitUiOpenFolders } from "@/lib/openFolders";
 import {
   ApiError,
   approve as approveElicitation,
@@ -8930,6 +8931,9 @@ export function handleSessionEvent(event: StreamEvent, streamConversationId?: st
       return;
     case "ui_open_file":
       emitUiOpenFile(event, sourceConversationId);
+      return;
+    case "ui_open_folders":
+      emitUiOpenFolders(event, sourceConversationId);
       return;
     case "browser_action_request":
       // Embedded-browser action: fan out to the relay hook (which claims,

@@ -1022,6 +1022,17 @@ export interface UiOpenFileEvent {
   path: string;
 }
 
+/** A folder the session's agent stamped: its title and absolute path on the session's host. */
+export interface OpenFolder {
+  title: string;
+  path: string;
+}
+
+export interface UiOpenFoldersEvent {
+  type: "ui_open_folders";
+  folders: OpenFolder[];
+}
+
 // ── Union type for all events ────────────────────────────
 
 export type StreamEvent =
@@ -1082,4 +1093,5 @@ export type StreamEvent =
   | SessionPresenceEvent
   | SessionBtwSidechatEvent
   | BrowserActionRequestEvent
-  | UiOpenFileEvent;
+  | UiOpenFileEvent
+  | UiOpenFoldersEvent;

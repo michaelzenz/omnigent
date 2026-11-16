@@ -61,6 +61,7 @@ const { useComposerGitStatusMock } = vi.hoisted(() => ({
 vi.mock("@/hooks/useComposerGitStatus", () => ({
   useComposerGitStatus: () => useComposerGitStatusMock(),
 }));
+vi.mock("@/hooks/useOpenFolders", () => ({ useOpenFolders: () => [] }));
 
 function composerGitStatus(overrides: Record<string, unknown> = {}) {
   return {

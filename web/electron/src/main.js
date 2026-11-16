@@ -38,6 +38,7 @@ const { createUpdateOverlay } = require("./update_overlay");
 const { createConnectionLoading } = require("./connection_loading");
 const { createAboutWindow, resolveAppIconDataUrl } = require("./about_window");
 const { registerFileReveal } = require("./fileReveal");
+const { registerEditorApps } = require("./editorApps");
 const { registerFolderChooser } = require("./folderChooser");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -5167,6 +5168,8 @@ function registerIpc() {
     isPinnedOriginSender,
     localHostId: () => omnigentCli.localHostId(),
   });
+
+  registerEditorApps({ ipcMain, app, isPinnedOriginSender });
 
   registerFolderChooser({
     ipcMain,

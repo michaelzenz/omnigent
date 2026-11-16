@@ -5772,6 +5772,30 @@
         "title": "FinishWatchItemsResponse",
         "type": "object"
       },
+      "FolderStamp": {
+        "additionalProperties": false,
+        "description": "A folder the user can open in an editor: its title and absolute path.",
+        "properties": {
+          "path": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "path"
+        ],
+        "title": "FolderStamp",
+        "type": "object"
+      },
       "FunctionCallData": {
         "description": "Data for a function_call item.\n\n**Parameters**\n\n- `agent` \u2014 Agent name. Serialized as `\"model\"` in JSON.",
         "properties": {
@@ -10135,7 +10159,8 @@
             "turn.completed": "#/components/schemas/TurnCompletedEvent",
             "turn.failed": "#/components/schemas/TurnFailedEvent",
             "turn.started": "#/components/schemas/TurnStartedEvent",
-            "ui.open_file": "#/components/schemas/UiOpenFileEvent"
+            "ui.open_file": "#/components/schemas/UiOpenFileEvent",
+            "ui.open_folders": "#/components/schemas/UiOpenFoldersEvent"
           },
           "propertyName": "type"
         },
@@ -10256,6 +10281,9 @@
           },
           {
             "$ref": "#/components/schemas/UiOpenFileEvent"
+          },
+          {
+            "$ref": "#/components/schemas/UiOpenFoldersEvent"
           },
           {
             "$ref": "#/components/schemas/PolicyDeniedEvent"
@@ -12546,6 +12574,42 @@
           "type"
         ],
         "title": "SessionNativeToolItem",
+        "type": "object"
+      },
+      "SessionOpenFolder": {
+        "description": "A folder the session's agent stamped: its title and absolute path on the host.",
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "path"
+        ],
+        "title": "SessionOpenFolder",
+        "type": "object"
+      },
+      "SessionOpenFolderList": {
+        "description": "The session's stamped folders, oldest first.",
+        "properties": {
+          "folders": {
+            "items": {
+              "$ref": "#/components/schemas/SessionOpenFolder"
+            },
+            "title": "Folders",
+            "type": "array"
+          }
+        },
+        "required": [
+          "folders"
+        ],
+        "title": "SessionOpenFolderList",
         "type": "object"
       },
       "SessionPageBoundary": {
@@ -16088,6 +16152,32 @@
         "title": "SmartRoutingSourcesInfo",
         "type": "object"
       },
+      "StampFoldersRequest": {
+        "additionalProperties": false,
+        "description": "Folders to add or retitle, and paths to drop, by absolute path.",
+        "properties": {
+          "folders": {
+            "items": {
+              "$ref": "#/components/schemas/FolderStamp"
+            },
+            "maxItems": 20,
+            "title": "Folders",
+            "type": "array"
+          },
+          "remove": {
+            "items": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Remove",
+            "type": "array"
+          }
+        },
+        "title": "StampFoldersRequest",
+        "type": "object"
+      },
       "StartAgentTaskWorkerRequest": {
         "additionalProperties": false,
         "description": "Start a session that works on one of the caller's tasks.\n\nThe session runs on `host_id` in `workspace`, or in a git worktree of\nthat repository when `git` is set. It uses `agent`, else the server's\nNew Chat default agent. `project_name` files it in the caller's project\nwith that name and creates the project when it is missing. `title` names\nthe session and its worker, and `message` is the session's first message.",
@@ -16648,6 +16738,42 @@
           "path"
         ],
         "title": "UiOpenFileEvent",
+        "type": "object"
+      },
+      "UiOpenFoldersEvent": {
+        "description": "The session's stamped folders after a stamp; never replayed.",
+        "properties": {
+          "folders": {
+            "items": {
+              "$ref": "#/components/schemas/SessionOpenFolder"
+            },
+            "title": "Folders",
+            "type": "array"
+          },
+          "sequence_number": {
+            "anyOf": [
+              {
+                "format": "int64",
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sequence Number"
+          },
+          "type": {
+            "const": "ui.open_folders",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "folders"
+        ],
+        "title": "UiOpenFoldersEvent",
         "type": "object"
       },
       "UpdateAgentManagerSelfRequest": {
@@ -29772,6 +29898,100 @@
           }
         },
         "summary": "Open File",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/ui/open-folders": {
+      "get": {
+        "description": "List the folders that the session's agent stamped, oldest first.\n\nRequires session read access. Each path is on the session's host; the\nbrowser decides whether it can open it here.",
+        "operationId": "list_open_folders_v1_sessions__session_id__ui_open_folders_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOpenFolderList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Open Folders",
+        "tags": [
+          "sessions"
+        ]
+      },
+      "post": {
+        "description": "Add or retitle stamped folders and drop removed paths; return the full list.\n\nRequires session edit access. The session's runner checks that each\nfolder exists before it calls this route. Current viewers get the new\nlist on the session stream.",
+        "operationId": "stamp_open_folders_v1_sessions__session_id__ui_open_folders_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StampFoldersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionOpenFolderList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stamp Open Folders",
         "tags": [
           "sessions"
         ]

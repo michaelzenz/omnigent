@@ -126,6 +126,12 @@ def test_builtin_names_size_matches_registry() -> None:
                 "download_file",
                 "search_conversations",
                 "export_agent",
+                # Opt-in GlobalHub role tools.
+                "sys_session_delete",
+                "pmv2_api",
+                "pmv2_read",
+                "system_notice",
+                "watch_items",
                 # Hindsight long-term memory tools (optional `hindsight`
                 # extra; factories probe for hindsight-client).
                 "hindsight_retain",
@@ -160,6 +166,7 @@ def test_builtin_names_size_matches_registry() -> None:
                 "browser_type",
                 "browser_screenshot",
                 "ui_open_file",
+                "ui_stamp_folders",
             }
         )
         == BUILTIN_NAMES

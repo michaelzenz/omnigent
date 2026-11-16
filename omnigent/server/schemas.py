@@ -5012,6 +5012,26 @@ class UiOpenFileEvent(_SSEEventBase):
     path: str
 
 
+class SessionOpenFolder(BaseModel):
+    """A folder the session's agent stamped: its title and absolute path on the host."""
+
+    title: str
+    path: str
+
+
+class SessionOpenFolderList(BaseModel):
+    """The session's stamped folders, oldest first."""
+
+    folders: list[SessionOpenFolder]
+
+
+class UiOpenFoldersEvent(_SSEEventBase):
+    """The session's stamped folders after a stamp; never replayed."""
+
+    type: Literal["ui.open_folders"]
+    folders: list[SessionOpenFolder]
+
+
 class BrowserActionRequestEvent(_SSEEventBase):
     """
     Request that the desktop renderer perform one browser action.
@@ -5639,6 +5659,7 @@ ServerStreamEvent = Annotated[
     # ── Transient (SSE-only) — embedded-browser action request ─
     | BrowserActionRequestEvent
     | UiOpenFileEvent
+    | UiOpenFoldersEvent
     # ── Transient (SSE-only) — native policy DENY signal ───────
     | PolicyDeniedEvent
     # ── Transient (SSE-only) — Responses-API turn lifecycle ────

@@ -207,6 +207,8 @@ interface ElectronDesktopApi extends NativeShellApi {
   updates?: ElectronUpdateBridge;
   /** Reveal one of this machine's files in the OS file manager. */
   revealFile?: (hostId: string, path: string) => Promise<boolean>;
+  /** Which code editors this OS opens `cursor://` and `vscode://` links with. */
+  getInstalledEditors?: () => Promise<InstalledEditors | null>;
   /** OS folder chooser on this machine; resolves the chosen path, or null on cancel. */
   chooseDirectory?: (defaultPath?: string) => Promise<string | null>;
   /** This machine's path for a dropped File; "" if none or off the pinned server. */
@@ -1572,6 +1574,26 @@ export async function revealFile(hostId: string, path: string): Promise<boolean>
     return (await electronApi()?.revealFile?.(hostId, path)) ?? false;
   } catch {
     return false;
+  }
+}
+
+/** Whether this OS has an app for each editor's links. */
+export interface InstalledEditors {
+  vscode: boolean;
+  cursor: boolean;
+}
+
+/** The editors the desktop shell found; null in a browser, an older shell, or on failure. */
+export async function getInstalledEditors(): Promise<InstalledEditors | null> {
+  const detect = electronApi()?.getInstalledEditors;
+  if (typeof detect !== "function") return null;
+  try {
+    const found = await detect();
+    return found && typeof found.vscode === "boolean" && typeof found.cursor === "boolean"
+      ? { vscode: found.vscode, cursor: found.cursor }
+      : null;
+  } catch {
+    return null;
   }
 }
 

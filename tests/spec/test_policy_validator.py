@@ -182,6 +182,7 @@ guardrails:
         # be invoked (its calls would silently route to the builtin).
         "sys_list_models",
         "ui_open_file",
+        "ui_stamp_folders",
     ],
 )
 def test_validate_rejects_local_tool_colliding_with_builtin(

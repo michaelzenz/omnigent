@@ -719,6 +719,9 @@ class SqlConversationMetadata(OmnigentBase):
     # kept under 16,384 stored bytes by SessionPullRequestStore; NULL = none
     # reported. Deferred so whole-row reads (e.g. the session list) skip it.
     pull_requests: Mapped[str | None] = mapped_column(CompressedText, nullable=True, deferred=True)
+    # JSON list of the folders the session's agent stamped for the user to open
+    # in an editor; NULL = none. Deferred so whole-row reads skip it.
+    open_folders: Mapped[str | None] = mapped_column(CompressedText, nullable=True, deferred=True)
     # The session whose Workspace rail lists this side chat; NULL = not a side chat.
     # No DB FK (Rule R032).
     side_chat_parent_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)

@@ -110,6 +110,7 @@ vi.mock("@/hooks/useComposerGitStatus", () => ({
     return composerGitStatusSnapshot;
   },
 }));
+vi.mock("@/hooks/useOpenFolders", () => ({ useOpenFolders: () => [] }));
 vi.mock("@/shell/FileViewerContext", async (importOriginal) => ({
   ...(await importOriginal<typeof FileViewerContextModule>()),
   useOpenGithubTab: () => openGithubTabMock,

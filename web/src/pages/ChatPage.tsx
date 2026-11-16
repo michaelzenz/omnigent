@@ -60,6 +60,7 @@ import {
 import { ComposerAddMenu } from "@/components/composer/ComposerAddMenu";
 import { BackgroundTaskIndicator } from "@/components/composer/BackgroundTaskIndicator";
 import { SubagentTaskIndicator } from "@/components/composer/SubagentTaskIndicator";
+import { OpenFoldersMenu } from "@/components/composer/OpenFoldersMenu";
 import { subAgentComposerLabel } from "@/shell/subagentLabel";
 import { ReplyDraftBlocks } from "@/components/composer/ReplyDraftBlocks";
 import {
@@ -4457,6 +4458,7 @@ function ComposerImpl(
               onOpen={openComposerGithubTab}
               conversationId={composerSessionId ?? undefined}
             />
+            <OpenFoldersMenu conversationId={composerSessionId} hostId={hostMcpRoutingId} />
             <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
               <div
                 data-testid="composer-task-indicators"

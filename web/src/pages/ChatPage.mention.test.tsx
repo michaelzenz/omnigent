@@ -102,6 +102,7 @@ vi.mock("@/hooks/usePullRequests", () => ({
 vi.mock("@/hooks/useComposerGitStatus", () => ({
   useComposerGitStatus: () => ({ branchState: "unknown", prCount: 0 }),
 }));
+vi.mock("@/hooks/useOpenFolders", () => ({ useOpenFolders: () => [] }));
 vi.mock("@/hooks/useSkills", () => ({
   useSkills: () => ({ skills: [], skillsStatus: "ready", refetch: vi.fn() }),
 }));

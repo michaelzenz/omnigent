@@ -215,6 +215,8 @@ contextBridge.exposeInMainWorld("omnigentDesktop", {
   },
   /** Reveal one of this machine's files in the OS file manager. */
   revealFile: (hostId, path) => ipcRenderer.invoke("omnigent:reveal-file", hostId, path),
+  /** Which code editors this OS opens `vscode://` and `cursor://` links with, or null. */
+  getInstalledEditors: () => ipcRenderer.invoke("omnigent:installed-editors"),
   /** OS folder chooser on this machine; resolves the chosen path, or null on cancel. */
   chooseDirectory: (defaultPath) => ipcRenderer.invoke("omnigent:choose-directory", defaultPath),
   /**
