@@ -15,6 +15,11 @@
  * which. So before sign-in, ports that are busy on the laptop are taken on the
  * remote machine with `ssh -R`, and the CLI lands on one free on both.
  *
+ * With `OMNIGENT_REMOTE_INSTALL_REPO` set, the remote machine runs the build
+ * the server runs: the commit in the server's version, from that repository,
+ * in a virtual environment of its own. Each connect checks the build there
+ * and reinstalls it, and restarts the host, when the server moved on.
+ *
  * Spawns and port probes are injected so everything is unit-testable without
  * a real ssh.
  */
@@ -45,6 +50,47 @@ const SIGN_IN_LAST_PORT = 8040;
 
 /** Target for ports held on the remote machine; nothing ever connects to them. */
 const HELD_PORT_TARGET = "127.0.0.1:9";
+
+/** The git repository the app installs remote hosts from, e.g. a fork's URL. */
+const INSTALL_REPO_ENV = "OMNIGENT_REMOTE_INSTALL_REPO";
+
+/** The package index for remote installs, e.g. a mirror where public PyPI is blocked. */
+const INSTALL_INDEX_ENV = "OMNIGENT_REMOTE_INDEX_URL";
+
+/** A directory under the home directory: plain path segments, none of them `.` or `..`. */
+const HOME_DIR_RE = /^(?!(?:.*\/)?\.\.?(?:\/|$))[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/;
+
+/** Repository and index URLs that are safe inside double quotes in a remote command. */
+const REPO_URL_RE = /^(?:https:\/\/[A-Za-z0-9._~:/@%+-]+|git@[A-Za-z0-9._-]+:[A-Za-z0-9._~/-]+)$/;
+const INDEX_URL_RE = /^https?:\/\/[A-Za-z0-9._~:/@%+-]+$/;
+
+/** The commit in a build's local version label, e.g. "c7e736d7b1" from "+gc7e736d7b1.dirty". */
+const VERSION_COMMIT_RE = /\+g([0-9a-f]{7,40})(?:\.|$)/;
+
+/** A published release, e.g. "0.22.0" or "0.22.0rc1"; dev and local builds aren't on PyPI. */
+const RELEASE_VERSION_RE = /^\d+(?:\.\d+)*(?:(?:a|b|rc)\d+)?(?:\.post\d+)?$/;
+
+/** The default Omnigent directory under the home directory. */
+const DEFAULT_OMNIGENT_DIR = ".omnigent";
+
+/** Marks the remote build report among other output, e.g. a login shell's banner. */
+const BUILD_REPORT_MARK = "OMNIGENT_REMOTE_BUILD";
+
+/**
+ * How the remote machine gets and runs Omnigent: the app's own data and config
+ * directories under the remote home directory, and, when the app names a
+ * repository, the server's build. Defaults match today's install.
+ *
+ * @typedef {{ spec: string, commit: string | null, version: string | null }} ServerBuild
+ *   e.g. `{ spec: "omnigent[databricks] @ git+https://…/omnigent.git@c7e736d7b1", commit: "c7e736d7b1", version: null }`.
+ * @typedef {{ dataDir: string | null, configHome: string | null, build: ServerBuild | null, indexUrl: string | null }} RemotePlan
+ */
+const DEFAULT_PLAN = Object.freeze({
+  dataDir: null,
+  configHome: null,
+  build: null,
+  indexUrl: null,
+});
 
 /**
  * An ssh destination as typed or listed in ~/.ssh/config: an alias, a host, or
@@ -113,10 +159,128 @@ function remoteCommand(script) {
 const REMOTE_PATH = 'PATH="$HOME/.local/bin:$PATH"; export PATH';
 
 /**
+ * A directory of this computer's as a path under the home directory, so the
+ * remote machine can use the same one.
+ *
+ * @param {string | undefined} value e.g. the app's `OMNIGENT_DATA_DIR`.
+ * @param {string} homedir
+ * @returns {string | null} e.g. ".omnigent-pmv2"; null for none, the default
+ *   directory, or one outside the home directory.
+ */
+function homeRelativeDir(value, homedir) {
+  if (!value?.trim()) return null;
+  const relative = path.relative(homedir, path.resolve(value.trim())).split(path.sep).join("/");
+  return relative !== DEFAULT_OMNIGENT_DIR && HOME_DIR_RE.test(relative) ? relative : null;
+}
+
+/**
+ * Read the app's remote-install settings from its own environment.
+ *
+ * @param {{ env?: NodeJS.ProcessEnv, homedir?: string }} [options]
+ * @returns {{ dataDir: string | null, configHome: string | null, repo: string | null, indexUrl: string | null }}
+ */
+function remoteSettings({ env = process.env, homedir = os.homedir() } = {}) {
+  return {
+    dataDir: homeRelativeDir(env.OMNIGENT_DATA_DIR, homedir),
+    configHome: homeRelativeDir(env.OMNIGENT_CONFIG_HOME, homedir),
+    repo: env[INSTALL_REPO_ENV]?.trim() || null,
+    indexUrl: env[INSTALL_INDEX_ENV]?.trim() || null,
+  };
+}
+
+/**
+ * The build a remote host needs to match a server: the commit in a dev
+ * build's version, from `repo`, or a published release from the index.
+ *
+ * @param {string | null | undefined} serverVersion e.g. "0.22.0.post1794862499+gc7e736d7b1.dirty".
+ * @param {string} repo e.g. "https://github.com/example/omnigent.git".
+ * @returns {ServerBuild | null} Null when the version names neither.
+ */
+function serverBuild(serverVersion, repo) {
+  const version = typeof serverVersion === "string" ? serverVersion.trim() : "";
+  const commit = VERSION_COMMIT_RE.exec(version)?.[1] ?? null;
+  if (commit) {
+    const url = repo.startsWith("git@") ? `git+ssh://${repo.replace(":", "/")}` : `git+${repo}`;
+    return { spec: `omnigent[databricks] @ ${url}@${commit}`, commit, version: null };
+  }
+  if (RELEASE_VERSION_RE.test(version)) {
+    return { spec: `omnigent[databricks]==${version}`, commit: null, version };
+  }
+  return null;
+}
+
+/**
+ * Plan how the remote machine gets Omnigent for `serverVersion`.
+ *
+ * @param {ReturnType<typeof remoteSettings>} settings
+ * @param {string | null} [serverVersion] The server's `server_version`; needed
+ *   only with a repository setting.
+ * @returns {RemotePlan}
+ * @throws {SshConnectError} When a setting can't go in a remote command, or the
+ *   server's build can't be told from its version.
+ */
+function connectPlan(settings, serverVersion = null) {
+  if (settings.repo !== null && !REPO_URL_RE.test(settings.repo)) {
+    throw new SshConnectError(
+      `${INSTALL_REPO_ENV} isn't a git URL that can be sent in an SSH command.`,
+    );
+  }
+  if (settings.indexUrl !== null && !INDEX_URL_RE.test(settings.indexUrl)) {
+    throw new SshConnectError(
+      `${INSTALL_INDEX_ENV} isn't a URL that can be sent in an SSH command.`,
+    );
+  }
+  const build = settings.repo === null ? null : serverBuild(serverVersion, settings.repo);
+  if (settings.repo !== null && build === null) {
+    throw new SshConnectError(
+      `Couldn't tell which Omnigent build the server runs (version ${serverVersion || "unknown"}).`,
+    );
+  }
+  return {
+    dataDir: settings.dataDir,
+    configHome: settings.configHome,
+    build,
+    indexUrl: settings.indexUrl,
+  };
+}
+
+/** The remote Omnigent directory under the home directory, e.g. ".omnigent-pmv2". */
+function omnigentDir(plan) {
+  return plan.dataDir ?? DEFAULT_OMNIGENT_DIR;
+}
+
+/**
+ * How remote scripts run omnigent: `command`, after the assignments in `env`,
+ * e.g. `OMNIGENT_DATA_DIR="$HOME/.omnigent-pmv2" `.
+ *
+ * @typedef {{ command: string, env: string }} RemoteLaunch
+ */
+const DEFAULT_LAUNCH = Object.freeze({ command: "omnigent", env: "" });
+
+/**
+ * @param {RemotePlan} plan
+ * @returns {RemoteLaunch}
+ */
+function remoteLaunch(plan) {
+  const dir = omnigentDir(plan);
+  const assignments = [
+    plan.dataDir && `OMNIGENT_DATA_DIR="$HOME/${plan.dataDir}"`,
+    plan.configHome && `OMNIGENT_CONFIG_HOME="$HOME/${plan.configHome}"`,
+    // Where the app puts the Databricks CLI when the machine has none.
+    plan.build && `PATH="$HOME/${dir}/bin:$PATH"`,
+  ].filter(Boolean);
+  return {
+    command: plan.build ? `"$HOME/${dir}/venv/bin/omnigent"` : "omnigent",
+    env: assignments.map((assignment) => `${assignment} `).join(""),
+  };
+}
+
+/**
  * @param {string} serverUrl Already checked by {@link safeServerUrl}.
+ * @param {RemoteLaunch} [launch]
  * @returns {string}
  */
-function loginScript(serverUrl) {
+function loginScript(serverUrl, launch = DEFAULT_LAUNCH) {
   // The app holds stdin open; when the session ends it closes, and the
   // watchdog stops the login and its CLI instead of leaving them on the port.
   // setsid puts both in one process group to kill; pkill covers hosts without it (macOS).
@@ -124,7 +288,7 @@ function loginScript(serverUrl) {
     REMOTE_PATH,
     "exec 3<&0",
     "group=; command -v setsid >/dev/null 2>&1 && group=setsid",
-    `BROWSER=none $group omnigent login "${serverUrl}" </dev/null & login=$!`,
+    `BROWSER=none ${launch.env}$group ${launch.command} login "${serverUrl}" </dev/null & login=$!`,
     "(read -r _ <&3; kill -s TERM -- -$login 2>/dev/null || { command -v pkill >/dev/null 2>&1 && pkill -TERM -P $login; kill -TERM $login 2>/dev/null; }) & watch=$!",
     "wait $login; status=$?; kill $watch 2>/dev/null; exit $status",
   ].join("; ");
@@ -134,12 +298,17 @@ function loginScript(serverUrl) {
  * Start the host, then print its status between markers for {@link readArcaIdentity}.
  *
  * @param {string} serverUrl Already checked by {@link safeServerUrl}.
+ * @param {RemoteLaunch} [launch]
+ * @param {{ restart?: boolean }} [options] `restart` stops a running host
+ *   first, which keeps its old code after a reinstall otherwise.
  * @returns {string}
  */
-function hostScript(serverUrl) {
+function hostScript(serverUrl, launch = DEFAULT_LAUNCH, { restart = false } = {}) {
+  const omnigent = `${launch.env}${launch.command}`;
   return [
     REMOTE_PATH,
-    `omnigent host --server "${serverUrl}" --background --non-interactive && { echo; echo ${IDENTITY_START}; omnigent host status --server "${serverUrl}" --json; echo; echo ${IDENTITY_END}; }`,
+    ...(restart ? [`${omnigent} host stop --server "${serverUrl}" >/dev/null 2>&1 || true`] : []),
+    `${omnigent} host --server "${serverUrl}" --background --non-interactive && { echo; echo ${IDENTITY_START}; ${omnigent} host status --server "${serverUrl}" --json; echo; echo ${IDENTITY_END}; }`,
   ].join("; ");
 }
 
@@ -153,16 +322,201 @@ function installScript() {
 }
 
 /**
+ * Report the Omnigent build in the plan's virtual environment, and whether the
+ * machine has a Databricks CLI, on one line after {@link BUILD_REPORT_MARK}.
+ *
+ * @param {RemotePlan} plan With a build.
+ * @returns {string}
+ */
+function buildReportScript(plan) {
+  const dir = omnigentDir(plan);
+  return [
+    `if ( PATH="$HOME/${dir}/bin:$HOME/.local/bin:$PATH"; command -v databricks >/dev/null 2>&1 ); then cli=yes; else cli=no; fi`,
+    `python="$HOME/${dir}/venv/bin/python"`,
+    'if [ ! -x "$python" ]; then',
+    `echo "${BUILD_REPORT_MARK} cli=$cli"`,
+    "exit 0",
+    "fi",
+    `"$python" - "$cli" <<"PY"`,
+    "import importlib.metadata as metadata",
+    "import json",
+    "import sys",
+    "try:",
+    '    dist = metadata.distribution("omnigent")',
+    "except metadata.PackageNotFoundError:",
+    `    print("${BUILD_REPORT_MARK}", "cli=" + sys.argv[1])`,
+    "    raise SystemExit(0)",
+    'source = json.loads(dist.read_text("direct_url.json") or "{}")',
+    'commit = (source.get("vcs_info") or {}).get("commit_id", "")',
+    `print("${BUILD_REPORT_MARK}", "cli=" + sys.argv[1], "version=" + dist.version, "commit=" + commit)`,
+    "PY",
+  ].join("\n");
+}
+
+/**
+ * @param {string} output The output of {@link buildReportScript}.
+ * @returns {{ cli: boolean, installed: { version: string, commit: string } | null }}
+ */
+function parseBuildReport(output) {
+  const line = output
+    .split(/\r?\n/)
+    .findLast((candidate) => candidate.startsWith(`${BUILD_REPORT_MARK} `));
+  const fields = Object.fromEntries(
+    (line ?? "")
+      .split(/\s+/)
+      .slice(1)
+      .map((field) => field.split("=", 2)),
+  );
+  return {
+    cli: fields.cli === "yes",
+    installed: fields.version ? { version: fields.version, commit: fields.commit ?? "" } : null,
+  };
+}
+
+/**
+ * @param {ServerBuild} build
+ * @param {{ version: string, commit: string } | null} installed
+ * @returns {boolean} Whether the remote machine runs `build` already.
+ */
+function buildMatches(build, installed) {
+  if (installed === null) return false;
+  if (build.commit !== null) return installed.commit.startsWith(build.commit);
+  return installed.commit === "" && installed.version === build.version;
+}
+
+/**
+ * Install the plan's build in a virtual environment of its own, which leaves
+ * any other Omnigent install on the remote machine alone. The remote machine
+ * runs only a host, so the build skips the web UI.
+ *
+ * @param {RemotePlan} plan With a build.
+ * @returns {string}
+ */
+function venvInstallScript(plan) {
+  const index = plan.indexUrl ? `UV_INDEX_URL="${plan.indexUrl}" ` : "";
+  const reinstall = ["omnigent", "omnigent-client", "omnigent-ui-sdk"]
+    .map((name) => `--reinstall-package ${name}`)
+    .join(" ");
+  return [
+    "set -e",
+    'PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"; export PATH',
+    `if ! command -v uv >/dev/null 2>&1; then ${UV_INSTALLER}; fi`,
+    ...(plan.build.commit
+      ? [
+          'command -v git >/dev/null 2>&1 || { echo "Error: git is needed to install Omnigent from its repository." >&2; exit 1; }',
+        ]
+      : []),
+    `venv="$HOME/${omnigentDir(plan)}/venv"`,
+    '[ -x "$venv/bin/python" ] || uv venv --python 3.12 "$venv"',
+    `${index}OMNIGENT_SKIP_WEB_UI=true uv pip install --python "$venv/bin/python" ${reinstall} "${plan.build.spec}"`,
+  ].join("; ");
+}
+
+/**
+ * The Databricks CLI release the bundled installer pins, with its checksums.
+ *
+ * @param {string | null} installer The bundled `install_oss.sh`.
+ * @returns {{ version: string, sha256: Record<string, string> } | null} e.g.
+ *   `{ version: "1.21.0", sha256: { "linux:amd64": "5599…" } }`.
+ */
+function databricksCliPin(installer) {
+  const text = installer ?? "";
+  const version = /^DATABRICKS_CLI_VERSION=(\d+(?:\.\d+)+)$/m.exec(text)?.[1];
+  const sha256 = {};
+  for (const [, system, arch, sum] of text.matchAll(
+    /^DATABRICKS_CLI_SHA256_(LINUX|DARWIN)_(AMD64|ARM64)=([0-9a-f]{64})$/gm,
+  )) {
+    sha256[`${system.toLowerCase()}:${arch.toLowerCase()}`] = sum;
+  }
+  return version && Object.keys(sha256).length > 0 ? { version, sha256 } : null;
+}
+
+/**
+ * Put the pinned Databricks CLI in the plan's `bin` directory, checked against
+ * its checksum, with the virtual environment's Python (no unzip needed).
+ *
+ * @param {RemotePlan} plan With a build, installed already.
+ * @param {ReturnType<typeof databricksCliPin> & {}} pin
+ * @returns {string}
+ */
+function databricksCliScript(plan, pin) {
+  const dir = omnigentDir(plan);
+  const sums = Object.entries(pin.sha256)
+    .map(([platform, sum]) => `${platform}) sum=${sum} ;;`)
+    .join(" ");
+  return [
+    "set -e",
+    'case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) echo "Error: the Databricks CLI needs macOS or Linux." >&2; exit 1 ;; esac',
+    'case "$(uname -m)" in x86_64) arch=amd64 ;; arm64|aarch64) arch=arm64 ;; *) echo "Error: no Databricks CLI build for $(uname -m)." >&2; exit 1 ;; esac',
+    `sum=; case "$os:$arch" in ${sums} esac`,
+    '[ -n "$sum" ] || { echo "Error: no Databricks CLI checksum for $os on $arch." >&2; exit 1; }',
+    'platform="$os"_"$arch"',
+    `bin="$HOME/${dir}/bin"; mkdir -p "$bin"`,
+    'tmp="$(mktemp -d)"',
+    `curl -fsSL -o "$tmp/cli.zip" "https://github.com/databricks/cli/releases/download/v${pin.version}/databricks_cli_${pin.version}_$platform.zip"`,
+    `"$HOME/${dir}/venv/bin/python" - "$tmp/cli.zip" "$bin" "$sum" <<"PY"`,
+    "import hashlib",
+    "import sys",
+    "import zipfile",
+    'with open(sys.argv[1], "rb") as download:',
+    "    digest = hashlib.sha256(download.read()).hexdigest()",
+    "if digest != sys.argv[3]:",
+    '    raise SystemExit("Error: the Databricks CLI download failed its checksum.")',
+    "with zipfile.ZipFile(sys.argv[1]) as archive:",
+    '    archive.extract("databricks", sys.argv[2])',
+    "PY",
+    'rm -rf "$tmp"',
+    'chmod +x "$bin/databricks"',
+    '"$bin/databricks" auth login --help >/dev/null',
+  ].join("\n");
+}
+
+/**
+ * What the consent window asks before it installs Omnigent.
+ *
+ * @param {string} destination
+ * @param {RemotePlan} plan
+ * @returns {string | undefined} Undefined for the window's own question about the bundled installer.
+ */
+function installQuestion(destination, plan) {
+  if (!plan.build) return undefined;
+  return `Omnigent isn't installed in ~/${omnigentDir(plan)} on ${destination}. Install the server's build there now (${plan.build.spec})? This uses uv and leaves any other Omnigent install there alone.`;
+}
+
+/**
+ * How the consent window shows omnigent's command on the remote machine.
+ *
+ * @param {RemotePlan} plan
+ * @returns {string} e.g. "OMNIGENT_DATA_DIR=~/.omnigent-pmv2 omnigent ".
+ */
+function shownLaunch(plan) {
+  const dir = omnigentDir(plan);
+  const words = [
+    plan.dataDir && `OMNIGENT_DATA_DIR=~/${plan.dataDir}`,
+    plan.configHome && `OMNIGENT_CONFIG_HOME=~/${plan.configHome}`,
+    plan.build ? `~/${dir}/venv/bin/omnigent` : "omnigent",
+  ].filter(Boolean);
+  return `${words.join(" ")} `;
+}
+
+/**
  * The commands shown in the consent window.
  *
  * @param {string} serverUrl
  * @param {string} destination
+ * @param {RemotePlan} [plan]
  * @returns {string[]}
  */
-function describeCommands(serverUrl, destination) {
+function describeCommands(serverUrl, destination, plan = DEFAULT_PLAN) {
+  const omnigent = shownLaunch(plan);
   return [
-    `ssh ${destination} omnigent login '${serverUrl}'`,
-    `ssh ${destination} omnigent host --server '${serverUrl}' --background --non-interactive`,
+    ...(plan.build
+      ? [
+          `ssh ${destination} uv pip install '${plan.build.spec}' into ~/${omnigentDir(plan)}/venv  # when it runs another build`,
+        ]
+      : []),
+    `ssh ${destination} ${omnigent}login '${serverUrl}'`,
+    `ssh ${destination} ${omnigent}host --server '${serverUrl}' --background --non-interactive`,
   ];
 }
 
@@ -679,7 +1033,7 @@ async function signIn(ctx) {
   };
   const stdoutLines = lineSplitter(enqueue);
   const stderrLines = lineSplitter(enqueue);
-  run = session.exec(loginScript(serverUrl), {
+  run = session.exec(loginScript(serverUrl, ctx.launch), {
     holdStdin: true,
     timeoutMs: ctx.timeouts?.signIn ?? SIGN_IN_TIMEOUT_MS,
     onStdout: (text) => stdoutLines.push(text),
@@ -717,8 +1071,77 @@ async function signIn(ctx) {
 }
 
 /**
- * The whole connect: sign in (installing omnigent first if the user agrees),
- * then start the host.
+ * @param {{ code: number | null, stdout: string, stderr: string, timedOut: boolean }} result
+ * @param {string} what e.g. "Installing Omnigent".
+ * @param {string} destination
+ * @returns {{ ok: false, error: string }}
+ */
+function remoteFailure(result, what, destination) {
+  const detail = failureDetail(result.stderr || result.stdout);
+  return {
+    ok: false,
+    error: result.timedOut
+      ? `${what} on ${destination} timed out.`
+      : `${what} on ${destination} failed: ${detail || `exit code ${result.code}`}`,
+  };
+}
+
+/**
+ * Make the remote machine run the plan's build: install it, or reinstall it
+ * when the machine runs another one, then add the pinned Databricks CLI when
+ * the machine has none.
+ *
+ * @param {Parameters<typeof runSshConnect>[0] & { plan: RemotePlan, isCanceled: () => boolean }} ctx
+ * @returns {Promise<{ ok: true, reinstalled: boolean } | { ok: false, error: string, canceled?: boolean }>}
+ */
+async function ensureServerBuild(ctx) {
+  const { session, destination, plan, onStatus, onOutput } = ctx;
+  const timeoutMs = ctx.timeouts?.install ?? INSTALL_TIMEOUT_MS;
+  onStatus({ step: "checking-build" });
+  const report = await session.exec(buildReportScript(plan)).promise;
+  if (report.code !== 0) return remoteFailure(report, "Checking the Omnigent build", destination);
+  const { cli, installed } = parseBuildReport(report.stdout);
+  let reinstalled = false;
+  if (!buildMatches(plan.build, installed)) {
+    const updating = installed !== null;
+    if (!updating && !(await ctx.askInstall(installQuestion(destination, plan)))) {
+      return { ok: false, canceled: true, error: `Omnigent isn't installed on ${destination}.` };
+    }
+    if (ctx.isCanceled()) return canceledResult();
+    onStatus({ step: updating ? "updating" : "installing" });
+    const install = await session.exec(venvInstallScript(plan), {
+      timeoutMs,
+      onStdout: onOutput,
+      onStderr: onOutput,
+    }).promise;
+    if (install.code !== 0) return remoteFailure(install, "Installing Omnigent", destination);
+    reinstalled = updating;
+  }
+  if (!cli) {
+    const pin = databricksCliPin(ctx.readInstallScript());
+    if (pin === null) {
+      return {
+        ok: false,
+        error: `${destination} has no Databricks CLI, and this build doesn't say which one to install.`,
+      };
+    }
+    if (ctx.isCanceled()) return canceledResult();
+    onStatus({ step: "installing-cli" });
+    const result = await session.exec(databricksCliScript(plan, pin), {
+      timeoutMs,
+      onStdout: onOutput,
+      onStderr: onOutput,
+    }).promise;
+    if (result.code !== 0)
+      return remoteFailure(result, "Installing the Databricks CLI", destination);
+  }
+  return { ok: true, reinstalled };
+}
+
+/**
+ * The whole connect: with a server build in the plan, make the remote machine
+ * run it; sign in (installing omnigent first if the user agrees); then start
+ * the host, restarting it after a reinstall.
  *
  * @param {{
  *   serverUrl: string,
@@ -727,8 +1150,9 @@ async function signIn(ctx) {
  *   openExternal: (url: string) => Promise<void> | void,
  *   onStatus: (status: { step: string, code?: string }) => void,
  *   onOutput: (text: string) => void,
- *   askInstall: () => Promise<boolean>,
+ *   askInstall: (question?: string) => Promise<boolean>,
  *   readInstallScript: () => string | null,
+ *   plan?: RemotePlan,
  *   isPortFree?: (port: number) => Promise<boolean>,
  *   isCanceled?: () => boolean,
  *   onIdentityUnavailable?: (reason: string) => void,
@@ -737,8 +1161,9 @@ async function signIn(ctx) {
  * @returns {Promise<{ ok: boolean, error?: string, canceled?: boolean, alreadyRunning?: boolean, identity?: { serverUrl: string, hostId: string } }>}
  */
 async function runSshConnect(ctx) {
-  const full = { isPortFree, isCanceled: () => false, ...ctx };
-  const { session, serverUrl, destination, onStatus, onOutput } = full;
+  const full = { isPortFree, isCanceled: () => false, plan: DEFAULT_PLAN, ...ctx };
+  const { session, serverUrl, destination, onStatus, onOutput, plan } = full;
+  const launch = remoteLaunch(plan);
   const openSafely = async (url) => {
     const parsed = new URL(url);
     if (!["https:", "http:"].includes(parsed.protocol)) {
@@ -749,8 +1174,15 @@ async function runSshConnect(ctx) {
   onStatus({ step: "connecting" });
   await session.open();
   try {
-    let login = await signIn({ ...full, openExternal: openSafely });
-    if (!login.ok && login.missingCli) {
+    let restart = false;
+    if (plan.build) {
+      const ensured = await ensureServerBuild(full);
+      if (!ensured.ok) return ensured;
+      restart = ensured.reinstalled;
+    }
+    const signInCtx = { ...full, launch, openExternal: openSafely };
+    let login = await signIn(signInCtx);
+    if (!login.ok && login.missingCli && !plan.build) {
       if (!(await full.askInstall())) {
         return { ok: false, canceled: true, error: `Omnigent isn't installed on ${destination}.` };
       }
@@ -765,26 +1197,22 @@ async function runSshConnect(ctx) {
         onStdout: onOutput,
         onStderr: onOutput,
       }).promise;
-      if (install.code !== 0) {
-        const detail = failureDetail(install.stderr || install.stdout);
-        return {
-          ok: false,
-          error: install.timedOut
-            ? `Installing Omnigent on ${destination} timed out.`
-            : `Installing Omnigent on ${destination} failed: ${detail || `exit code ${install.code}`}`,
-        };
-      }
-      login = await signIn({ ...full, openExternal: openSafely });
+      if (install.code !== 0) return remoteFailure(install, "Installing Omnigent", destination);
+      login = await signIn(signInCtx);
     }
     if (!login.ok) {
-      return login.missingCli
-        ? { ok: false, error: `Omnigent still isn't on the PATH on ${destination}.` }
-        : login;
+      if (!login.missingCli) return login;
+      return {
+        ok: false,
+        error: plan.build
+          ? `Omnigent still isn't installed in ~/${omnigentDir(plan)} on ${destination}.`
+          : `Omnigent still isn't on the PATH on ${destination}.`,
+      };
     }
 
     if (full.isCanceled()) return canceledResult();
-    onStatus({ step: "starting-host" });
-    const host = await session.exec(hostScript(serverUrl), {
+    onStatus({ step: restart ? "restarting-host" : "starting-host" });
+    const host = await session.exec(hostScript(serverUrl, launch, { restart }), {
       timeoutMs: full.timeouts?.host ?? HOST_TIMEOUT_MS,
       onStdout: onOutput,
       onStderr: onOutput,
@@ -824,12 +1252,13 @@ async function runSshConnect(ctx) {
  *   },
  *   openExternal: (url: string) => Promise<void> | void,
  *   readInstallScript: () => string | null,
+ *   plan?: RemotePlan,
  *   log?: (message: string) => void,
  *   makeTempDir?: () => string,
  *   createAskpass?: typeof createAskpass,
  *   createSession?: typeof createSshSession,
  *   isPortFree?: (port: number) => Promise<boolean>,
- * }} deps
+ * }} deps `plan` comes from {@link connectPlan}; without it, today's install.
  * @returns {{ promise: Promise<object>, cancel: () => void }}
  */
 function startSshConnect(serverUrl, destination, deps) {
@@ -867,6 +1296,7 @@ function startSshConnect(serverUrl, destination, deps) {
         onOutput: hooks.onOutput,
         askInstall: hooks.askInstall,
         readInstallScript: deps.readInstallScript,
+        plan: deps.plan ?? DEFAULT_PLAN,
         isPortFree: deps.isPortFree ?? isPortFree,
         isCanceled: () => canceled,
         onIdentityUnavailable: (reason) => log(`ssh connect: host identity unavailable: ${reason}`),
@@ -894,22 +1324,33 @@ function startSshConnect(serverUrl, destination, deps) {
 }
 
 module.exports = {
+  DEFAULT_PLAN,
   SIGN_IN_FIRST_PORT,
   SIGN_IN_LAST_PORT,
   SshConnectError,
+  buildMatches,
+  buildReportScript,
   classifyPrompt,
+  connectPlan,
   createSshSession,
+  databricksCliPin,
+  databricksCliScript,
   describeCommands,
   describeSshFailure,
   hostScript,
   installScript,
   isPortFree,
   loginScript,
+  parseBuildReport,
   parseSignInLink,
+  remoteLaunch,
+  remoteSettings,
+  serverBuild,
   signInLinkRefusal,
   remoteCommand,
   runSshConnect,
   safeServerUrl,
   startSshConnect,
   validateDestination,
+  venvInstallScript,
 };

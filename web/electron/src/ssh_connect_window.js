@@ -184,10 +184,11 @@ function createSshConnectFlow({
       onOutput: (text) => send("ssh-connect:output", text),
       onStatus: (status) => send("ssh-connect:status", status),
       prompt: ({ kind, text, signal }) => ask(kind, text, signal),
-      askInstall: async () =>
+      askInstall: async (question) =>
         (await ask(
           "install",
-          `Omnigent isn't installed on ${destination}. Install it now? This runs the Omnigent installer there, which also installs uv and the Databricks CLI.`,
+          question ??
+            `Omnigent isn't installed on ${destination}. Install it now? This runs the Omnigent installer there, which also installs uv and the Databricks CLI.`,
         )) === "yes",
     };
 

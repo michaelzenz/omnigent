@@ -67,6 +67,13 @@ be able to write resources without a separate Omnigent account.
   (refused, no browser), a window connected to a server on this computer
   (`localhost`; refused in the dialog before connecting), and failures, shown
   only in the app's own window.
+  With `OMNIGENT_REMOTE_INSTALL_REPO` set for the app, the machine runs the
+  window server's own build. The app reads the commit from the server's
+  `server_version` (a release installs from the package index) and installs
+  it into a venv under the app's Omnigent directory on the machine. A machine
+  on another build gets that build and a restarted host. A machine without the
+  Databricks CLI gets the pinned CLI in that directory's `bin`. The app refuses
+  a server whose build it can't tell before it connects.
   Hidden where **Run on Arca** is offered (the managed-features flag on a
   managed server).
 - `embedded-resource-write`: an identity from a custom `AuthProvider` can
@@ -196,7 +203,10 @@ Never run these commands against the real `~/.omnigent` or `~/.databrickscfg`.
   `web/electron/ssh-connect/index.html` with a stub `window.sshConnect` bridge.
   The SSH field needs the desktop app (`just electron-dev`) on a server that
   serves this web build. A real Databricks sign-in needs a real remote machine
-  and workspace.
+  and workspace. The server's build: `web/electron/test/ssh_connect.test.js`
+  ("remote plans" and "runSshConnect with the server's build") covers the
+  plan, the build report and the install scripts; `web/electron/test/main.test.js`
+  ("SSH connect IPC") covers the plan from the server's `/v1/info`.
 - **`databricks-credential-kind`:** needs a real workspace and one test
   profile of each kind. No e2e covers the host daemon against a real workspace.
 - **`host-lifecycle`:** run `omnigent host --help` and the management commands

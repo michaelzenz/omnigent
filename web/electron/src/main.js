@@ -385,6 +385,43 @@ const arcaConnectFlow = createArcaConnectFlow({
   log: (message) => console.log(`[omnigent] ${message}`),
 });
 
+/** Plans of the SSH connects in flight, by server URL and destination. */
+const sshConnectPlans = new Map();
+const sshConnectPlanKey = (serverUrl, destination) => `${serverUrl}\n${destination}`;
+
+/**
+ * The window server's `server_version`, read with the window's own sign-in.
+ *
+ * @param {Electron.Session} windowSession
+ * @param {string} serverUrl
+ * @returns {Promise<string | null>}
+ */
+async function fetchServerVersion(windowSession, serverUrl) {
+  const base = serverUrl.endsWith("/") ? serverUrl : `${serverUrl}/`;
+  try {
+    const response = await windowSession.fetch(new URL("v1/info", base).toString());
+    if (!response.ok) return null;
+    const info = await response.json();
+    return typeof info?.server_version === "string" ? info.server_version : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * How a machine connected over SSH gets Omnigent: with a repository setting,
+ * the build this window's server runs.
+ *
+ * @param {Electron.WebContents} sender
+ * @param {string} serverUrl
+ */
+async function sshConnectPlan(sender, serverUrl) {
+  const settings = sshConnect.remoteSettings({ env: process.env });
+  const serverVersion =
+    settings.repo === null ? null : await fetchServerVersion(sender.session, serverUrl);
+  return sshConnect.connectPlan(settings, serverVersion);
+}
+
 /** Shell-owned flow for connecting a remote machine over SSH (ssh_connect.js). */
 const sshConnectFlow = createSshConnectFlow({
   BrowserWindow,
@@ -394,6 +431,7 @@ const sshConnectFlow = createSshConnectFlow({
   startConnect: (serverUrl, destination, hooks) =>
     sshConnect.startSshConnect(serverUrl, destination, {
       hooks,
+      plan: sshConnectPlans.get(sshConnectPlanKey(serverUrl, destination)),
       openExternal: (url) => shell.openExternal(url),
       readInstallScript: () => {
         const script = cliInstall.resolveInstallScript();
@@ -401,7 +439,12 @@ const sshConnectFlow = createSshConnectFlow({
       },
       log: (message) => console.log(`[omnigent] ${message}`),
     }),
-  commandLines: (serverUrl, destination) => sshConnect.describeCommands(serverUrl, destination),
+  commandLines: (serverUrl, destination) =>
+    sshConnect.describeCommands(
+      serverUrl,
+      destination,
+      sshConnectPlans.get(sshConnectPlanKey(serverUrl, destination)),
+    ),
   log: (message) => console.log(`[omnigent] ${message}`),
 });
 
@@ -5392,7 +5435,21 @@ function registerIpc() {
         error: `${target} can't reach a server on this computer (${new URL(serverUrl).host}). Connect this window to a server ${target} can reach, or, if ${target} runs this server itself, run "omnigent host" there.`,
       };
     }
-    return sshConnectFlow.run(BrowserWindow.fromWebContents(event.sender), serverUrl, target);
+    const key = sshConnectPlanKey(serverUrl, target);
+    try {
+      sshConnectPlans.set(key, await sshConnectPlan(event.sender, serverUrl));
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+    try {
+      return await sshConnectFlow.run(
+        BrowserWindow.fromWebContents(event.sender),
+        serverUrl,
+        target,
+      );
+    } finally {
+      sshConnectPlans.delete(key);
+    }
   });
 
   // SPA → connect the user's Arca instance to the window's server as a host,

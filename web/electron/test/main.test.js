@@ -157,6 +157,8 @@ function loadNavigationHarness({
   managedServers = [],
   internalFeatures = false,
   cliPath = null,
+  // What the window's server answers at /v1/info; null answers 404.
+  serverInfo = null,
   hostConnectResult = { ok: true },
   serverAuthResult = { ok: true },
   managedServerNames = {},
@@ -201,6 +203,8 @@ function loadNavigationHarness({
     arcaSetups: [],
     arcaSetupCancels: 0,
     sshConnects: [],
+    sshCommands: [],
+    serverInfoFetches: [],
   };
   const pickers = [];
   const findBars = [];
@@ -263,6 +267,13 @@ function loadNavigationHarness({
   const connectivity = { online: true };
   const webContents = {
     id: 1,
+    session: {
+      fetch: async (url) => {
+        calls.serverInfoFetches.push(String(url));
+        return { ok: serverInfo !== null, json: async () => serverInfo ?? {} };
+      },
+      addWordToSpellCheckerDictionary() {},
+    },
     send: (channel, data) => calls.progress.push({ channel, data }),
     stop() {},
     reload() {
@@ -439,9 +450,10 @@ function loadNavigationHarness({
   const localRequires = {
     "./desktop_updater": { createDesktopUpdater },
     "./ssh_connect_window": {
-      createSshConnectFlow: () => ({
+      createSshConnectFlow: (flowDeps) => ({
         run: async (_parentWin, sshServerUrl, destination) => {
           calls.sshConnects.push({ serverUrl: sshServerUrl, destination });
+          calls.sshCommands.push(flowDeps.commandLines(sshServerUrl, destination));
           return { ok: true, shownInConsole: true };
         },
       }),
@@ -5870,6 +5882,38 @@ describe("SSH connect IPC", () => {
       }
     });
   }
+
+  it("plans the server's own build from its version when the app names a repository", async (t) => {
+    const h = sshHarness(t, {
+      env: {
+        OMNIGENT_REMOTE_INSTALL_REPO: "https://example.com/fork.git",
+        OMNIGENT_DATA_DIR: "",
+        OMNIGENT_CONFIG_HOME: "",
+      },
+      serverInfo: { server_version: "0.22.0.post1+gabc1234.dirty" },
+    });
+
+    const result = await h.ipc.get("omnigent:ssh-connect")(fromServer(h), "devbox");
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(h.calls.serverInfoFetches, [`${server}/v1/info`]);
+    assert.equal(
+      h.calls.sshCommands[0][0],
+      "ssh devbox uv pip install 'omnigent[databricks] @ git+https://example.com/fork.git@abc1234' into ~/.omnigent/venv  # when it runs another build",
+    );
+  });
+
+  it("refuses before connecting when it can't tell which build the server runs", async (t) => {
+    const h = sshHarness(t, {
+      env: { OMNIGENT_REMOTE_INSTALL_REPO: "https://example.com/fork.git" },
+    });
+
+    const result = await h.ipc.get("omnigent:ssh-connect")(fromServer(h), "devbox");
+
+    assert.equal(result.ok, false);
+    assert.match(result.error, /Couldn't tell which Omnigent build the server runs/);
+    assert.deepEqual(h.calls.sshConnects, []);
+  });
 
   it("gives no page a way to list the user's SSH hosts", (t) => {
     // Aliases can name internal machines, and the server page is untrusted.

@@ -90,6 +90,11 @@ window.sshConnect.onStarted(() => {
 
 const STATUS_TEXT = {
   connecting: () => `Connecting to ${destination}...`,
+  "checking-build": () => `Checking the Omnigent build on ${destination}...`,
+  updating: () =>
+    `Updating Omnigent on ${destination} to the server's build. This can take a few minutes.`,
+  "installing-cli": () => `Installing the Databricks CLI on ${destination}...`,
+  "restarting-host": () => `Restarting the Omnigent host on ${destination} on the new build...`,
   "signing-in": () => `Signing in to the server on ${destination}...`,
   "waiting-for-browser": () =>
     "Finish signing in in your browser. This window updates when you're done.",
