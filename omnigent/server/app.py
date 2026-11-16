@@ -4221,17 +4221,22 @@ def create_app(
     role_session_stores: RoleSessionStores | None = None
     board_stores = open_board_stores(conversation_store)
     if user_settings_store is not None:
-        app.include_router(
-            create_user_settings_router(user_settings_store, auth_provider),
-            prefix="/v1",
-            tags=["settings"],
-        )
         role_session_stores = RoleSessionStores(
             conversation_store=conversation_store,
             agent_store=agent_store,
             user_settings_store=user_settings_store,
             project_store=project_store,
             permission_store=permission_store,
+        )
+        app.include_router(
+            create_user_settings_router(
+                user_settings_store,
+                auth_provider,
+                schedules=board_stores.role_schedules if board_stores else None,
+                role_sessions=role_session_stores,
+            ),
+            prefix="/v1",
+            tags=["settings"],
         )
         app.include_router(
             create_agent_task_roles_router(

@@ -202,6 +202,42 @@ async def test_custodian_profile_saves_its_schedule_and_refuses_a_bad_one(
     assert deleted.json()["schedule"] is None
 
 
+async def test_the_first_placement_turns_on_the_custodians_daily_sweep(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def canonical_workspace(**_kwargs: object) -> str:
+        return "/Users/alice/globalhub"
+
+    monkeypatch.setattr(
+        user_settings, "validate_uploaded_bundle_host_workspace", canonical_workspace
+    )
+    monkeypatch.setattr(user_settings, "now_epoch", lambda: 1_800_000_000)
+    placement = {"host_id": "host_alice", "workspace": "/Users/alice/globalhub"}
+
+    refused = await client.put(
+        GLOBALHUB_ROUTE, json={**placement, "timezone": "Mars/Olympus_Mons"}
+    )
+    first = await client.put(GLOBALHUB_ROUTE, json={**placement, "timezone": "America/New_York"})
+    started = (await client.get(CUSTODIAN_PROFILE_ROUTE)).json()["schedule"]
+    off = {"enabled": False, "rrule": started["rrule"], "timezone": started["timezone"]}
+    await client.put(CUSTODIAN_PROFILE_ROUTE, json={"schedule": off})
+    await client.put(GLOBALHUB_ROUTE, json=GLOBALHUB_UNSET)
+    await client.put(GLOBALHUB_ROUTE, json={**placement, "timezone": "UTC"})
+    kept = (await client.get(CUSTODIAN_PROFILE_ROUTE)).json()["schedule"]
+
+    assert refused.status_code == 400
+    assert first.status_code == 200, first.text
+    # Now is 08:00 UTC on 2027-01-15, a winter day, so 09:00 in New York is 14:00 UTC.
+    assert started == {
+        "enabled": True,
+        "rrule": "FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+        "timezone": "America/New_York",
+        "next_run_at": 1_800_021_600,
+    }
+    # A sweep the user turned off stays off when the hub is placed again.
+    assert kept == {**off, "next_run_at": None}
+
+
 async def test_a_role_without_a_schedule_refuses_one(client: httpx.AsyncClient) -> None:
     schedule = {"enabled": True, "rrule": "FREQ=DAILY;BYHOUR=9;BYMINUTE=0", "timezone": "UTC"}
 
@@ -290,41 +326,47 @@ async def test_role_profiles_are_private_to_each_user(
     assert bob.json()["customized"] == []
 
 
-async def test_role_session_route_creates_then_reuses_the_custodian_session(
+async def test_placements_start_the_custodian_session_that_the_role_route_reuses(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, db_uri: str
 ) -> None:
     host_id = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
-    SqlAlchemyAgentStore(db_uri).create(
-        uuid.uuid4().hex, "onih-custodian", "bundles/onih-custodian.tar.gz"
-    )
     unplaced = await client.post(CUSTODIAN_SESSION_ROUTE)
 
-    async def canonical_workspace(**_kwargs: object) -> str:
-        return "/Users/alice/globalhub"
+    async def canonical_workspace(**kwargs: object) -> str:
+        return str(kwargs["workspace"])
 
     monkeypatch.setattr(
         user_settings, "validate_uploaded_bundle_host_workspace", canonical_workspace
     )
+    # The custodian's agent is not installed yet, so only the placement saves.
     placed = await client.put(
         GLOBALHUB_ROUTE, json={"host_id": host_id, "workspace": "/Users/alice/globalhub"}
     )
-    assert placed.status_code == 200, placed.text
-
+    SqlAlchemyAgentStore(db_uri).create(
+        uuid.uuid4().hex, "onih-custodian", "bundles/onih-custodian.tar.gz"
+    )
     first = await client.post(CUSTODIAN_SESSION_ROUTE)
     second = await client.post(CUSTODIAN_SESSION_ROUTE)
+    await client.put(GLOBALHUB_ROUTE, json={"host_id": host_id, "workspace": "/Users/alice/hub"})
+    moved = await client.post(CUSTODIAN_SESSION_ROUTE)
     manager = await client.post("/v1/agent-tasks/roles/manager:default/session")
 
     assert unplaced.status_code == 400
+    assert placed.status_code == 200, placed.text
     assert first.status_code == 200, first.text
     assert (first.json()["created"], second.json()["created"]) == (True, False)
     assert second.json()["session_id"] == first.json()["session_id"]
+    # The move started a new custodian at the new workspace before the route asked.
+    assert moved.json()["created"] is False
+    assert moved.json()["session_id"] != first.json()["session_id"]
     assert manager.status_code == 400
-    session = SqlAlchemyConversationStore(db_uri).get_conversation(first.json()["session_id"])
+    session = SqlAlchemyConversationStore(db_uri).get_conversation(moved.json()["session_id"])
     assert session is not None
-    assert (session.title, session.labels[ROLE_LABEL], session.host_id) == (
+    assert (session.title, session.labels[ROLE_LABEL], session.host_id, session.workspace) == (
         "Task custodian",
         CUSTODIAN_ROLE_VALUE,
         host_id,
+        "/Users/alice/hub",
     )
 
 

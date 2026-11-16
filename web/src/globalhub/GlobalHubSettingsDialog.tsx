@@ -23,6 +23,7 @@ import {
 } from "@/hooks/useGlobalHubSettings";
 import { useHosts } from "@/hooks/useHosts";
 import { useRecentWorkspaces } from "@/hooks/useRecentWorkspaces";
+import { localTimezone } from "@/lib/timezones";
 import { HostLabel } from "@/shell/HostLabel";
 import { WorkspacePathField } from "@/shell/WorkspacePathField";
 import { WorkspacePickerDialog } from "@/shell/WorkspacePickerDialog";
@@ -74,7 +75,7 @@ function SettingsForm({
 
   function submit(placement: Pick<GlobalHubSettingsUpdate, "host_id" | "workspace">): void {
     save.mutate(
-      { ...placement, report_new_sessions: reportNewSessions },
+      { ...placement, report_new_sessions: reportNewSessions, timezone: localTimezone() },
       {
         onSuccess: (saved) => {
           if (saved.workspace !== null) addRecent(saved.workspace);

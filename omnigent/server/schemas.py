@@ -5876,11 +5876,14 @@ class GlobalHubSettingsRequest(BaseModel):
     an existing directory on it; the server stores the canonical path.
     ``report_new_sessions`` turns on or off the reports of the caller's
     sessions on no task to the broker; omitted, it stays as it is.
+    ``timezone`` is the caller's IANA timezone: the first placement turns on
+    the custodian's daily sweep at 09:00 there (UTC when omitted).
     """
 
     host_id: str | None = Field(..., min_length=1, max_length=GLOBALHUB_HOST_ID_MAX_CHARS)
     workspace: str | None = Field(..., min_length=1, max_length=GLOBALHUB_WORKSPACE_MAX_CHARS)
     report_new_sessions: bool | None = None
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
 
     model_config = ConfigDict(extra="forbid")
 

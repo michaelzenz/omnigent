@@ -13,6 +13,8 @@ export interface GlobalHubSettings {
 /** A save of the settings; without ``report_new_sessions`` the switch stays as it is. */
 export type GlobalHubSettingsUpdate = Pick<GlobalHubSettings, "host_id" | "workspace"> & {
   report_new_sessions?: boolean;
+  /** The user's IANA timezone; a first placement starts the custodian's daily sweep there. */
+  timezone?: string;
 };
 
 export const GLOBALHUB_SETTINGS_QUERY_KEY = ["globalhub-settings"] as const;

@@ -3,15 +3,25 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from fastapi import APIRouter, Request
 
+from omnigent.agent_tasks.role_schedules import (
+    DEFAULT_CUSTODIAN_RRULE,
+    require_role_schedule,
+    start_default_custodian_schedule,
+)
+from omnigent.agent_tasks.role_sessions import RoleSessionStores, ensure_role_session
+from omnigent.agent_tasks.roles import CUSTODIAN_ROLE_KEY, builtin_role
+from omnigent.db.utils import now_epoch
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.server.routes._session_create_validation import (
     validate_uploaded_bundle_host_workspace,
 )
+from omnigent.server.routes._sessions.helpers import _announce_session_added
 from omnigent.server.schemas import (
     GlobalHubSettingsRequest,
     GlobalHubSettingsResponse,
@@ -19,17 +29,26 @@ from omnigent.server.schemas import (
     SessionTitleInstructionsResponse,
 )
 from omnigent.server.server_config import SESSION_TITLE_INSTRUCTIONS_MAX_CHARS
+from omnigent.stores.role_schedule_store import RoleScheduleStore
 from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
+
+_logger = logging.getLogger(__name__)
 
 
 def create_user_settings_router(
     store: UserSettingsStore,
     auth_provider: AuthProvider | None = None,
+    schedules: RoleScheduleStore | None = None,
+    role_sessions: RoleSessionStores | None = None,
 ) -> APIRouter:
     """Build the caller-scoped settings router.
 
     :param store: Where the settings persist.
     :param auth_provider: Identifies the caller; ``None`` is single-user mode.
+    :param schedules: When each user's schedulable roles run; ``None`` on a
+        server without the GlobalHub board.
+    :param role_sessions: Where GlobalHub role sessions are created; ``None``
+        starts no custodian when the caller picks a placement.
     :returns: A configured :class:`APIRouter`.
     """
     router = APIRouter()
@@ -89,9 +108,15 @@ def create_user_settings_router(
         """Set or clear where the caller's GlobalHub role sessions run.
 
         The host must be the caller's own and online, and the workspace an
-        existing directory on it. The canonical path is stored.
+        existing directory on it. The canonical path is stored. A caller's
+        first placement turns on the custodian's daily sweep, unless the caller
+        has a custodian schedule already. Each placement starts the custodian
+        session there, unless it runs there already.
         """
         user_id = require_user(request, auth_provider)
+        timezone = body.timezone or "UTC"
+        if body.timezone is not None:
+            require_role_schedule(DEFAULT_CUSTODIAN_RRULE, timezone)
         placement = None
         if body.host_id is not None and body.workspace is not None:
             # GlobalHub role agents declare no os_env boundary to check against.
@@ -104,7 +129,18 @@ def create_user_settings_router(
                 host_registry=getattr(request.app.state, "host_registry", None),
             )
             placement = GlobalHubPlacement(host_id=body.host_id, workspace=workspace)
+        earlier = await asyncio.to_thread(store.get_globalhub_placement, user_id=user_id)
         await asyncio.to_thread(store.save_globalhub_placement, placement, user_id=user_id)
+        if schedules is not None and earlier is None and placement is not None:
+            await asyncio.to_thread(
+                start_default_custodian_schedule,
+                schedules,
+                owner_user_id=user_id,
+                timezone=timezone,
+                now=now_epoch(),
+            )
+        if role_sessions is not None and placement is not None:
+            await _start_custodian(role_sessions, user_id)
         if body.report_new_sessions is not None:
             await asyncio.to_thread(
                 store.save_globalhub_report_new_sessions,
@@ -114,6 +150,20 @@ def create_user_settings_router(
         return await read_globalhub_settings(user_id)
 
     return router
+
+
+async def _start_custodian(stores: RoleSessionStores, user_id: str | None) -> None:
+    """Start the user's custodian session on the GlobalHub host, unless it runs there already."""
+    custodian = builtin_role(CUSTODIAN_ROLE_KEY)
+    assert custodian is not None
+    try:
+        session, created = await ensure_role_session(custodian, user_id=user_id, stores=stores)
+    except OmnigentError:
+        # The placement stays saved; the custodian starts with its first scheduled sweep.
+        _logger.warning("Could not start the GlobalHub custodian session", exc_info=True)
+        return
+    if created:
+        _announce_session_added(user_id, session.id)
 
 
 def _globalhub_response(

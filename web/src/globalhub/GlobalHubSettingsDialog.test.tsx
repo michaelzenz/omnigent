@@ -8,6 +8,7 @@ import type { GlobalHubSettings } from "@/hooks/useGlobalHubSettings";
 import { type Host, useHosts } from "@/hooks/useHosts";
 import { authenticatedFetch } from "@/lib/identity";
 import type * as IdentityModule from "@/lib/identity";
+import { localTimezone } from "@/lib/timezones";
 
 vi.mock("@/lib/identity", async (importOriginal) => ({
   ...(await importOriginal<typeof IdentityModule>()),
@@ -136,7 +137,11 @@ describe("GlobalHubSettingsDialog", () => {
     fireEvent.click(save);
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
-    expect(sentRequest()).toEqual({ method: "PUT", body: SAVED });
+    // The timezone times the custodian's daily sweep that a first placement turns on.
+    expect(sentRequest()).toEqual({
+      method: "PUT",
+      body: { ...SAVED, timezone: localTimezone() },
+    });
   });
 
   it("clears a saved setting with nulls", async () => {
@@ -146,7 +151,10 @@ describe("GlobalHubSettingsDialog", () => {
     fireEvent.click(screen.getByTestId("globalhub-settings-clear"));
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
-    expect(sentRequest()).toEqual({ method: "PUT", body: UNSET });
+    expect(sentRequest()).toEqual({
+      method: "PUT",
+      body: { ...UNSET, timezone: localTimezone() },
+    });
   });
 
   it("saves the switch that stops new sessions reporting to the broker", async () => {
@@ -159,7 +167,7 @@ describe("GlobalHubSettingsDialog", () => {
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(sentRequest()).toEqual({
       method: "PUT",
-      body: { ...SAVED, report_new_sessions: false },
+      body: { ...SAVED, report_new_sessions: false, timezone: localTimezone() },
     });
   });
 

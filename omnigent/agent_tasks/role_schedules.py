@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from omnigent.agent_tasks.roles import CUSTODIAN_ROLE_KEY
 from omnigent.entities import RoleSchedule
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.scheduled.rrule import (
@@ -16,6 +17,8 @@ from omnigent.stores.role_schedule_store import RoleScheduleStore
 
 #: How often a new watcher runs unless the user picks another schedule.
 DEFAULT_WATCHER_RRULE = "FREQ=MINUTELY;INTERVAL=30"
+#: When a new GlobalHub user's custodian sweeps sessions unless the user picks another time.
+DEFAULT_CUSTODIAN_RRULE = "FREQ=DAILY;BYHOUR=9;BYMINUTE=0"
 #: Parts that end a rule; a role schedule repeats until the user turns it off.
 _ENDING_PARTS = frozenset({"COUNT", "UNTIL"})
 
@@ -107,4 +110,29 @@ def save_role_schedule(
         rrule=rrule,
         timezone=timezone,
         next_run_at=upcoming,
+    )
+
+
+def start_default_custodian_schedule(
+    schedules: RoleScheduleStore, *, owner_user_id: str | None, timezone: str, now: int
+) -> RoleSchedule | None:
+    """
+    Turn on the custodian's daily sweep for a user with no custodian schedule. Blocking.
+
+    :param schedules: Where the schedules persist.
+    :param owner_user_id: The new GlobalHub user, or ``None`` in single-user mode.
+    :param timezone: A valid IANA timezone of the user, e.g. ``"America/Los_Angeles"``.
+    :param now: Current Unix epoch seconds.
+    :returns: The new schedule, or ``None`` when the user has one already, on or off.
+    """
+    if schedules.get(CUSTODIAN_ROLE_KEY, owner_user_id=owner_user_id) is not None:
+        return None
+    return save_role_schedule(
+        schedules,
+        CUSTODIAN_ROLE_KEY,
+        owner_user_id=owner_user_id,
+        rrule=DEFAULT_CUSTODIAN_RRULE,
+        timezone=timezone,
+        enabled=True,
+        now=now,
     )

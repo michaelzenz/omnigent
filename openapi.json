@@ -6144,7 +6144,7 @@
       },
       "GlobalHubSettingsRequest": {
         "additionalProperties": false,
-        "description": "Set where the caller's GlobalHub role sessions run; null for both clears it.\n\nThe host must be one of the caller's own hosts and online, and the workspace\nan existing directory on it; the server stores the canonical path.\n`report_new_sessions` turns on or off the reports of the caller's\nsessions on no task to the broker; omitted, it stays as it is.",
+        "description": "Set where the caller's GlobalHub role sessions run; null for both clears it.\n\nThe host must be one of the caller's own hosts and online, and the workspace\nan existing directory on it; the server stores the canonical path.\n`report_new_sessions` turns on or off the reports of the caller's\nsessions on no task to the broker; omitted, it stays as it is.\n`timezone` is the caller's IANA timezone: the first placement turns on\nthe custodian's daily sweep at 09:00 there (UTC when omitted).",
         "properties": {
           "host_id": {
             "anyOf": [
@@ -6169,6 +6169,19 @@
               }
             ],
             "title": "Report New Sessions"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
           },
           "workspace": {
             "anyOf": [
@@ -30100,7 +30113,7 @@
         ]
       },
       "put": {
-        "description": "Set or clear where the caller's GlobalHub role sessions run.\n\nThe host must be the caller's own and online, and the workspace an\nexisting directory on it. The canonical path is stored.",
+        "description": "Set or clear where the caller's GlobalHub role sessions run.\n\nThe host must be the caller's own and online, and the workspace an\nexisting directory on it. The canonical path is stored. A caller's\nfirst placement turns on the custodian's daily sweep, unless the caller\nhas a custodian schedule already.",
         "operationId": "save_globalhub_settings_v1_settings_globalhub_put",
         "requestBody": {
           "content": {
