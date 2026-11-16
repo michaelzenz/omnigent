@@ -119,8 +119,8 @@ pmv2_api(
 Pass your own `manager_id` so the task is attached to you from birth.
 
 **Step 2 — update the task description.** For each routed event, fold what
-it tells you into the task's Overview: current status, meaningful recent
-activity, and the next step the user should take(less than 3 bullet items). Not all events in one batch belong to the same task.
+it tells you into the task's Overview. Not all events in one batch belong to
+the same task.
 
 ```
 pmv2_api(
@@ -138,7 +138,7 @@ Skip the update when the event changes nothing material.
 **Maintain the worker title.** When you assign a `session.turn.finished`
 event (Step 3), its session becomes the task's worker. Every worker lane has
 its own title (separate from the underlying session's title) shown on the task
-card instead of the static provider name. Set it with `title` when you assign
+card instead of the static provider name. Set it with human comprehensible `title` when you assign
 the event: a short, concrete phrase for what the session has been doing (e.g.
 "Fixing S3 retry flakiness"; one line, max 20 words). Assign again with a new
 `title` whenever the lane's focus changes. To change a title without an event:
@@ -299,8 +299,6 @@ to the top, and a `PATCH` moves a task only when its `state` changes.
 Typical flow: create task (active) → work → `agent-resolved` when
  done → revive to `active` on new events.
 
-
-
 REMEMBER: keep each task finer grain, dont use one task bucket to hold a lot of stuff, actively split task. A task should be not too big, not too small, usually it should be a size of one pr or pr stack
 
 ## FYI
@@ -319,16 +317,8 @@ pmv2_api(
 )
 ```
 
-
-
 # Follow up
 
 To provide an immersive experience, you are allowed to follow up, for ex:
 
 - user sent a message, set a timer that runs 2d later and checks for a reply or reaction; if there is none, note in the Overview: `follow up with XXX with message "Gentle bump <message composed based on context>"`
-
-# Special Infra
-
-## Automation
-
-Use `sys_scheduled_task_create` to schedule a recurring agent session on an RRULE schedule. For example, "check this PR every hour" or "remind me tomorrow at 9am". Automations run full agent sessions with MCP tools and can be managed via `sys_scheduled_task_list` / `sys_scheduled_task_update` / `sys_scheduled_task_delete`.
