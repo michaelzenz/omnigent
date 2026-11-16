@@ -24,7 +24,7 @@ def _create(
     store: SqlAlchemyTaskStore, title: str, *, owner: str | None = ALICE, **fields: Any
 ) -> str:
     task_id = uuid.uuid4().hex
-    store.create(task_id, owner_user_id=owner, title=title, goal=f"Finish {title}", **fields)
+    store.create(task_id, owner_user_id=owner, title=title, **fields)
     return task_id
 
 
@@ -48,7 +48,7 @@ def test_new_tasks_top_their_owners_board(store: SqlAlchemyTaskStore) -> None:
     assert _board(store, BOB) == ["bob's"]
     assert _board(store, None) == ["local"]
     task = store.get(first, owner_user_id=ALICE)
-    assert task is not None and (task.state, task.goal) == ("active", "Finish first")
+    assert task is not None and (task.state, task.title) == ("active", "first")
     assert store.get(first, owner_user_id=BOB) is None
     assert store.get(first, owner_user_id=None) is None
 

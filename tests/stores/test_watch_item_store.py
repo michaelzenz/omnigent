@@ -155,14 +155,13 @@ def test_a_change_goes_to_each_live_task_that_follows_the_item_else_to_the_broke
         uuid.uuid4().hex, owner_user_id=ALICE, title="Storage"
     )
     managed = tasks.create(
-        uuid.uuid4().hex, owner_user_id=ALICE, title="S3 retries", goal="g", manager_id=manager.id
+        uuid.uuid4().hex, owner_user_id=ALICE, title="S3 retries", manager_id=manager.id
     )
-    unmanaged = tasks.create(uuid.uuid4().hex, owner_user_id=ALICE, title="Review", goal="g")
+    unmanaged = tasks.create(uuid.uuid4().hex, owner_user_id=ALICE, title="Review")
     archived = tasks.create(
         uuid.uuid4().hex,
         owner_user_id=ALICE,
         title="Old work",
-        goal="g",
         manager_id=manager.id,
         state="archived",
     )

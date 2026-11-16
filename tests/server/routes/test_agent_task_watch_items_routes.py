@@ -96,7 +96,7 @@ async def test_observe_reports_changes_to_the_broker_or_the_following_tasks_mana
     )
     task = await auth_client.post(
         "/v1/agent-tasks",
-        json={"manager_id": manager.id, "title": "S3 retries", "goal": "Fix the retries"},
+        json={"manager_id": manager.id, "title": "S3 retries"},
         headers=ALICE,
     )
     task_id = task.json()["id"]

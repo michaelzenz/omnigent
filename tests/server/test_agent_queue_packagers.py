@@ -275,14 +275,11 @@ async def test_a_manager_notice_lists_its_events_by_id_and_ends_with_the_roster(
 ) -> None:
     manager_id, manager_session = _manager(board, sessions)
     task_id = next(_ids)
-    board.tasks.create(
-        task_id, owner_user_id=ALICE, title="S3 retries", goal="Fix them", manager_id=manager_id
-    )
+    board.tasks.create(task_id, owner_user_id=ALICE, title="S3 retries", manager_id=manager_id)
     board.tasks.create(
         next(_ids),
         owner_user_id=ALICE,
         title="Old work",
-        goal="Done",
         manager_id=manager_id,
         state="archived",
     )
@@ -572,7 +569,7 @@ def test_a_request_for_managers_lists_the_live_tasks_without_one(
 ) -> None:
     def task(title: str, owner: str = ALICE, **fields: Any) -> str:
         task_id = next(_ids)
-        board.tasks.create(task_id, owner_user_id=owner, title=title, goal="Finish it", **fields)
+        board.tasks.create(task_id, owner_user_id=owner, title=title, **fields)
         return task_id
 
     task("Managed", manager_id=next(_ids))

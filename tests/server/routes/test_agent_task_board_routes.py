@@ -37,7 +37,6 @@ def _task(
         task_id,
         owner_user_id=owner,
         title=title,
-        goal=f"Finish {title}",
         state=state,
         manager_id=manager_id,
     )

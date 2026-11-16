@@ -52,7 +52,7 @@ async def _create_manager(client: httpx.AsyncClient, title: str, **fields: Any) 
 async def _create_task(client: httpx.AsyncClient, manager_id: str, title: str) -> str:
     response = await client.post(
         "/v1/agent-tasks",
-        json={"manager_id": manager_id, "title": title, "goal": f"Finish {title}"},
+        json={"manager_id": manager_id, "title": title},
         headers=ALICE,
     )
     assert response.status_code == 200, response.text
@@ -226,7 +226,6 @@ async def test_the_list_leaves_out_full_managers_unless_the_caller_asks(
                 uuid.uuid4().hex,
                 owner_user_id=ALICE_ID,
                 title=f"task {index}",
-                goal="Finish it",
                 manager_id=manager_id,
                 state=live_states[index % len(live_states)],
             )
@@ -234,7 +233,6 @@ async def test_the_list_leaves_out_full_managers_unless_the_caller_asks(
         uuid.uuid4().hex,
         owner_user_id=ALICE_ID,
         title="archived",
-        goal="Finish it",
         manager_id=with_room,
         state="archived",
     )
@@ -267,7 +265,6 @@ async def test_the_list_comes_in_pages_that_skip_full_managers(
             uuid.uuid4().hex,
             owner_user_id=ALICE_ID,
             title=f"task {index}",
-            goal="Finish it",
             manager_id=order[1],
         )
 

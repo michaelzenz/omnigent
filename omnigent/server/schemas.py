@@ -6256,7 +6256,6 @@ class WatchItemList(BaseModel):
 
 AgentTaskState = Literal["active", "idle", "agent-resolved", "archived"]
 _AgentTaskTitle = Annotated[str, Field(max_length=256), AfterValidator(_strip_required_text)]
-_AgentTaskGoal = Annotated[str, Field(max_length=4_000), AfterValidator(_strip_required_text)]
 _AgentManagerTitle = Annotated[str, Field(max_length=200), AfterValidator(_strip_required_text)]
 _AgentManagerDescription = Annotated[
     str, Field(max_length=MAX_MANAGER_DESCRIPTION_CHARS), AfterValidator(_strip_required_text)
@@ -6289,7 +6288,6 @@ class AgentTaskResponse(BaseModel):
     manager_id: str | None
     owner_user_id: str | None
     title: str
-    goal: str
     description: str | None
     internal_note: str | None
     state: AgentTaskState
@@ -6314,7 +6312,6 @@ class CreateAgentTaskRequest(BaseModel):
 
     manager_id: str
     title: _AgentTaskTitle
-    goal: _AgentTaskGoal
     description: str | None = Field(default=None, max_length=16_000)
     internal_note: str | None = Field(default=None, max_length=MAX_TASK_INTERNAL_NOTE_CHARS)
     priority: int = Field(default=2, ge=0, le=3)
@@ -6331,7 +6328,6 @@ class UpdateAgentTaskRequest(BaseModel):
     """
 
     title: _AgentTaskTitle | None = None
-    goal: _AgentTaskGoal | None = None
     description: str | None = Field(default=None, max_length=16_000)
     internal_note: str | None = Field(default=None, max_length=MAX_TASK_INTERNAL_NOTE_CHARS)
     manager_id: str | None = None
@@ -6843,7 +6839,6 @@ class AgentTaskBoardCard(BaseModel):
     id: str
     manager_id: str | None
     title: str
-    goal: str
     description: str | None
     state: AgentTaskState
     priority: int

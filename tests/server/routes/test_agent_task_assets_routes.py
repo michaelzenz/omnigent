@@ -17,9 +17,7 @@ DOC_URL = "https://example.com/design-doc"
 
 def _task(db_uri: str) -> str:
     task_id = uuid.uuid4().hex
-    SqlAlchemyTaskStore(db_uri).create(
-        task_id, owner_user_id=ALICE_ID, title="S3 retries", goal="Fix the retries"
-    )
+    SqlAlchemyTaskStore(db_uri).create(task_id, owner_user_id=ALICE_ID, title="S3 retries")
     return task_id
 
 

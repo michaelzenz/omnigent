@@ -118,7 +118,7 @@ def test_untracking_deletes_only_the_owners_worker(store: SqlAlchemyWorkerStore)
 def test_deleting_a_task_deletes_its_workers(db_uri: str, store: SqlAlchemyWorkerStore) -> None:
     tasks = SqlAlchemyTaskStore(db_uri)
     task_id = uuid.uuid4().hex
-    tasks.create(task_id, owner_user_id=ALICE, title="Task", goal="Finish the task")
+    tasks.create(task_id, owner_user_id=ALICE, title="Task")
     worker_id = _attach(store, task_id=task_id)
     other_task_worker = _attach(store)
 

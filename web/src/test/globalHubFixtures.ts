@@ -13,7 +13,6 @@ export function agentTask(id: string, fields: Partial<AgentTaskCard> = {}): Agen
     id,
     manager_id: null,
     title: `Task ${id}`,
-    goal: "Fix the S3 retries",
     description: null,
     state: "active",
     priority: 2,

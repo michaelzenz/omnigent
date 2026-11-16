@@ -167,7 +167,6 @@ async def test_a_request_for_managers_waits_for_the_broker_until_dismissed(
             uuid.uuid4().hex,
             owner_user_id=owner,
             title="A task",
-            goal="Finish it",
             manager_id=manager_id,
         )
 

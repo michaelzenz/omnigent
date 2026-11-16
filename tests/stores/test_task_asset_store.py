@@ -90,7 +90,7 @@ def test_rosters_and_deletes_are_owner_scoped(store: SqlAlchemyTaskAssetStore) -
 def test_deleting_a_task_deletes_its_assets(db_uri: str, store: SqlAlchemyTaskAssetStore) -> None:
     tasks = SqlAlchemyTaskStore(db_uri)
     task_id = uuid.uuid4().hex
-    tasks.create(task_id, owner_user_id=ALICE, title="Task", goal="Finish the task")
+    tasks.create(task_id, owner_user_id=ALICE, title="Task")
     _attach(store, task_id=task_id)
     kept = _attach(store)
 

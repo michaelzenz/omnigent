@@ -1,9 +1,9 @@
 # Task manager manual
 
 You own **every task attached to you** — usually several. Maintain each
-task's `internal_note`, and keep its user-facing `description` as a concise Markdown
-Overview (refresh after material changes; summarize status and only
-meaningful recent activity; always write overview in nested bullets format; never paste raw logs).
+task's `internal_note`, and keep its user-facing `description` as a Markdown
+Overview in the format of **The task Overview** below (refresh after material
+changes; never paste raw logs).
 
 These instructions also give your session id and your manager id. Your tasks
 carry your manager id as `manager_id`.
@@ -62,6 +62,25 @@ pmv2_api(
 )
 ```
 
+## The task Overview
+
+The task card shows the task's `description` as its Overview. Write it in
+exactly this format, with the three parts in this order:
+
+```
+**Goal:** <one-line summary of what the task should achieve, at most 20 words>
+
+**Recent Activities**
+- <at most 4 bullets: the most important recent activity, each within 20 words>
+
+**Suggested Next Step**
+- <at most 3 bullets: the most important next steps, each within 20 words>
+```
+
+- Pick only the important activities and next steps. When a list is full,
+  drop the oldest or least important bullet.
+- Rewrite the whole Overview on each update.
+
 ## Handling routed events
 
 The manager packager wraps routed events into a dispatch notice and sends
@@ -76,8 +95,8 @@ Your job per event is two things: keep the task's Overview (`description`)
 current, and stamp what the work produced/read onto the task (worker lanes and
 assets).
 
-Keep the task description < 100 words, the goal < 30 words, and the
-internal_note < 2,000 characters. Rewrite the note with what still matters;
+Write the task description in the format of **The task Overview**, and keep
+the internal_note < 2,000 characters. Rewrite the note with what still matters;
 do not add to its end.
 
 **Step 1 — pick the task from the roster.** The notice message carries the
@@ -87,7 +106,7 @@ routed events, followed by the `[Task roster]` described above. Honor a
 - **Compare the event with each task's title and note** in the roster.
 - **When they are not enough, read up to 10 candidates in one call** with the
 batch endpoint: `POST /v1/agent-tasks/batch` with `{"task_ids": [...]}` —
-goal and description come back per task.
+the description and internal note come back per task.
 - **Decide**: pick the best-fit task, or conclude nothing fits.
 
 **Step 1b — create new task.**
@@ -102,8 +121,7 @@ pmv2_api(
   body={
     "manager_id": "<your manager id>",
     "title": "<task title>",
-    "goal": "<endstate this task should land on>",
-    "description": "<overview for the task card>",
+    "description": "<Overview in the format of The task Overview>",
     "internal_note": "<agent context — routing rationale>",
     "state": "active"
   }
@@ -125,7 +143,7 @@ pmv2_api(
   method="PATCH",
   path="/v1/agent-tasks/<task_id>",
   body={
-    "description": "<refreshed overview>",
+    "description": "<refreshed Overview, in the same format>",
     "internal_note": "<agent context>"
   }
 )
@@ -245,8 +263,8 @@ does not change the user's checkout. Use
 `{"branch_name": "<new branch>", "base_branch": "main"}` for a new branch, or
 `{"branch_name": "<existing branch>", "existing_branch": true}` for a branch
 that exists, for example the branch of a pull request.
-- **First message.** The session knows nothing about the task. Write the goal,
-the links, and what done means.
+- **First message.** The session knows nothing about the task. Write what the
+work should achieve (the Overview's Goal line), the links, and what done means.
 - **One session for each piece of work.** Do not start a second session for
 work that a worker already does.
 - **Failures.** The first message goes out in the background. If it cannot be
@@ -319,4 +337,4 @@ pmv2_api(
 
 To provide an immersive experience, you are allowed to follow up, for ex:
 
-- user sent a message, set a timer that runs 2d later and checks for a reply or reaction; if there is none, note in the Overview: `follow up with XXX with message "Gentle bump <message composed based on context>"`
+- user sent a message, set a timer that runs 2d later and checks for a reply or reaction; if there is none, add a Suggested Next Step bullet: `follow up with XXX with message "Gentle bump <message composed based on context>"`

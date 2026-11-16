@@ -32,9 +32,7 @@ class _Board:
         self.managers = SqlAlchemyManagerStore(db_uri)
 
     def task(self, owner: str = ALICE, **fields: Any) -> str:
-        return self.tasks.create(
-            uuid.uuid4().hex, owner_user_id=owner, title="Task", goal="Finish it", **fields
-        ).id
+        return self.tasks.create(uuid.uuid4().hex, owner_user_id=owner, title="Task", **fields).id
 
     def subscribe(
         self, task_id: str, key: str = PR, owner: str = ALICE, **fields: Any

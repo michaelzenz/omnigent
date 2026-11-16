@@ -8,12 +8,11 @@ from omnigent.agent_tasks.board_search import query_words, search_board
 from omnigent.entities import Task, TaskAsset, Worker
 
 
-def _task(task_id: str, title: str, *, goal: str = "", **fields: Any) -> Task:
+def _task(task_id: str, title: str, **fields: Any) -> Task:
     return Task(
         id=task_id,
         owner_user_id=None,
         title=title,
-        goal=goal,
         state="active",
         created_at=100,
         **fields,
@@ -55,7 +54,7 @@ def test_query_words_are_lowercase_and_distinct() -> None:
 
 
 def test_more_distinct_words_rank_first_and_a_repeated_word_counts_once() -> None:
-    repeats = _task("t1", "retry retry retry retry", goal="retry again")
+    repeats = _task("t1", "retry retry retry retry", description="retry again")
     both = _task("t2", "Retry the auth call")
     neither = _task("t3", "Docs")
 

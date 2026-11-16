@@ -1384,10 +1384,6 @@
             ],
             "title": "Description"
           },
-          "goal": {
-            "title": "Goal",
-            "type": "string"
-          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1467,7 +1463,6 @@
           "id",
           "manager_id",
           "title",
-          "goal",
           "description",
           "state",
           "priority",
@@ -2133,10 +2128,6 @@
             ],
             "title": "Description"
           },
-          "goal": {
-            "title": "Goal",
-            "type": "string"
-          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -2222,7 +2213,6 @@
           "manager_id",
           "owner_user_id",
           "title",
-          "goal",
           "description",
           "internal_note",
           "state",
@@ -4182,11 +4172,6 @@
             ],
             "title": "Description"
           },
-          "goal": {
-            "maxLength": 4000,
-            "title": "Goal",
-            "type": "string"
-          },
           "internal_note": {
             "anyOf": [
               {
@@ -4225,8 +4210,7 @@
         },
         "required": [
           "manager_id",
-          "title",
-          "goal"
+          "title"
         ],
         "title": "CreateAgentTaskRequest",
         "type": "object"
@@ -16834,18 +16818,6 @@
               }
             ],
             "title": "Description"
-          },
-          "goal": {
-            "anyOf": [
-              {
-                "maxLength": 4000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Goal"
           },
           "internal_note": {
             "anyOf": [

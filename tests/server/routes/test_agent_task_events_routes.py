@@ -39,7 +39,6 @@ def _task(db_uri: str, manager_id: str | None = None) -> str:
             uuid.uuid4().hex,
             owner_user_id=ALICE_ID,
             title="PR 12",
-            goal="Merge it",
             manager_id=manager_id,
         )
         .id

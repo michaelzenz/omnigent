@@ -155,15 +155,4 @@ describe("TaskCard", () => {
       undefined,
     ]);
   });
-
-  it("saves an edited goal on Enter", async () => {
-    renderCard(agentTask("t1"));
-
-    fireEvent.click(screen.getByTestId("task-card-goal-t1"));
-    const input = screen.getByTestId("task-card-goal-input-t1");
-    fireEvent.change(input, { target: { value: "Ship the fix" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-
-    expect(await sentRequest()).toEqual(["/v1/agent-tasks/t1", "PATCH", { goal: "Ship the fix" }]);
-  });
 });

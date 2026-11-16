@@ -32,7 +32,7 @@ async def _create(
 ) -> str:
     response = await client.post(
         ROUTE,
-        json={"manager_id": manager_id, "title": title, "goal": f"Finish {title}", **fields},
+        json={"manager_id": manager_id, "title": title, **fields},
         headers=headers,
     )
     assert response.status_code == 200, response.text
@@ -56,25 +56,27 @@ async def test_tasks_need_an_owned_manager_and_list_in_board_order(
     await _create(auth_client, manager_id, "second")
 
     with_bobs_manager = await auth_client.post(
-        ROUTE, json={"manager_id": bobs_manager, "title": "x", "goal": "y"}, headers=ALICE
+        ROUTE, json={"manager_id": bobs_manager, "title": "x"}, headers=ALICE
     )
     born_idle = await auth_client.post(
         ROUTE,
-        json={"manager_id": manager_id, "title": "x", "goal": "y", "state": "idle"},
+        json={"manager_id": manager_id, "title": "x", "state": "idle"},
         headers=ALICE,
     )
     blank_title = await auth_client.post(
-        ROUTE, json={"manager_id": manager_id, "title": "  ", "goal": "y"}, headers=ALICE
+        ROUTE, json={"manager_id": manager_id, "title": "  "}, headers=ALICE
     )
     long_note = await auth_client.post(
         ROUTE,
         json={
             "manager_id": manager_id,
             "title": "x",
-            "goal": "y",
             "internal_note": "n" * (MAX_TASK_INTERNAL_NOTE_CHARS + 1),
         },
         headers=ALICE,
+    )
+    with_goal = await auth_client.post(
+        ROUTE, json={"manager_id": manager_id, "title": "x", "goal": "y"}, headers=ALICE
     )
 
     assert await _board(auth_client) == ["second", "first"]
@@ -83,6 +85,7 @@ async def test_tasks_need_an_owned_manager_and_list_in_board_order(
     assert born_idle.status_code == 422
     assert blank_title.status_code == 422
     assert long_note.status_code == 422
+    assert with_goal.status_code == 422, "a task has no goal field"
 
 
 async def test_list_filters_by_state_manager_session_and_limit(

@@ -415,7 +415,6 @@ async def test_manager_session_message_carries_its_roster_outside_history(
         uuid.uuid4().hex,
         owner_user_id=owner,
         title="S3 retries",
-        goal="Merge it",
         internal_note="Waits for review in PR 12.",
         manager_id=manager.id,
     )

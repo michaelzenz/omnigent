@@ -41,7 +41,6 @@ class Task:
     :param owner_user_id: Owning user, e.g. ``"alice@example.com"``, or
         ``None`` in single-user mode.
     :param title: Short title shown on the board card.
-    :param goal: The end state the task should reach.
     :param state: ``"active"``, ``"idle"``, ``"agent-resolved"`` or
         ``"archived"``.
     :param created_at: Unix epoch seconds at row creation.
@@ -59,7 +58,6 @@ class Task:
     id: str
     owner_user_id: str | None
     title: str
-    goal: str
     state: str
     created_at: int
     manager_id: str | None = None

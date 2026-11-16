@@ -77,9 +77,7 @@ async def hub_client(hub_app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
 
 def _task(db_uri: str, title: str, owner: str = ALICE_ID, **fields: Any) -> str:
     task_id = uuid.uuid4().hex
-    SqlAlchemyTaskStore(db_uri).create(
-        task_id, owner_user_id=owner, title=title, goal=f"Finish {title}", **fields
-    )
+    SqlAlchemyTaskStore(db_uri).create(task_id, owner_user_id=owner, title=title, **fields)
     return task_id
 
 

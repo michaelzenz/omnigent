@@ -66,7 +66,6 @@ class _Hub:
             uuid.uuid4().hex,
             owner_user_id=ALICE,
             title="S3 retries",
-            goal="Fix them",
             manager_id=manager_id,
             state=state,
         )
@@ -140,7 +139,7 @@ def test_a_task_without_a_manager_hears_of_the_session_it_follows_through_the_br
 ) -> None:
     UserSettingsStore(db_uri).save_globalhub_report_new_sessions(False, user_id=ALICE)
     session_id = hub.session()
-    task = hub.board.tasks.create(uuid.uuid4().hex, owner_user_id=ALICE, title="Review", goal="g")
+    task = hub.board.tasks.create(uuid.uuid4().hex, owner_user_id=ALICE, title="Review")
     hub.board.subscriptions.subscribe(
         uuid.uuid4().hex, owner_user_id=ALICE, task_id=task.id, source_key=session_id
     )

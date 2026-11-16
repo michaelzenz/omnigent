@@ -101,9 +101,7 @@ def test_deleting_a_manager_unassigns_its_tasks_and_returns_its_events(
     events = SqlAlchemyTaskEventStore(db_uri)
     manager_id = _create(store, "Storage")
     task_id = uuid.uuid4().hex
-    tasks.create(
-        task_id, owner_user_id=ALICE, title="Task", goal="Finish the task", manager_id=manager_id
-    )
+    tasks.create(task_id, owner_user_id=ALICE, title="Task", manager_id=manager_id)
     unhandled, handled = uuid.uuid4().hex, uuid.uuid4().hex
     for event_id in (unhandled, handled):
         events.create(

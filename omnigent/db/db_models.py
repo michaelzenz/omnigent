@@ -858,7 +858,6 @@ class SqlTask(OmnigentBase):
     :param title: Short title shown on the board card.
     :param description: The user-facing overview the manager maintains.
     :param internal_note: Agent-facing context the manager maintains.
-    :param goal: The end state the task should reach.
     :param state: A ``TASK_STATE`` code.
     :param priority: Priority from 0 to 3.
     :param queue_rank: Board order among the owner's tasks; higher ranks list
@@ -884,7 +883,6 @@ class SqlTask(OmnigentBase):
     title: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
     internal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    goal: Mapped[str] = mapped_column(Text, nullable=False)
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
     priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="2")
     queue_rank: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")

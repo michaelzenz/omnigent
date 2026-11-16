@@ -1,7 +1,7 @@
 """Board search: rank the user's live tasks by the query words their cards show.
 
 A query word hits a task when its card text holds the word anywhere: the
-title, goal, overview, task id, asset titles and URLs, and worker labels.
+title, overview, task id, asset titles and URLs, and worker labels.
 Each distinct word counts once per task, however often the
 card holds it, so a query of two words hits a task at most twice. A task that
 hits more words comes first; among tasks with the same count, the task active
@@ -83,7 +83,7 @@ def search_board(
             worker.id: worker_labels.get(worker.id, "").lower() for worker in task_workers
         }
         texts = [
-            *(text.lower() for text in (task.title, task.goal, task.description or "", task.id)),
+            *(text.lower() for text in (task.title, task.description or "", task.id)),
             *asset_texts.values(),
             *worker_texts.values(),
         ]

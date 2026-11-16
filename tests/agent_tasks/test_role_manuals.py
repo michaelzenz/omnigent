@@ -116,7 +116,6 @@ def test_a_managers_turn_context_is_its_record_and_live_roster(db_uri: str) -> N
             uuid.uuid4().hex,
             owner_user_id=ALICE,
             title=title,
-            goal="Finish it",
             manager_id=storage.id,
             **fields,
         ).id

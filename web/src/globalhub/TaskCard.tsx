@@ -1,10 +1,9 @@
-import { memo, type ReactNode, useEffect, useState } from "react";
-import { ArchiveIcon, CheckIcon, MessageSquareIcon, PencilIcon, XIcon } from "lucide-react";
+import { memo, type ReactNode, useState } from "react";
+import { ArchiveIcon, CheckIcon, MessageSquareIcon, XIcon } from "lucide-react";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { RunningDot } from "@/components/RunningDot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   type AgentTask,
   type AgentTaskCard,
@@ -41,7 +40,7 @@ interface TaskCardProps {
   isLast: boolean;
 }
 
-/** One task on the Global Hub board: its header, goal, overview, details, assets and workers. */
+/** One task on the Global Hub board: its header, overview, details, assets and workers. */
 export const TaskCard = memo(function TaskCard({
   task,
   managerTitle,
@@ -126,7 +125,6 @@ export const TaskCard = memo(function TaskCard({
             <RemoveTaskButtons task={task} />
           </div>
         </div>
-        <EditableGoal task={task} />
         {failure && (
           <p role="alert" className="text-xs text-destructive">
             {failure.message}
@@ -197,99 +195,6 @@ function TaskDetail({ label, children }: { label: string; children: ReactNode })
         {label}
       </dt>
       <dd className="mt-1 truncate text-sm font-medium">{children}</dd>
-    </div>
-  );
-}
-
-function EditableGoal({ task }: { task: AgentTask }) {
-  const patch = usePatchAgentTask(task.id);
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(task.goal);
-  useEffect(() => {
-    if (!editing) setValue(task.goal);
-  }, [editing, task.goal]);
-
-  const cancel = () => {
-    setValue(task.goal);
-    setEditing(false);
-  };
-  const save = () => {
-    const next = value.trim();
-    if (!next || next === task.goal) {
-      cancel();
-      return;
-    }
-    // A refused goal keeps the editor open with the server's reason.
-    patch.mutate({ goal: next }, { onSuccess: () => setEditing(false) });
-  };
-
-  if (!editing) {
-    return (
-      <button
-        type="button"
-        className="group flex max-w-full items-start gap-1.5 text-left text-sm"
-        onClick={() => setEditing(true)}
-        data-testid={`task-card-goal-${task.id}`}
-      >
-        <span className="shrink-0 font-medium">Goal:</span>
-        <span className="min-w-0 text-muted-foreground" data-board-search-text>
-          {task.goal || "Add a goal"}
-        </span>
-        <PencilIcon
-          className="mt-0.5 size-3.5 shrink-0 opacity-0 group-hover:opacity-100"
-          aria-hidden
-        />
-      </button>
-    );
-  }
-
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center gap-1.5">
-        <span className="text-sm font-medium">Goal:</span>
-        <Input
-          autoFocus
-          value={value}
-          className="h-8 min-w-0 flex-1"
-          onChange={(event) => setValue(event.target.value)}
-          onBlur={save}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              cancel();
-            } else if (event.key === "Enter") {
-              event.preventDefault();
-              save();
-            }
-          }}
-          data-testid={`task-card-goal-input-${task.id}`}
-        />
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          aria-label="Save goal"
-          disabled={patch.isPending}
-          // Keep the input focused so its blur does not save twice.
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={save}
-        >
-          <CheckIcon aria-hidden />
-        </Button>
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          aria-label="Cancel goal edit"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={cancel}
-        >
-          <XIcon aria-hidden />
-        </Button>
-      </div>
-      {patch.error && (
-        <p role="alert" className="text-xs text-destructive">
-          {patch.error.message}
-        </p>
-      )}
     </div>
   );
 }

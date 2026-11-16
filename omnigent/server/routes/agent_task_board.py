@@ -187,7 +187,6 @@ def _card(
         id=task.id,
         manager_id=task.manager_id,
         title=task.title,
-        goal=task.goal,
         description=task.description,
         state=cast(AgentTaskState, task.state),
         priority=task.priority,

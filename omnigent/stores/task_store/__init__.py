@@ -34,7 +34,6 @@ class TaskStore(ABC):
         *,
         owner_user_id: str | None,
         title: str,
-        goal: str,
         description: str | None = None,
         internal_note: str | None = None,
         manager_id: str | None = None,
@@ -47,7 +46,6 @@ class TaskStore(ABC):
         :param task_id: Pre-generated id (bare 32-char hex).
         :param owner_user_id: Owning user, or ``None`` in single-user mode.
         :param title: Short title shown on the board card.
-        :param goal: The end state the task should reach.
         :param description: The user-facing overview.
         :param internal_note: Agent-facing context.
         :param manager_id: The owning manager, or ``None``.
@@ -107,7 +105,6 @@ class TaskStore(ABC):
         title: str | None = None,
         description: str | None = None,
         internal_note: str | None = None,
-        goal: str | None = None,
         manager_id: str | None = UNSET,
         state: str | None = None,
         priority: int | None = None,

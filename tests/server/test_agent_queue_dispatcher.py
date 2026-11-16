@@ -241,9 +241,7 @@ async def test_once_an_hour_tasks_with_no_change_for_a_week_turn_idle(
 ) -> None:
     def task(title: str, created_at: int) -> str:
         monkeypatch.setattr(task_tables, "now_epoch", lambda: created_at)
-        return harness.board.tasks.create(
-            uuid.uuid4().hex, owner_user_id=ALICE, title=title, goal="Finish it"
-        ).id
+        return harness.board.tasks.create(uuid.uuid4().hex, owner_user_id=ALICE, title=title).id
 
     def state(task_id: str) -> str | None:
         found = harness.board.tasks.get(task_id, owner_user_id=ALICE)

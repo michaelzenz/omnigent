@@ -9,7 +9,6 @@ export interface AgentTask {
   id: string;
   manager_id: string | null;
   title: string;
-  goal: string;
   description: string | null;
   state: AgentTaskState;
   /** 0 is the highest priority, 3 the lowest. */
@@ -103,7 +102,6 @@ export interface AgentManager {
 
 /** Fields a card can change on a task. */
 export interface AgentTaskChanges {
-  goal?: string;
   state?: AgentTaskState;
 }
 
@@ -185,7 +183,7 @@ function useTaskAction<T = void>(action: (variables: T) => Promise<void>) {
   });
 }
 
-/** Change a task's goal or state; ``agent-resolved`` also moves it to the end. */
+/** Change a task's state; ``agent-resolved`` also moves it to the end. */
 export function usePatchAgentTask(taskId: string) {
   return useTaskAction((changes: AgentTaskChanges) =>
     sendTaskRequest(taskPath(taskId), {

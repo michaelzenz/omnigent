@@ -17,9 +17,7 @@ PR = "https://github.com/example-org/repo/pull/12"
 def _task(db_uri: str, state: str = "active") -> str:
     return (
         SqlAlchemyTaskStore(db_uri)
-        .create(
-            uuid.uuid4().hex, owner_user_id=ALICE_ID, title="PR 12", goal="Merge it", state=state
-        )
+        .create(uuid.uuid4().hex, owner_user_id=ALICE_ID, title="PR 12", state=state)
         .id
     )
 
