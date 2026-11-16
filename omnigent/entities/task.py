@@ -28,6 +28,8 @@ MAX_WATCH_ITEM_OFFSETS = 10
 MAX_TASK_INTERNAL_NOTE_CHARS = 2_000
 #: A manager with this many live tasks is full, so the broker's manager list leaves it out.
 MANAGER_TASK_CAPACITY = 30
+#: The longest description a manager keeps of the scope it owns.
+MAX_MANAGER_DESCRIPTION_CHARS = 3_000
 
 
 @dataclass

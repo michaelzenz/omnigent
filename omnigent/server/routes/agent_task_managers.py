@@ -11,7 +11,7 @@ import uuid
 from collections import defaultdict
 from typing import cast
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 
 from omnigent.agent_tasks.board_stores import BoardStores
 from omnigent.agent_tasks.role_sessions import (
@@ -44,6 +44,9 @@ from omnigent.server.schemas import (
 )
 from omnigent.stores.user_settings_store import GlobalHubPlacement
 
+MANAGER_PAGE_SIZE = 200
+MAX_MANAGER_PAGE_SIZE = 200
+
 
 def create_agent_task_managers_router(
     board: BoardStores,
@@ -62,29 +65,46 @@ def create_agent_task_managers_router(
     assert manager_role is not None
 
     @router.get("/agent-tasks/managers", response_model=AgentManagerList)
-    async def list_managers(request: Request, include_full: bool = False) -> AgentManagerList:
-        """List the caller's managers in creation order, each with its live tasks.
+    async def list_managers(
+        request: Request,
+        include_full: bool = False,
+        limit: int = Query(default=MANAGER_PAGE_SIZE, ge=1, le=MAX_MANAGER_PAGE_SIZE),
+        after: str | None = None,
+    ) -> AgentManagerList:
+        """List a page of the caller's managers in creation order, each with its live tasks.
 
         A manager with ``MANAGER_TASK_CAPACITY`` live tasks or more is full, and
         the list leaves it out, so the broker gives new work to other managers.
-        ``include_full`` lists every manager, as the board does.
+        ``include_full`` lists every manager, as the board does. ``after`` is the
+        previous page's ``last_id``; the next page starts after that manager.
         """
         user_id = require_user(request, auth_provider)
 
-        def load() -> list[tuple[Manager, list[Task], Conversation | None]]:
+        def load() -> tuple[list[tuple[Manager, list[Task], Conversation | None]], bool]:
             portfolios: defaultdict[str, list[Task]] = defaultdict(list)
             for task in board.tasks.list(owner_user_id=user_id, states=LIVE_TASK_STATES):
                 if task.manager_id is not None:
                     portfolios[task.manager_id].append(task)
+            every = board.managers.list(owner_user_id=user_id)
+            start = 0
+            if after is not None:
+                start = next(
+                    (index + 1 for index, manager in enumerate(every) if manager.id == after), -1
+                )
+                if start < 0:
+                    raise OmnigentError(
+                        "after names no manager on your board", code=ErrorCode.INVALID_INPUT
+                    )
             managers = [
                 manager
-                for manager in board.managers.list(owner_user_id=user_id)
+                for manager in every[start:]
                 if include_full or len(portfolios[manager.id]) < MANAGER_TASK_CAPACITY
             ]
+            page = managers[:limit]
             manager_sessions = sessions.conversation_store.get_conversations(
-                [manager.conversation_id for manager in managers if manager.conversation_id]
+                [manager.conversation_id for manager in page if manager.conversation_id]
             )
-            return [
+            listed = [
                 (
                     manager,
                     portfolios[manager.id],
@@ -92,12 +112,18 @@ def create_agent_task_managers_router(
                     if manager.conversation_id
                     else None,
                 )
-                for manager in managers
+                for manager in page
             ]
+            return listed, len(managers) > limit
 
-        listed = await asyncio.to_thread(load)
+        listed, has_more = await asyncio.to_thread(load)
         return AgentManagerList(
-            data=[_manager_response(manager, tasks, session) for manager, tasks, session in listed]
+            data=[
+                _manager_response(manager, tasks, session) for manager, tasks, session in listed
+            ],
+            first_id=listed[0][0].id if listed else None,
+            last_id=listed[-1][0].id if listed else None,
+            has_more=has_more,
         )
 
     @router.post("/agent-tasks/managers", response_model=AgentManagerResponse)

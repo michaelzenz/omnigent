@@ -24,12 +24,24 @@ with different scopes.
 
 ### 1. List managers
 
+The list comes in pages of managers, in creation order. Read every
+page before you choose: while `has_more` is true, ask for the next page with
+the previous page's `last_id` as `after`.
+
 ```
 pmv2_api(
   method="GET",
   path="/v1/agent-tasks/managers"
 )
+pmv2_api(
+  method="GET",
+  path="/v1/agent-tasks/managers",
+  query={"after": "<last_id of the previous page>"}
+)
 ```
+
+As you read, keep a short list of the managers that could fit, with the
+reason for each. Choose only after the last page.
 
 The list leaves out full managers, which have 30 live tasks or more. Do not
 route events or assign tasks to a manager that is not on the list.

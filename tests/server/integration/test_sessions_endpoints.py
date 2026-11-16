@@ -435,8 +435,12 @@ async def test_manager_session_message_carries_its_roster_outside_history(
         )
         assert response.status_code == 202, response.text
 
-    assert forwarded[0]["turn_context"] == (
-        f"[Task roster]\n{task.id} — S3 retries (active)\n  Note: Waits for review in PR 12."
+    roster = forwarded[0]["turn_context"]
+    assert roster.startswith(f"[Task roster]\nManager: Storage\nManager id: {manager.id}\n")
+    assert "\nDescription: (none yet)\n" in roster
+    assert roster.endswith(
+        f"Live tasks: 1 (full at 30)\n{task.id} — S3 retries (active)\n"
+        "  Note: Waits for review in PR 12."
     )
     items = await client.get(f"/v1/sessions/{session['id']}/items")
     persisted = json.dumps(items.json()["data"])

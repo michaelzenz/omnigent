@@ -132,10 +132,16 @@ async function fetchBoard(limit: number, query: string): Promise<AgentTaskBoard>
   return readJson(await authenticatedFetch(`/v1/agent-tasks/board?limit=${limit}${search}`));
 }
 
-async function fetchManagers(): Promise<AgentManager[]> {
+async function fetchManagers(after: string | null = null): Promise<AgentManager[]> {
   // The board shows full managers too; the broker's list leaves them out.
-  const res = await authenticatedFetch("/v1/agent-tasks/managers?include_full=true");
-  return (await readJson<{ data: AgentManager[] }>(res)).data;
+  const query = new URLSearchParams({ include_full: "true", limit: "200" });
+  if (after) query.set("after", after);
+  const page = await readJson<{ data: AgentManager[]; has_more?: boolean; last_id?: string }>(
+    await authenticatedFetch(`/v1/agent-tasks/managers?${query}`),
+  );
+  // A server without pages answers once, without has_more.
+  if (!page.has_more || !page.last_id) return page.data;
+  return [...page.data, ...(await fetchManagers(page.last_id))];
 }
 
 /**
@@ -156,7 +162,7 @@ export function useGlobalHubBoard(limit: number, query = "") {
 export function useAgentManagers() {
   return useQuery({
     queryKey: GLOBALHUB_MANAGERS_QUERY_KEY,
-    queryFn: fetchManagers,
+    queryFn: () => fetchManagers(),
     refetchInterval: BOARD_REFRESH_MS,
   });
 }

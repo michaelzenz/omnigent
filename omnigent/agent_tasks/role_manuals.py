@@ -8,6 +8,7 @@ stored in the session's history.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Any
 
 from omnigent.agent_tasks.board_stores import BoardStores, open_board_stores
@@ -17,7 +18,7 @@ from omnigent.agent_tasks.roles import (
     BuiltinRole,
     role_definition,
 )
-from omnigent.entities import LIVE_TASK_STATES, Task
+from omnigent.entities import LIVE_TASK_STATES, MANAGER_TASK_CAPACITY, Manager, Task
 from omnigent.stores.user_settings_store import open_user_settings_store
 
 _MANAGER_IDS = "Your session id is {session_id}. Your manager id is {manager_id}."
@@ -55,9 +56,11 @@ def role_turn_instructions(
 def role_turn_context(role: BuiltinRole, session_id: str, conversation_store: Any) -> str | None:
     """Return what a role session's model sees on one turn only, or ``None``. Blocking.
 
-    A manager gets its ``[Task roster]``: its live tasks in board order, each
-    with its internal note. The harness adds the roster to the turn's message
-    for each model call and does not store it, so each turn has a current one.
+    A manager gets its ``[Task roster]``: its own manager record (title, ids,
+    description, placement, owner and times), its live task count, then its
+    live tasks in board order, each with its internal note. The harness adds
+    the roster to the turn's message for each model call and does not store
+    it, so each turn has a current one.
 
     :param role: The session's role, from
         :func:`omnigent.agent_tasks.roles.session_role`.
@@ -77,12 +80,16 @@ def role_turn_context(role: BuiltinRole, session_id: str, conversation_store: An
     if manager is None:
         return None
     tasks = board.tasks.list(owner_user_id=owner, states=LIVE_TASK_STATES, manager_id=manager.id)
-    return _roster_text(tasks)
+    return _roster_text(manager, tasks)
 
 
-def _roster_text(tasks: Sequence[Task]) -> str:
-    lines = ["[Task roster]"]
-    used = 0
+def _roster_text(manager: Manager, tasks: Sequence[Task]) -> str:
+    lines = [
+        "[Task roster]",
+        *_manager_lines(manager),
+        f"Live tasks: {len(tasks)} (full at {MANAGER_TASK_CAPACITY})",
+    ]
+    used = sum(len(line) + 1 for line in lines)
     for index, task in enumerate(tasks):
         entry = _roster_entry(task)
         if index and used + len(entry) > _ROSTER_MAX_CHARS:
@@ -93,9 +100,28 @@ def _roster_text(tasks: Sequence[Task]) -> str:
             break
         lines.append(entry)
         used += len(entry) + 1
-    if not tasks:
-        lines.append("(no tasks yet)")
     return "\n".join(lines)
+
+
+def _manager_lines(manager: Manager) -> list[str]:
+    """The manager's own record; empty placement means the owner's GlobalHub host."""
+    description = manager.description.strip() or "(none yet)"
+    lines = [
+        f"Manager: {manager.title}",
+        f"Manager id: {manager.id}",
+        f"Session id: {manager.conversation_id}",
+        "Description: " + "\n  ".join(description.splitlines()),
+        f"Host: {manager.host_id or 'your GlobalHub host'}",
+        f"Workspace: {manager.workspace or 'your GlobalHub workspace'}",
+    ]
+    if manager.owner_user_id:
+        lines.append(f"Owner: {manager.owner_user_id}")
+    lines.append(f"Created: {_utc(manager.created_at)}; updated: {_utc(manager.updated_at)}")
+    return lines
+
+
+def _utc(epoch_seconds: int) -> str:
+    return datetime.fromtimestamp(epoch_seconds, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _roster_entry(task: Task) -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from omnigent.agent_tasks.role_manuals import role_turn_context, role_turn_instructions
@@ -13,6 +14,7 @@ from omnigent.agent_tasks.roles import (
     BuiltinRole,
     builtin_role,
 )
+from omnigent.entities import Manager
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 from omnigent.stores.user_settings_store import UserSettingsStore
@@ -91,13 +93,22 @@ def test_a_managers_turns_name_its_session_and_manager_ids(db_uri: str) -> None:
     assert instructions(broker, ALICE) == broker.default_manual()
 
 
-def test_a_managers_turn_context_is_its_live_roster_with_each_tasks_note(db_uri: str) -> None:
+def test_a_managers_turn_context_is_its_record_and_live_roster(db_uri: str) -> None:
     managers, tasks = SqlAlchemyManagerStore(db_uri), SqlAlchemyTaskStore(db_uri)
-    manager_id = managers.create(
-        uuid.uuid4().hex, owner_user_id=ALICE, title="Storage", conversation_id=SESSION_ID
-    ).id
-    managers.create(
-        uuid.uuid4().hex, owner_user_id=ALICE, title="Docs", conversation_id=OTHER_SESSION_ID
+    storage = managers.create(
+        uuid.uuid4().hex,
+        owner_user_id=ALICE,
+        title="Storage",
+        description="S3 client retries.\nRoute storage events here.",
+        conversation_id=SESSION_ID,
+    )
+    docs = managers.create(
+        uuid.uuid4().hex,
+        owner_user_id=ALICE,
+        title="Docs",
+        conversation_id=OTHER_SESSION_ID,
+        host_id="3c4b5a69788796a5b4c3d2e1f00f1e2d",
+        workspace="/srv/docs",
     )
 
     def task(title: str, **fields: str) -> str:
@@ -106,9 +117,22 @@ def test_a_managers_turn_context_is_its_live_roster_with_each_tasks_note(db_uri:
             owner_user_id=ALICE,
             title=title,
             goal="Finish it",
-            manager_id=manager_id,
+            manager_id=storage.id,
             **fields,
         ).id
+
+    def record(manager: Manager, *placement: str) -> list[str]:
+        def utc(epoch_seconds: int) -> str:
+            return datetime.fromtimestamp(epoch_seconds, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        return [
+            f"Manager: {manager.title}",
+            f"Manager id: {manager.id}",
+            f"Session id: {manager.conversation_id}",
+            *placement,
+            f"Owner: {ALICE}",
+            f"Created: {utc(manager.created_at)}; updated: {utc(manager.updated_at)}",
+        ]
 
     task("Old work", state="archived")
     plain = task("Docs page")
@@ -122,13 +146,31 @@ def test_a_managers_turn_context_is_its_live_roster_with_each_tasks_note(db_uri:
     assert context(_manager(), ALICE) == "\n".join(
         [
             "[Task roster]",
+            *record(
+                storage,
+                "Description: S3 client retries.\n  Route storage events here.",
+                "Host: your GlobalHub host",
+                "Workspace: your GlobalHub workspace",
+            ),
+            "Live tasks: 2 (full at 30)",
             f"{noted} — S3 retries (active)",
             "  Note: PR 12 in example-org/repo.",
             "  Waits for review.",
             f"{plain} — Docs page (active)",
         ]
     )
-    assert context(_manager(), ALICE, OTHER_SESSION_ID) == "[Task roster]\n(no tasks yet)"
+    assert context(_manager(), ALICE, OTHER_SESSION_ID) == "\n".join(
+        [
+            "[Task roster]",
+            *record(
+                docs,
+                "Description: (none yet)",
+                "Host: 3c4b5a69788796a5b4c3d2e1f00f1e2d",
+                "Workspace: /srv/docs",
+            ),
+            "Live tasks: 0 (full at 30)",
+        ]
+    )
     # Another user's manager row, and other roles, get no context.
     assert context(_manager(), BOB) is None
     assert context(broker, ALICE) is None

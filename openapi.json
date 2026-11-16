@@ -648,7 +648,7 @@
         "type": "object"
       },
       "AgentManagerList": {
-        "description": "The caller's GlobalHub managers, in creation order; full managers only on request.",
+        "description": "A page of the caller's GlobalHub managers, in creation order; full managers\nonly on request. Pass `last_id` as `after` for the next page while\n`has_more` is true.",
         "properties": {
           "data": {
             "items": {
@@ -656,6 +656,33 @@
             },
             "title": "Data",
             "type": "array"
+          },
+          "first_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Id"
+          },
+          "has_more": {
+            "default": false,
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "last_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Id"
           },
           "object": {
             "const": "list",
@@ -3970,7 +3997,7 @@
         "description": "Create a manager on the caller's board, with its own session.\n\n`role_key` accepts only `\"manager:default\"`. The session runs on the\ncaller's GlobalHub host and workspace unless `host_id` pins it to\nanother of the caller's hosts, which must be online; there it works in\nthe host's home directory.",
         "properties": {
           "description": {
-            "maxLength": 512,
+            "maxLength": 3000,
             "title": "Description",
             "type": "string"
           },
@@ -16781,7 +16808,7 @@
         "description": "Replace the calling manager's description of the scope it owns.",
         "properties": {
           "description": {
-            "maxLength": 512,
+            "maxLength": 3000,
             "title": "Description",
             "type": "string"
           }
@@ -18660,7 +18687,7 @@
     },
     "/v1/agent-tasks/managers": {
       "get": {
-        "description": "List the caller's managers in creation order, each with its live tasks.\n\nA manager with `MANAGER_TASK_CAPACITY` live tasks or more is full, and\nthe list leaves it out, so the broker gives new work to other managers.\n`include_full` lists every manager, as the board does.",
+        "description": "List a page of the caller's managers in creation order, each with its live tasks.\n\nA manager with `MANAGER_TASK_CAPACITY` live tasks or more is full, and\nthe list leaves it out, so the broker gives new work to other managers.\n`include_full` lists every manager, as the board does. `after` is the\nprevious page's `last_id`; the next page starts after that manager.",
         "operationId": "list_managers_v1_agent_tasks_managers_get",
         "parameters": [
           {
@@ -18671,6 +18698,34 @@
               "default": false,
               "title": "Include Full",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
             }
           }
         ],

@@ -42,7 +42,7 @@ function boardReads(): { limit: number; query: string | null }[] {
 function serveBoard(read: (limit: number, query: string | null) => AgentTaskBoard): void {
   fetchMock.mockImplementation(async (input) => {
     const path = String(input);
-    if (path === "/v1/agent-tasks/managers?include_full=true") {
+    if (path.startsWith("/v1/agent-tasks/managers?include_full=true")) {
       return jsonResponse({ data: [STORAGE_MANAGER] });
     }
     if (path.startsWith(BOARD_PATH)) {

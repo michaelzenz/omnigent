@@ -46,7 +46,11 @@ from omnigent.entities import (
     TerminalCommandData,
 )
 from omnigent.entities.conversation import StartupInputOptions
-from omnigent.entities.task import MAX_TASK_INTERNAL_NOTE_CHARS, MAX_WATCH_ITEM_OFFSETS
+from omnigent.entities.task import (
+    MAX_MANAGER_DESCRIPTION_CHARS,
+    MAX_TASK_INTERNAL_NOTE_CHARS,
+    MAX_WATCH_ITEM_OFFSETS,
+)
 from omnigent.inner.native_attachments import reject_authored_framework_notices
 from omnigent.onboarding.sandboxes.profiles import SandboxProfileSummary
 from omnigent.server.server_config import (
@@ -6255,7 +6259,7 @@ _AgentTaskTitle = Annotated[str, Field(max_length=256), AfterValidator(_strip_re
 _AgentTaskGoal = Annotated[str, Field(max_length=4_000), AfterValidator(_strip_required_text)]
 _AgentManagerTitle = Annotated[str, Field(max_length=200), AfterValidator(_strip_required_text)]
 _AgentManagerDescription = Annotated[
-    str, Field(max_length=512), AfterValidator(_strip_required_text)
+    str, Field(max_length=MAX_MANAGER_DESCRIPTION_CHARS), AfterValidator(_strip_required_text)
 ]
 _AgentTaskWorkerTitle = Annotated[str, Field(max_length=200), AfterValidator(_strip_required_text)]
 _AgentTaskEventType = Annotated[str, Field(max_length=128), AfterValidator(_strip_required_text)]
@@ -6387,10 +6391,15 @@ class AgentManagerResponse(BaseModel):
 
 
 class AgentManagerList(BaseModel):
-    """The caller's GlobalHub managers, in creation order; full managers only on request."""
+    """A page of the caller's GlobalHub managers, in creation order; full managers
+    only on request. Pass ``last_id`` as ``after`` for the next page while
+    ``has_more`` is true."""
 
     object: Literal["list"] = "list"
     data: list[AgentManagerResponse]
+    first_id: str | None = None
+    last_id: str | None = None
+    has_more: bool = False
 
 
 class CreateAgentManagerRequest(BaseModel):

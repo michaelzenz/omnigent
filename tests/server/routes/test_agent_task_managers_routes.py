@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from omnigent.agent_tasks.session_labels import MANAGER_ROLE_VALUE, ROLE_LABEL
-from omnigent.entities import MANAGER_TASK_CAPACITY
+from omnigent.entities import MANAGER_TASK_CAPACITY, MAX_MANAGER_DESCRIPTION_CHARS
 from omnigent.runner.identity import (
     ORCHESTRATION_SOURCE_HEADER,
     RUNNER_TUNNEL_TOKEN_HEADER,
@@ -161,11 +161,18 @@ async def test_only_the_managers_own_session_updates_its_description(
     blank = await auth_client.patch(
         f"{ROUTE}/self", json={"description": " "}, headers={**ALICE, **own_runner}
     )
+    longest, too_long = [
+        await auth_client.patch(
+            f"{ROUTE}/self", json={"description": "x" * length}, headers={**ALICE, **own_runner}
+        )
+        for length in (MAX_MANAGER_DESCRIPTION_CHARS, MAX_MANAGER_DESCRIPTION_CHARS + 1)
+    ]
     updated = await auth_client.patch(f"{ROUTE}/self", json=body, headers={**ALICE, **own_runner})
     listed = (await auth_client.get(ROUTE, headers=ALICE)).json()["data"]
 
     assert [response.status_code for response in refused] == [403, 403, 403]
     assert blank.status_code == 422
+    assert (longest.status_code, too_long.status_code) == (200, 422)
     assert (updated.json()["id"], updated.json()["description"]) == (
         manager["id"],
         body["description"],
@@ -243,6 +250,48 @@ async def test_the_list_leaves_out_full_managers_unless_the_caller_asks(
         full: MANAGER_TASK_CAPACITY,
         with_room: MANAGER_TASK_CAPACITY - 1,
     }
+
+
+async def test_the_list_comes_in_pages_that_skip_full_managers(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    managers = SqlAlchemyManagerStore(db_uri)
+    ids = [
+        managers.create(uuid.uuid4().hex, owner_user_id=ALICE_ID, title=f"manager {index}").id
+        for index in range(4)
+    ]
+    order = [manager.id for manager in managers.list(owner_user_id=ALICE_ID)]
+    tasks = SqlAlchemyTaskStore(db_uri)
+    for index in range(MANAGER_TASK_CAPACITY):
+        tasks.create(
+            uuid.uuid4().hex,
+            owner_user_id=ALICE_ID,
+            title=f"task {index}",
+            goal="Finish it",
+            manager_id=order[1],
+        )
+
+    async def page(**params: object) -> dict[str, Any]:
+        response = await auth_client.get(ROUTE, params=params, headers=ALICE)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    first = await page(limit=2)
+    second = await page(limit=2, after=first["last_id"])
+    every = await page(include_full="true", limit=agent_task_managers.MAX_MANAGER_PAGE_SIZE)
+
+    assert sorted(ids) == sorted(order)
+    assert [entry["id"] for entry in first["data"]] == [order[0], order[2]]
+    assert (first["first_id"], first["last_id"], first["has_more"]) == (order[0], order[2], True)
+    assert [entry["id"] for entry in second["data"]] == [order[3]]
+    assert second["has_more"] is False
+    assert [entry["id"] for entry in every["data"]] == order
+    assert len((await page())["data"]) == 3, "the default page holds every manager here"
+    unknown = await auth_client.get(ROUTE, params={"after": "gone"}, headers=ALICE)
+    assert unknown.status_code == 400
+    for limit in (0, agent_task_managers.MAX_MANAGER_PAGE_SIZE + 1):
+        too = await auth_client.get(ROUTE, params={"limit": limit}, headers=ALICE)
+        assert too.status_code == 422
 
 
 async def test_delete_unassigns_tasks_and_keeps_the_session(
