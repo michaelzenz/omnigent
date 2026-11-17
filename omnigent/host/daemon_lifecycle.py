@@ -61,6 +61,9 @@ class HostDaemonRecord:
         unknown or for records written by older daemons.
     :param org_pin: Immutable routing pin, including ``?o=`` for no selector;
         ``None`` for legacy records without a routing snapshot.
+    :param version: The ``omnigent --version`` line of the build the daemon
+        runs, e.g. ``"omnigent 0.1.0 (010cf77c, built 2026-05-21T14:34:45Z)"``;
+        ``None`` for records written by older daemons.
     """
 
     pid: int
@@ -76,6 +79,7 @@ class HostDaemonRecord:
     # Launch-time routing binding; unlike workspace_id this is not a probe
     # result. None identifies a legacy record without an immutable snapshot.
     org_pin: str | None = None
+    version: str | None = None
 
 
 def normalize_daemon_target(server_url: str | None, *, org_id: str | None = None) -> str:
@@ -401,6 +405,7 @@ def record_from_json(raw: Mapping[str, object]) -> HostDaemonRecord | None:
         config_sig=_text("config_sig"),
         workspace_id=_text("workspace_id"),
         org_pin=_text("org_pin"),
+        version=_text("version"),
     )
 
 

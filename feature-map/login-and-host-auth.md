@@ -49,6 +49,8 @@ be able to write resources without a separate Omnigent account.
   a launch doesn't reuse it; it refuses and names the login and `host stop`
   commands that fix it. Without file locks (Windows), daemons check only each
   other's records, so two that start at the same moment can both connect.
+  A daemon records its build's `omnigent --version` line, and `host status`
+  shows it as `version`.
 - `host-inline-login`: `omnigent host` against a Databricks-fronted server that
   the user is not signed in to runs the login flow first; `--non-interactive`
   fails with the login command instead. States: missing Databricks SDK extra,
@@ -73,7 +75,14 @@ be able to write resources without a separate Omnigent account.
   it into a venv under the app's Omnigent directory on the machine. A machine
   on another build gets that build and a restarted host. A machine without the
   Databricks CLI gets the pinned CLI in that directory's `bin`. The app refuses
-  a server whose build it can't tell before it connects.
+  a server whose build it can't tell before it connects. After an install, the
+  venv's package and its `omnigent --version` must name the server's commit,
+  or the connect stops before sign-in. The started host must report the same
+  `--version` line in `host status`. The app restarts a background host on
+  another build once, then fails. It leaves a foreground host, a service host
+  or a host for another URL running, and names the command that stops it.
+  When `host status` has no `version` field (an older build), the app skips
+  this check.
   Hidden where **Run on Arca** is offered (the managed-features flag on a
   managed server).
 - `embedded-resource-write`: an identity from a custom `AuthProvider` can
@@ -205,8 +214,12 @@ Never run these commands against the real `~/.omnigent` or `~/.databrickscfg`.
   serves this web build. A real Databricks sign-in needs a real remote machine
   and workspace. The server's build: `web/electron/test/ssh_connect.test.js`
   ("remote plans" and "runSshConnect with the server's build") covers the
-  plan, the build report and the install scripts; `web/electron/test/main.test.js`
-  ("SSH connect IPC") covers the plan from the server's `/v1/info`.
+  plan, the build report, the install scripts, the check after the install
+  and the host's build; `web/electron/test/main.test.js` ("SSH connect IPC")
+  covers the plan from the server's `/v1/info`. The host's recorded build:
+  `tests/host/test_daemon_lifecycle.py` (`test_record_keeps_the_daemon_build`
+  and `test_daemon_entry_keys_by_workspace_but_connects_to_the_bare_url`) and
+  `tests/host/test_cli_host.py::test_host_status_names_the_build_the_daemon_runs`.
 - **`databricks-credential-kind`:** needs a real workspace and one test
   profile of each kind. No e2e covers the host daemon against a real workspace.
 - **`host-lifecycle`:** run `omnigent host --help` and the management commands

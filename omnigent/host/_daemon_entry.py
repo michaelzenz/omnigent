@@ -84,6 +84,7 @@ def main() -> None:
         write_daemon_record,
     )
     from omnigent.util.server_url import is_workspace_hosted_url
+    from omnigent.version import version_line
 
     workspace_hosted = not args.local and is_workspace_hosted_url(args.server)
     if workspace_hosted:
@@ -131,6 +132,7 @@ def main() -> None:
             config_sig=os.environ.get(DAEMON_CONFIG_SIG_ENV_VAR),
             workspace_id=workspace_id,
             org_pin=os.environ.get(PINNED_DATABRICKS_ORG_ENV_VAR) if workspace_hosted else None,
+            version=version_line(),
         )
         write_daemon_record(record, update_legacy_pidfile=True)
 

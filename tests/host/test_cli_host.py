@@ -1369,6 +1369,27 @@ def test_host_status_reports_recycled_pid_daemon_offline(
     assert _base_daemon_status_payload(record)["process"] == "offline"
 
 
+def test_host_status_names_the_build_the_daemon_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Status shows the build line the daemon recorded, so a caller can compare builds."""
+    from omnigent.cli import _base_daemon_status_payload, _HostDaemonRecord
+
+    monkeypatch.setattr("omnigent.cli._pid_is_recorded_daemon", lambda record: True)
+    record = _HostDaemonRecord(
+        pid=724,
+        target="https://omnigent.example.com",
+        mode="server",
+        server_url="https://omnigent.example.com",
+        log_path=None,
+        started_at=1_787_152_783,
+        host_id="host_abc",
+        version="omnigent 0.1.0 (010cf77c, built 2026-05-21T14:34:45Z)",
+    )
+
+    assert _base_daemon_status_payload(record)["version"] == record.version
+
+
 def test_host_background_signs_in_before_spawning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

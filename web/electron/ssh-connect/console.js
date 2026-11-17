@@ -93,6 +93,7 @@ const STATUS_TEXT = {
   "checking-build": () => `Checking the Omnigent build on ${destination}...`,
   updating: () =>
     `Updating Omnigent on ${destination} to the server's build. This can take a few minutes.`,
+  "verifying-build": () => `Checking the new Omnigent build on ${destination}...`,
   "installing-cli": () => `Installing the Databricks CLI on ${destination}...`,
   "restarting-host": () => `Restarting the Omnigent host on ${destination} on the new build...`,
   "signing-in": () => `Signing in to the server on ${destination}...`,

@@ -1706,33 +1706,12 @@ def _validate_agent_policy_functions(  # type: ignore[explicit-any]  # spec type
 def _format_version() -> str:
     """Render the version line shown by ``--version`` and ``version``.
 
-    Always includes the package version. When the build hook in
-    ``setup.py`` wrote ``omnigent/_build_info.py``, the line is
-    additionally annotated with the short commit SHA and the build
-    time in ISO-8601 UTC. For source checkouts that have never
-    been built, only the bare version prints — matching the
-    behavior before this feature shipped.
-
-    :returns: Either ``"omnigent 0.1.0"`` (no build info), or
+    :returns: The line from :func:`omnigent.version.version_line`, e.g.
         ``"omnigent 0.1.0 (010cf77c, built 2026-05-21T14:34:45Z)"``.
     """
-    import datetime
+    from omnigent.version import version_line
 
-    from omnigent.update_check import _read_build_info
-    from omnigent.version import VERSION
-
-    version_str = VERSION
-    info = _read_build_info()
-    if info is None:
-        return f"omnigent {version_str}"
-    epoch, sha = info
-    when = datetime.datetime.fromtimestamp(epoch, tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    if sha:
-        # Short SHA (first 8 chars) — enough to disambiguate in bug
-        # reports without making the line unwieldy.
-        return f"omnigent {version_str} ({sha[:8]}, built {when})"
-    # _build_info exists but has no SHA (built without git available).
-    return f"omnigent {version_str} (built {when})"
+    return version_line()
 
 
 def _print_version_callback(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
@@ -3481,6 +3460,7 @@ def _foreground_daemon_record(
         resolved_server_url=server_url.rstrip("/") if mode == "local" else None,
         config_sig=server_config_signature(include_features=mode == "local"),
         org_pin=_host_databricks_org_pin(server_url) if mode == "server" else None,
+        version=_format_version(),
     )
 
 
@@ -10600,6 +10580,7 @@ def _base_daemon_status_payload(record: _HostDaemonRecord) -> _HostPayload:
         "pid": record.pid,
         "process": "online" if _pid_is_recorded_daemon(record) else "offline",
         "log_path": record.log_path,
+        "version": record.version,
         "host_id": host_id,
         "host_status": None,
         "sessions": [],
@@ -11056,6 +11037,8 @@ def _echo_daemon_payloads(payloads: list[_HostPayload]) -> None:
         )
         console.print(f"  server={_host_linked(server_text, target=server_link)}")
         console.print(f"  host_id={_host_markup(payload.get('host_id'))}")
+        if payload.get("version"):
+            console.print(f"  version={_host_markup(payload.get('version'))}")
         if payload.get("log_path"):
             log_text = _host_shorten(
                 payload.get("log_path"),

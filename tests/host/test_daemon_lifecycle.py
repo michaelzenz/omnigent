@@ -25,7 +25,9 @@ from omnigent.host.daemon_lifecycle import (
     find_same_workspace_daemon,
     normalize_daemon_target,
     probe_workspace_id,
+    read_daemon_record,
     record_flock_is_held,
+    record_from_json,
     write_daemon_record,
 )
 from omnigent.host.identity import HostIdentity
@@ -169,6 +171,27 @@ def test_record_path_uses_digest(tmp_path: Path) -> None:
     # Same target → same path (stable digest); different target → different.
     assert daemon_record_path("local", base_dir=tmp_path) == record
     assert daemon_record_path("https://x.example.com", base_dir=tmp_path) != record
+
+
+def test_record_keeps_the_daemon_build(tmp_path: Path) -> None:
+    record = HostDaemonRecord(
+        pid=4242,
+        target="local",
+        mode="local",
+        server_url=None,
+        log_path=None,
+        started_at=1_781_200_000,
+        version="omnigent 0.1.0 (010cf77c, built 2026-05-21T14:34:45Z)",
+    )
+    write_daemon_record(record, base_dir=tmp_path)
+    path = daemon_record_path("local", base_dir=tmp_path)
+
+    assert read_daemon_record(path) == record
+    older = json.loads(path.read_text())
+    del older["version"]
+    parsed = record_from_json(older)
+    assert parsed is not None
+    assert parsed.version is None
 
 
 def test_acquire_flocks_the_record_and_preserves_content(tmp_path: Path) -> None:
@@ -1190,7 +1213,10 @@ def test_probe_workspace_id_gives_up_at_its_deadline(monkeypatch: pytest.MonkeyP
 def test_daemon_entry_keys_by_workspace_but_connects_to_the_bare_url(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The background daemon's record key carries ``?o=``; its server URL does not."""
+    """The background daemon's record key carries ``?o=``; its server URL does not.
+
+    The record also names the build the daemon runs.
+    """
     import omnigent.host.connect as connect
     import omnigent.host.crash_reporting as crash_reporting
     import omnigent.host.daemon_lifecycle as daemon_lifecycle
@@ -1239,3 +1265,6 @@ def test_daemon_entry_keys_by_workspace_but_connects_to_the_bare_url(
     assert record.server_url == server
     assert seen["daemon_target"] == record.target
     assert seen["server_url"] == server
+    from omnigent.version import version_line
+
+    assert record.version == version_line()

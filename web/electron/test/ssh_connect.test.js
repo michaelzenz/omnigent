@@ -65,7 +65,7 @@ const tick = () =>
 const HOST_ID = "a".repeat(32);
 const authorizeLink = (port) =>
   `https://example.cloud.databricks.com/oidc/v1/authorize?client_id=databricks-cli&redirect_uri=http%3A%2F%2Flocalhost%3A${port}&state=s1`;
-const statusOutput = (serverUrl = SERVER) =>
+const statusOutput = (serverUrl = SERVER, daemon = {}) =>
   `\n${IDENTITY_START}\n${JSON.stringify({
     daemons: [
       {
@@ -76,6 +76,7 @@ const statusOutput = (serverUrl = SERVER) =>
         target: serverUrl,
         server_url: serverUrl,
         host_id: HOST_ID,
+        ...daemon,
       },
     ],
   })}\n${IDENTITY_END}\n`;
@@ -163,13 +164,16 @@ describe("remote plans", () => {
 
   it("read a machine's build from its report, whatever its login shell prints first", () => {
     const fullCommit = `${COMMIT}${"0".repeat(30)}`;
+    const binary = `omnigent 0.22.0.dev0 (${COMMIT.slice(0, 8)}, built 2026-11-16T10:00:00Z)`;
     const report = parseBuildReport(
-      `Welcome!\nOMNIGENT_REMOTE_BUILD cli=yes version=0.22.0.dev0 commit=${fullCommit}\n`,
+      `Welcome!\nOMNIGENT_REMOTE_BUILD cli=yes version=0.22.0.dev0 commit=${fullCommit}\nOMNIGENT_REMOTE_BINARY ${binary}\n`,
     );
+    const installed = (fields) => ({ ...report.installed, ...fields });
+    const release = serverBuild("0.22.0", FORK);
 
     assert.deepEqual(report, {
       cli: true,
-      installed: { version: "0.22.0.dev0", commit: fullCommit },
+      installed: { version: "0.22.0.dev0", commit: fullCommit, binary },
     });
     assert.deepEqual(parseBuildReport("OMNIGENT_REMOTE_BUILD cli=no\n"), {
       cli: false,
@@ -177,13 +181,29 @@ describe("remote plans", () => {
     });
     assert.equal(buildMatches(BUILD_PLAN.build, report.installed), true);
     assert.equal(
-      buildMatches(BUILD_PLAN.build, { version: "0.22.0.dev0", commit: "0123456" }),
+      buildMatches(
+        BUILD_PLAN.build,
+        installed({ binary: "omnigent 0.22.0.dev0 (built 2026-11-16T10:00:00Z)" }),
+      ),
+      true,
+    );
+    assert.equal(buildMatches(BUILD_PLAN.build, installed({ commit: "0123456" })), false);
+    assert.equal(
+      buildMatches(
+        BUILD_PLAN.build,
+        installed({ binary: "omnigent 0.22.0.dev0 (01234567, built 2026-11-16T10:00:00Z)" }),
+      ),
       false,
     );
+    assert.equal(buildMatches(BUILD_PLAN.build, installed({ binary: "" })), false);
     assert.equal(buildMatches(BUILD_PLAN.build, null), false);
     assert.equal(
-      buildMatches(serverBuild("0.22.0", FORK), { version: "0.22.0", commit: "" }),
+      buildMatches(release, { version: "0.22.0", commit: "", binary: "omnigent 0.22.0" }),
       true,
+    );
+    assert.equal(
+      buildMatches(release, { version: "0.22.0", commit: "", binary: "omnigent 0.21.0" }),
+      false,
     );
   });
 
@@ -232,18 +252,59 @@ describe("remote plans", () => {
 });
 
 describe("buildReportScript on a real shell", () => {
-  it("reports no build and no Databricks CLI on a bare machine", (t) => {
+  /** A home directory whose ~/.omnigent-pmv2/venv/bin holds the given fake scripts. */
+  function fakeHome(t, scripts = {}) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "ssh-build-report-test-"));
     t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+    const bin = path.join(home, ".omnigent-pmv2", "venv", "bin");
+    fs.mkdirSync(bin, { recursive: true });
+    for (const [name, body] of Object.entries(scripts)) {
+      fs.writeFileSync(path.join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    }
+    return home;
+  }
+  const runReport = (home) =>
+    require("node:child_process").spawnSync("/bin/sh", ["-c", buildReportScript(BUILD_PLAN)], {
+      env: { PATH: "/usr/bin:/bin", HOME: home },
+      encoding: "utf8",
+    });
+  const PACKAGE = `echo "OMNIGENT_REMOTE_BUILD cli=$2 version=0.22.0.dev0 commit=${COMMIT}"`;
 
-    const result = require("node:child_process").spawnSync(
-      "/bin/sh",
-      ["-c", buildReportScript(BUILD_PLAN)],
-      { env: { PATH: "/usr/bin:/bin", HOME: home }, encoding: "utf8" },
-    );
+  it("reports no build and no Databricks CLI on a bare machine", (t) => {
+    const result = runReport(fakeHome(t));
 
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(parseBuildReport(result.stdout), { cli: false, installed: null });
+  });
+
+  it("runs the venv's omnigent with the app's directories, and keeps its version line", (t) => {
+    const home = fakeHome(t, {
+      python: PACKAGE,
+      omnigent: [
+        "echo warming up >&2",
+        '[ "$OMNIGENT_DATA_DIR" = "$HOME/.omnigent-pmv2" ] || exit 1',
+        "echo 'omnigent 0.22.0.dev0 (c7e736d7, built 2026-11-16T10:00:00Z)'",
+      ].join("\n"),
+    });
+
+    const result = runReport(home);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(parseBuildReport(result.stdout).installed, {
+      version: "0.22.0.dev0",
+      commit: COMMIT,
+      binary: "omnigent 0.22.0.dev0 (c7e736d7, built 2026-11-16T10:00:00Z)",
+    });
+  });
+
+  it("fails when the venv's Python fails, and names a failing omnigent's error", (t) => {
+    assert.equal(runReport(fakeHome(t, { python: "exit 3" })).status, 3);
+
+    const home = fakeHome(t, { python: PACKAGE, omnigent: "echo 'Error: boom' >&2; exit 1" });
+    const result = runReport(home);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(parseBuildReport(result.stdout).installed.binary, "Error: boom");
   });
 });
 
@@ -471,15 +532,19 @@ describe("describeSshFailure", () => {
 });
 
 /** Scripted stand-in for createSshSession that records every call in order. */
+/** A fake SSH session; `hosts` and `reports` give one result per run, and the last one repeats. */
 function fakeSession({
   logins,
   host = { code: 0, stdout: statusOutput(), stderr: "" },
+  hosts = [host],
   install,
-  report = "",
+  reports = [""],
 }) {
   const calls = [];
   const scripts = [];
   let loginRuns = 0;
+  let reportRuns = 0;
+  let hostRuns = 0;
   const control = (name) => async (port) => {
     calls.push(`${name} ${port}`);
     return { code: 0, stderr: "" };
@@ -512,7 +577,9 @@ function fakeSession({
       };
       if (script.includes("OMNIGENT_REMOTE_BUILD")) {
         calls.push("exec report");
-        finish({ code: 0, stdout: report, stderr: "", timedOut: false });
+        const stdout = reports[Math.min(reportRuns, reports.length - 1)];
+        reportRuns += 1;
+        finish({ code: 0, stdout, stderr: "", timedOut: false });
       } else if (script.includes("databricks_cli_")) {
         calls.push("exec cli");
         finish({ code: 0, stdout: "", stderr: "", timedOut: false });
@@ -534,7 +601,9 @@ function fakeSession({
         })();
       } else if (/omnigent"? host/.test(script)) {
         calls.push("exec host");
-        finish({ ...host, timedOut: false });
+        const result = hosts[Math.min(hostRuns, hosts.length - 1)];
+        hostRuns += 1;
+        finish({ ...result, timedOut: false });
       } else {
         calls.push(`exec install stdin=${opts.stdin}`);
         finish({
@@ -881,11 +950,34 @@ describe("runSshConnect", () => {
 
 describe("runSshConnect with the server's build", () => {
   const VENV_OMNIGENT = '"$HOME/.omnigent-pmv2/venv/bin/omnigent"';
-  const report = (fields) => `OMNIGENT_REMOTE_BUILD ${fields}\n`;
+  const SERVER_COMMIT = `${COMMIT}${"a".repeat(30)}`;
+  const OTHER_COMMIT = "0123456789abcdef0123456789abcdef01234567";
+  /** What `omnigent --version` prints for a dev build of `commit`. */
+  const binaryLine = (commit) =>
+    `omnigent 0.22.0.dev0 (${commit.slice(0, 8)}, built 2026-11-16T10:00:00Z)`;
+  /** A machine's build report: no build when `commit` is null, else a dev build of `commit`. */
+  const report = (cli, commit = null) =>
+    commit === null
+      ? `OMNIGENT_REMOTE_BUILD cli=${cli}\n`
+      : `OMNIGENT_REMOTE_BUILD cli=${cli} version=0.22.0.dev0 commit=${commit}\n` +
+        `OMNIGENT_REMOTE_BINARY ${binaryLine(commit)}\n`;
+  /** A started background host whose record names a dev build of `commit`. */
+  const hostOn = (commit, daemon = {}) => ({
+    code: 0,
+    stdout: statusOutput(SERVER, {
+      version: binaryLine(commit),
+      log_path: "/home/pat/.omnigent-pmv2/logs/host.log",
+      ...daemon,
+    }),
+    stderr: "",
+  });
   const execs = (session) => session.calls.filter((call) => call.startsWith("exec"));
 
-  it("asks, installs the server's build, then signs in and starts the host with it", async () => {
-    const session = fakeSession({ logins: [{ lines: [], code: 0 }], report: report("cli=yes") });
+  it("asks, installs the server's build, checks it, then signs in and starts the host with it", async () => {
+    const session = fakeSession({
+      logins: [{ lines: [], code: 0 }],
+      reports: [report("yes"), report("yes", SERVER_COMMIT)],
+    });
     const questions = [];
     const { ctx, statuses } = connectContext(session, {
       plan: BUILD_PLAN,
@@ -899,6 +991,7 @@ describe("runSshConnect with the server's build", () => {
     assert.deepEqual(execs(session), [
       "exec report",
       "exec install stdin=undefined",
+      "exec report",
       "exec login",
       "exec host",
     ]);
@@ -906,13 +999,14 @@ describe("runSshConnect with the server's build", () => {
       "connecting",
       "checking-build",
       "installing",
+      "verifying-build",
       "signing-in",
       "starting-host",
     ]);
     assert.deepEqual(questions, [
       `Omnigent isn't installed in ~/.omnigent-pmv2 on my-ec2. Install the server's build there now (omnigent[databricks] @ git+${FORK}@${COMMIT})? This uses uv and leaves any other Omnigent install there alone.`,
     ]);
-    const [, install, login, host] = session.scripts;
+    const [, install, , login, host] = session.scripts;
     assert.ok(install.includes(`"omnigent[databricks] @ git+${FORK}@${COMMIT}"`), install);
     assert.ok(
       login.includes(
@@ -926,7 +1020,7 @@ describe("runSshConnect with the server's build", () => {
   it("updates a machine on another build, adds the Databricks CLI, and restarts its host", async () => {
     const session = fakeSession({
       logins: [{ lines: [], code: 0 }],
-      report: report("cli=no version=0.22.0.dev0 commit=0123456789"),
+      reports: [report("no", OTHER_COMMIT), report("no", SERVER_COMMIT)],
     });
     let asked = false;
     const { ctx, statuses } = connectContext(session, {
@@ -943,6 +1037,7 @@ describe("runSshConnect with the server's build", () => {
     assert.deepEqual(execs(session), [
       "exec report",
       "exec install stdin=undefined",
+      "exec report",
       "exec cli",
       "exec login",
       "exec host",
@@ -954,13 +1049,102 @@ describe("runSshConnect with the server's build", () => {
   it("leaves a machine on the server's build as it is", async () => {
     const session = fakeSession({
       logins: [{ lines: [], code: 0 }],
-      report: report(`cli=yes version=0.22.0.dev0 commit=${COMMIT}${"a".repeat(30)}`),
+      reports: [report("yes", SERVER_COMMIT)],
     });
     const { ctx } = connectContext(session, { plan: BUILD_PLAN });
 
     assert.equal((await runSshConnect(ctx)).ok, true);
     assert.deepEqual(execs(session), ["exec report", "exec login", "exec host"]);
     assert.ok(!session.scripts.at(-1).includes("host stop"));
+  });
+
+  it("stops before sign-in when the install leaves another build", async () => {
+    const session = fakeSession({
+      logins: [{ lines: [], code: 0 }],
+      reports: [report("yes"), report("yes", OTHER_COMMIT)],
+    });
+    const { ctx } = connectContext(session, { plan: BUILD_PLAN });
+
+    const result = await runSshConnect(ctx);
+
+    assert.equal(result.ok, false);
+    assert.equal(
+      result.error,
+      `Installed omnigent[databricks] @ git+${FORK}@${COMMIT} on my-ec2, but ~/.omnigent-pmv2/venv has 0.22.0.dev0 from commit ${OTHER_COMMIT}, and "omnigent --version" prints "omnigent 0.22.0.dev0 (01234567, built 2026-11-16T10:00:00Z)".`,
+    );
+    assert.deepEqual(execs(session), [
+      "exec report",
+      "exec install stdin=undefined",
+      "exec report",
+    ]);
+  });
+
+  it("keeps a host that runs the installed build", async () => {
+    const session = fakeSession({
+      logins: [{ lines: [], code: 0 }],
+      reports: [report("yes", SERVER_COMMIT)],
+      hosts: [hostOn(SERVER_COMMIT)],
+    });
+    const { ctx } = connectContext(session, { plan: BUILD_PLAN });
+
+    const result = await runSshConnect(ctx);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.identity.hostId, HOST_ID);
+    assert.deepEqual(execs(session), ["exec report", "exec login", "exec host"]);
+  });
+
+  it("restarts a host that runs another build once, then keeps the new one", async () => {
+    const session = fakeSession({
+      logins: [{ lines: [], code: 0 }],
+      reports: [report("yes", SERVER_COMMIT)],
+      hosts: [hostOn(OTHER_COMMIT), hostOn(SERVER_COMMIT)],
+    });
+    const { ctx, statuses } = connectContext(session, { plan: BUILD_PLAN });
+
+    const result = await runSshConnect(ctx);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.identity.hostId, HOST_ID);
+    assert.deepEqual(execs(session), ["exec report", "exec login", "exec host", "exec host"]);
+    assert.deepEqual(statuses.slice(-2), ["starting-host", "restarting-host"]);
+    assert.ok(session.scripts.at(-1).includes(`host stop --server "${SERVER}"`));
+  });
+
+  it("leaves a foreground host on another build running, and says how to stop it", async () => {
+    const session = fakeSession({
+      logins: [{ lines: [], code: 0 }],
+      reports: [report("yes", SERVER_COMMIT)],
+      hosts: [hostOn(OTHER_COMMIT, { log_path: null })],
+    });
+    const { ctx } = connectContext(session, { plan: BUILD_PLAN });
+
+    const result = await runSshConnect(ctx);
+
+    assert.equal(result.ok, false);
+    assert.equal(
+      result.error,
+      `The Omnigent host on my-ec2 runs "${binaryLine(OTHER_COMMIT)}", not the installed "${binaryLine(SERVER_COMMIT)}". The app doesn't restart a foreground host, a service host, or a host for another URL. Stop it with "OMNIGENT_DATA_DIR=~/.omnigent-pmv2 ~/.omnigent-pmv2/venv/bin/omnigent host stop --server '${SERVER}'" (or "host disable" for a service), then connect again.`,
+    );
+    assert.deepEqual(execs(session), ["exec report", "exec login", "exec host"]);
+  });
+
+  it("fails when the host still runs another build after the restart", async () => {
+    const session = fakeSession({
+      logins: [{ lines: [], code: 0 }],
+      reports: [report("yes", SERVER_COMMIT)],
+      hosts: [hostOn(OTHER_COMMIT)],
+    });
+    const { ctx } = connectContext(session, { plan: BUILD_PLAN });
+
+    const result = await runSshConnect(ctx);
+
+    assert.equal(result.ok, false);
+    assert.equal(
+      result.error,
+      `The Omnigent host on my-ec2 runs "${binaryLine(OTHER_COMMIT)}" after a restart, not the installed "${binaryLine(SERVER_COMMIT)}".`,
+    );
+    assert.deepEqual(execs(session), ["exec report", "exec login", "exec host", "exec host"]);
   });
 });
 

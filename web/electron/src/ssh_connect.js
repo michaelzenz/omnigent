@@ -75,6 +75,10 @@ const DEFAULT_OMNIGENT_DIR = ".omnigent";
 
 /** Marks the remote build report among other output, e.g. a login shell's banner. */
 const BUILD_REPORT_MARK = "OMNIGENT_REMOTE_BUILD";
+/** Marks the line that the venv's `omnigent --version` prints in the build report. */
+const BINARY_REPORT_MARK = "OMNIGENT_REMOTE_BINARY";
+/** `omnigent --version`, e.g. "omnigent 0.22.0.dev0 (c7e736d7, built 2026-11-16T10:00:00Z)". */
+const VERSION_LINE_RE = /^omnigent (\S+)(?: \((?:([0-9a-f]{7,40}), )?built [^)]*\))?$/;
 
 /**
  * How the remote machine gets and runs Omnigent: the app's own data and config
@@ -307,7 +311,7 @@ function hostScript(serverUrl, launch = DEFAULT_LAUNCH, { restart = false } = {}
   const omnigent = `${launch.env}${launch.command}`;
   return [
     REMOTE_PATH,
-    ...(restart ? [`${omnigent} host stop --server "${serverUrl}" >/dev/null 2>&1 || true`] : []),
+    ...(restart ? [`${omnigent} host stop --server "${serverUrl}" || true`] : []),
     `${omnigent} host --server "${serverUrl}" --background --non-interactive && { echo; echo ${IDENTITY_START}; ${omnigent} host status --server "${serverUrl}" --json; echo; echo ${IDENTITY_END}; }`,
   ].join("; ");
 }
@@ -324,12 +328,18 @@ function installScript() {
 /**
  * Report the Omnigent build in the plan's virtual environment, and whether the
  * machine has a Databricks CLI, on one line after {@link BUILD_REPORT_MARK}.
+ * The line after {@link BINARY_REPORT_MARK} is what the venv's `omnigent`
+ * command prints for `--version`, or its last line of output when it fails.
+ * The command runs with the app's directories, as the app runs it: without a
+ * data directory, any omnigent command can move a legacy state directory to
+ * `~/.omnigent`.
  *
  * @param {RemotePlan} plan With a build.
  * @returns {string}
  */
 function buildReportScript(plan) {
   const dir = omnigentDir(plan);
+  const launch = remoteLaunch(plan);
   return [
     `if ( PATH="$HOME/${dir}/bin:$HOME/.local/bin:$PATH"; command -v databricks >/dev/null 2>&1 ); then cli=yes; else cli=no; fi`,
     `python="$HOME/${dir}/venv/bin/python"`,
@@ -337,7 +347,7 @@ function buildReportScript(plan) {
     `echo "${BUILD_REPORT_MARK} cli=$cli"`,
     "exit 0",
     "fi",
-    `"$python" - "$cli" <<"PY"`,
+    `"$python" - "$cli" <<"PY" || exit $?`,
     "import importlib.metadata as metadata",
     "import json",
     "import sys",
@@ -350,38 +360,81 @@ function buildReportScript(plan) {
     'commit = (source.get("vcs_info") or {}).get("commit_id", "")',
     `print("${BUILD_REPORT_MARK}", "cli=" + sys.argv[1], "version=" + dist.version, "commit=" + commit)`,
     "PY",
+    `out=$(${launch.env}${launch.command} --version 2>&1)`,
+    'line=$(echo "$out" | grep "^omnigent " | head -n 1)',
+    '[ -n "$line" ] || line=$(echo "$out" | tail -n 1)',
+    `echo "${BINARY_REPORT_MARK} $line"`,
   ].join("\n");
 }
 
 /**
+ * @typedef {{ version: string, commit: string, binary: string }} InstalledBuild
+ *   The package's version, the commit that uv installed it from ("" for an
+ *   index install), and the line that its `omnigent` command prints for
+ *   `--version` ("" when the command fails).
+ */
+
+/**
  * @param {string} output The output of {@link buildReportScript}.
- * @returns {{ cli: boolean, installed: { version: string, commit: string } | null }}
+ * @returns {{ cli: boolean, installed: InstalledBuild | null }}
  */
 function parseBuildReport(output) {
-  const line = output
-    .split(/\r?\n/)
-    .findLast((candidate) => candidate.startsWith(`${BUILD_REPORT_MARK} `));
+  const lines = output.split(/\r?\n/);
+  const markedLine = (mark) =>
+    lines.findLast((candidate) => candidate === mark || candidate.startsWith(`${mark} `));
   const fields = Object.fromEntries(
-    (line ?? "")
+    (markedLine(BUILD_REPORT_MARK) ?? "")
       .split(/\s+/)
       .slice(1)
       .map((field) => field.split("=", 2)),
   );
+  const binary = (markedLine(BINARY_REPORT_MARK) ?? "").slice(BINARY_REPORT_MARK.length).trim();
   return {
     cli: fields.cli === "yes",
-    installed: fields.version ? { version: fields.version, commit: fields.commit ?? "" } : null,
+    installed: fields.version
+      ? { version: fields.version, commit: fields.commit ?? "", binary }
+      : null,
   };
+}
+
+/** Whether two commit hashes, of any length from 7, name the same commit. */
+function sameCommit(left, right) {
+  return (
+    left.length >= 7 && right.length >= 7 && (left.startsWith(right) || right.startsWith(left))
+  );
 }
 
 /**
  * @param {ServerBuild} build
- * @param {{ version: string, commit: string } | null} installed
- * @returns {boolean} Whether the remote machine runs `build` already.
+ * @param {InstalledBuild | null} installed
+ * @returns {boolean} Whether the remote machine runs `build` already: uv
+ *   installed it, and the venv's `omnigent` command runs and names it.
  */
 function buildMatches(build, installed) {
-  if (installed === null) return false;
-  if (build.commit !== null) return installed.commit.startsWith(build.commit);
-  return installed.commit === "" && installed.version === build.version;
+  const binary = VERSION_LINE_RE.exec(installed?.binary ?? "");
+  if (installed === null || binary === null) return false;
+  const [, binaryVersion, binaryCommit] = binary;
+  if (build.commit !== null) {
+    return (
+      sameCommit(installed.commit, build.commit) &&
+      (binaryCommit === undefined || sameCommit(binaryCommit, build.commit))
+    );
+  }
+  return (
+    installed.commit === "" &&
+    installed.version === build.version &&
+    binaryVersion === build.version
+  );
+}
+
+/**
+ * @param {InstalledBuild | null} installed
+ * @returns {string} e.g. `0.22.0.dev0 from commit c7e736d7b1…, and "omnigent --version" prints "…"`.
+ */
+function describeInstalled(installed) {
+  if (installed === null) return "no Omnigent package";
+  const binary = installed.binary ? `prints "${installed.binary}"` : "fails";
+  return `${installed.version} from commit ${installed.commit || "none"}, and "omnigent --version" ${binary}`;
 }
 
 /**
@@ -1088,20 +1141,22 @@ function remoteFailure(result, what, destination) {
 
 /**
  * Make the remote machine run the plan's build: install it, or reinstall it
- * when the machine runs another one, then add the pinned Databricks CLI when
- * the machine has none.
+ * when the machine runs another one, and check the result again. Then add
+ * the pinned Databricks CLI when the machine has none.
  *
  * @param {Parameters<typeof runSshConnect>[0] & { plan: RemotePlan, isCanceled: () => boolean }} ctx
- * @returns {Promise<{ ok: true, reinstalled: boolean } | { ok: false, error: string, canceled?: boolean }>}
+ * @returns {Promise<{ ok: true, reinstalled: boolean, binary: string } | { ok: false, error: string, canceled?: boolean }>}
+ *   `binary` is the line that the venv's `omnigent --version` prints.
  */
 async function ensureServerBuild(ctx) {
   const { session, destination, plan, onStatus, onOutput } = ctx;
   const timeoutMs = ctx.timeouts?.install ?? INSTALL_TIMEOUT_MS;
   onStatus({ step: "checking-build" });
-  const report = await session.exec(buildReportScript(plan)).promise;
+  const report = await session.exec(buildReportScript(plan), { timeoutMs }).promise;
   if (report.code !== 0) return remoteFailure(report, "Checking the Omnigent build", destination);
   const { cli, installed } = parseBuildReport(report.stdout);
   let reinstalled = false;
+  let binary = installed?.binary ?? "";
   if (!buildMatches(plan.build, installed)) {
     const updating = installed !== null;
     if (!updating && !(await ctx.askInstall(installQuestion(destination, plan)))) {
@@ -1115,6 +1170,18 @@ async function ensureServerBuild(ctx) {
       onStderr: onOutput,
     }).promise;
     if (install.code !== 0) return remoteFailure(install, "Installing Omnigent", destination);
+    onStatus({ step: "verifying-build" });
+    const check = await session.exec(buildReportScript(plan), { timeoutMs }).promise;
+    if (check.code !== 0)
+      return remoteFailure(check, "Checking the new Omnigent build", destination);
+    const newBuild = parseBuildReport(check.stdout).installed;
+    if (!buildMatches(plan.build, newBuild)) {
+      return {
+        ok: false,
+        error: `Installed ${plan.build.spec} on ${destination}, but ~/${omnigentDir(plan)}/venv has ${describeInstalled(newBuild)}.`,
+      };
+    }
+    binary = newBuild.binary;
     reinstalled = updating;
   }
   if (!cli) {
@@ -1135,13 +1202,102 @@ async function ensureServerBuild(ctx) {
     if (result.code !== 0)
       return remoteFailure(result, "Installing the Databricks CLI", destination);
   }
-  return { ok: true, reinstalled };
+  return { ok: true, reinstalled, binary };
+}
+
+/**
+ * The started host's recorded build, from the `host status --json` block that
+ * {@link hostScript} prints.
+ *
+ * @param {string} output The host script's output.
+ * @returns {{ version: string | null, restartable: boolean } | undefined}
+ *   Undefined when the status has no `version` field, as from a build that
+ *   predates it. `version` is null when the host recorded no build.
+ *   `restartable` is true only for a background daemon on the requested URL:
+ *   the app doesn't stop a foreground or service host, or one for another URL.
+ */
+function runningHost(output) {
+  const start = output.lastIndexOf(IDENTITY_START);
+  const end = output.indexOf(IDENTITY_END, start);
+  if (start < 0 || end < 0) return undefined;
+  try {
+    const { daemons } = JSON.parse(output.slice(start + IDENTITY_START.length, end));
+    if (!Array.isArray(daemons) || daemons.length !== 1 || !("version" in daemons[0])) {
+      return undefined;
+    }
+    const [daemon] = daemons;
+    return {
+      version: typeof daemon.version === "string" ? daemon.version : null,
+      restartable: typeof daemon.log_path === "string" && daemon.same_workspace_as == null,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** @param {string | null} version */
+function describeHostBuild(version) {
+  return version ? `"${version}"` : "a build it doesn't name";
+}
+
+/**
+ * @param {{ code: number | null, stdout: string, stderr: string, timedOut: boolean }} result
+ * @param {string} destination
+ * @returns {{ ok: false, error: string }}
+ */
+function hostStartFailure(result, destination) {
+  const detail = failureDetail(result.stderr || result.stdout);
+  return {
+    ok: false,
+    error: result.timedOut
+      ? `Starting the Omnigent host on ${destination} timed out.`
+      : `Starting the Omnigent host on ${destination} failed: ${detail || `exit code ${result.code}`}`,
+  };
+}
+
+/**
+ * Make the started host run the installed build: restart a background daemon
+ * once when the build it recorded differs from `binary`.
+ *
+ * @param {Parameters<typeof runSshConnect>[0] & { plan: RemotePlan, isCanceled: () => boolean }} ctx
+ * @param {{ command: string, env: string }} launch
+ * @param {{ code: number | null, stdout: string, stderr: string, timedOut: boolean }} host
+ *   The host script's result.
+ * @param {string} binary What the venv's `omnigent --version` prints.
+ * @returns {Promise<{ ok: true, host: typeof host } | { ok: false, error: string, canceled?: boolean }>}
+ *   `host` is the result of the last host script.
+ */
+async function ensureHostBuild(ctx, launch, host, binary) {
+  const { destination, serverUrl } = ctx;
+  const running = runningHost(host.stdout);
+  if (running === undefined || running.version === binary) return { ok: true, host };
+  if (!running.restartable) {
+    return {
+      ok: false,
+      error: `The Omnigent host on ${destination} runs ${describeHostBuild(running.version)}, not the installed "${binary}". The app doesn't restart a foreground host, a service host, or a host for another URL. Stop it with "${shownLaunch(ctx.plan)}host stop --server '${serverUrl}'" (or "host disable" for a service), then connect again.`,
+    };
+  }
+  if (ctx.isCanceled()) return canceledResult();
+  ctx.onStatus({ step: "restarting-host" });
+  const restarted = await ctx.session.exec(hostScript(serverUrl, launch, { restart: true }), {
+    timeoutMs: ctx.timeouts?.host ?? HOST_TIMEOUT_MS,
+    onStdout: ctx.onOutput,
+    onStderr: ctx.onOutput,
+  }).promise;
+  if (ctx.isCanceled()) return canceledResult();
+  if (restarted.code !== 0) return hostStartFailure(restarted, destination);
+  const after = runningHost(restarted.stdout);
+  if (after === undefined || after.version === binary) return { ok: true, host: restarted };
+  return {
+    ok: false,
+    error: `The Omnigent host on ${destination} runs ${describeHostBuild(after.version)} after a restart, not the installed "${binary}".`,
+  };
 }
 
 /**
  * The whole connect: with a server build in the plan, make the remote machine
  * run it; sign in (installing omnigent first if the user agrees); then start
- * the host, restarting it after a reinstall.
+ * the host, restarting it after a reinstall or when it runs another build.
  *
  * @param {{
  *   serverUrl: string,
@@ -1175,10 +1331,12 @@ async function runSshConnect(ctx) {
   await session.open();
   try {
     let restart = false;
+    let binary = null;
     if (plan.build) {
       const ensured = await ensureServerBuild(full);
       if (!ensured.ok) return ensured;
       restart = ensured.reinstalled;
+      binary = ensured.binary;
     }
     const signInCtx = { ...full, launch, openExternal: openSafely };
     let login = await signIn(signInCtx);
@@ -1212,20 +1370,17 @@ async function runSshConnect(ctx) {
 
     if (full.isCanceled()) return canceledResult();
     onStatus({ step: restart ? "restarting-host" : "starting-host" });
-    const host = await session.exec(hostScript(serverUrl, launch, { restart }), {
+    let host = await session.exec(hostScript(serverUrl, launch, { restart }), {
       timeoutMs: full.timeouts?.host ?? HOST_TIMEOUT_MS,
       onStdout: onOutput,
       onStderr: onOutput,
     }).promise;
     if (full.isCanceled()) return canceledResult();
-    if (host.code !== 0) {
-      const detail = failureDetail(host.stderr || host.stdout);
-      return {
-        ok: false,
-        error: host.timedOut
-          ? `Starting the Omnigent host on ${destination} timed out.`
-          : `Starting the Omnigent host on ${destination} failed: ${detail || `exit code ${host.code}`}`,
-      };
+    if (host.code !== 0) return hostStartFailure(host, destination);
+    if (binary !== null) {
+      const checked = await ensureHostBuild(full, launch, host, binary);
+      if (!checked.ok) return checked;
+      host = checked.host;
     }
     const identity = readArcaIdentity(host.stdout, serverUrl, full.onIdentityUnavailable);
     return {
