@@ -30,7 +30,11 @@ export function GlobalHubPage() {
 
   return (
     <GlobalHubChatProvider>
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="globalhub-page">
+      <div
+        className="flex min-h-0 min-w-0 flex-1 flex-col"
+        data-testid="globalhub-page"
+        style={{ paddingTop: "calc(var(--omnigent-header-height) + var(--omnigent-inset-top))" }}
+      >
         <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
           <h1 className="text-lg font-semibold">Global Hub</h1>
           <div className="flex min-w-0 items-center gap-1">
