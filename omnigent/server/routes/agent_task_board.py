@@ -10,7 +10,6 @@ import asyncio
 import heapq
 from collections import defaultdict
 from collections.abc import Sequence
-from itertools import islice
 from typing import cast
 
 from fastapi import APIRouter, Query, Request
@@ -18,6 +17,7 @@ from fastapi import APIRouter, Query, Request
 from omnigent.agent_tasks.board_search import BoardMatch, query_words, search_board
 from omnigent.agent_tasks.board_stores import BoardStores
 from omnigent.entities import LIVE_TASK_STATES, Task, TaskAsset, Worker
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.agent_task_delivery import SessionSendDeps
 from omnigent.server.agent_task_session_states import read_session_states
 from omnigent.server.auth import AuthProvider
@@ -34,11 +34,16 @@ from omnigent.server.schemas import (
 )
 from omnigent.stores import ConversationStore
 from omnigent.stores.task_store import TaskStore
+from omnigent.util.uuid import InvalidUuidError, uuid_to_bytes
 
-#: The most cards one board read returns.
-MAX_BOARD_CARDS = 1000
+#: The most cards one board page returns.
+MAX_BOARD_PAGE = 100
+#: The ranks a board cursor may hold: the range of the 64-bit rank column.
+QUEUE_RANK_RANGE = range(-(2**63), 2**63)
 #: The longest query a board search reads.
 MAX_BOARD_QUERY_CHARS = 200
+#: The longest cursor a board read takes.
+MAX_BOARD_CURSOR_CHARS = 80
 
 
 def create_agent_task_board_router(
@@ -77,27 +82,49 @@ def create_agent_task_board_router(
     @router.get("/agent-tasks/board", response_model=AgentTaskBoard)
     async def read_board(
         request: Request,
-        limit: int = Query(default=20, ge=1, le=MAX_BOARD_CARDS),
+        limit: int = Query(default=20, ge=1, le=MAX_BOARD_PAGE),
         q: str = Query(default="", max_length=MAX_BOARD_QUERY_CHARS),
+        after: str | None = Query(default=None, max_length=MAX_BOARD_CURSOR_CHARS),
+        before: str | None = Query(default=None, max_length=MAX_BOARD_CURSOR_CHARS),
     ) -> AgentTaskBoard:
-        """Read the first ``limit`` live tasks on the caller's board as cards, in board order.
+        """Read a page of ``limit`` live tasks on the caller's board as cards, in board order.
 
-        With a query ``q``, read the first ``limit`` live tasks whose cards hold
-        any of its words instead, best match first, as ``board_search`` ranks
-        them. A worker whose session no longer exists is left off its card. The
-        count of tasks without a manager covers the whole board.
+        ``after`` is the ``next_cursor`` of the page above, and ``before`` the
+        ``prev_cursor`` of the page below; without either, the page starts at
+        the top of the board. A read past either end of the board returns the
+        page at that end. With a query ``q``, the pages hold the live tasks
+        whose cards hold any of its words instead, best match first, as
+        ``board_search`` ranks them. A worker whose session no longer exists is
+        left off its card. The count of tasks without a manager covers the
+        whole board.
         """
         user_id = require_user(request, auth_provider)
+        if after is not None and before is not None:
+            raise OmnigentError("pass after or before, not both", code=ErrorCode.INVALID_INPUT)
         words = query_words(q)
         matches: dict[str, BoardMatch] = {}
         if words:
-            found, has_more = await asyncio.to_thread(
-                _search, board, conversation_store, user_id, words, limit
+            found, next_cursor, prev_cursor = await asyncio.to_thread(
+                _search,
+                board,
+                conversation_store,
+                user_id,
+                words,
+                limit,
+                _search_offset(after),
+                _search_offset(before),
             )
             tasks = [match.task for match in found]
             matches = {match.task.id: match for match in found}
         else:
-            tasks, has_more = await asyncio.to_thread(_live_tasks, board.tasks, user_id, limit)
+            tasks, next_cursor, prev_cursor = await asyncio.to_thread(
+                _live_tasks,
+                board.tasks,
+                user_id,
+                limit,
+                _board_cursor_position(after),
+                _board_cursor_position(before),
+            )
         task_ids = [task.id for task in tasks]
         workers, assets, unmanaged_count = await asyncio.gather(
             asyncio.to_thread(board.workers.list_for_tasks, task_ids, owner_user_id=user_id),
@@ -124,7 +151,9 @@ def create_agent_task_board_router(
                 )
                 for task in tasks
             ],
-            has_more=has_more,
+            has_more=next_cursor is not None,
+            next_cursor=next_cursor,
+            prev_cursor=prev_cursor,
             unmanaged_count=unmanaged_count,
         )
 
@@ -137,8 +166,10 @@ def _search(
     owner_user_id: str | None,
     words: list[str],
     limit: int,
-) -> tuple[list[BoardMatch], bool]:
-    """Return the first ``limit`` live tasks whose cards hold a query word, and whether more do."""
+    after: int | None,
+    before: int | None,
+) -> tuple[list[BoardMatch], str | None, str | None]:
+    """Return a page of the live tasks whose cards hold a query word, and its two cursors."""
     tasks = board.tasks.list(owner_user_id=owner_user_id, states=LIVE_TASK_STATES)
     task_ids = [task.id for task in tasks]
     workers = board.workers.list_for_tasks(task_ids, owner_user_id=owner_user_id)
@@ -157,24 +188,105 @@ def _search(
         },
         worker_activity={worker.id: sessions[worker.session_id].updated_at for worker in shown},
     )
-    return found[:limit], len(found) > limit
+    if before is None:
+        start = after or 0
+        if start >= len(found):
+            start = max(len(found) - limit, 0)
+        end = start + limit
+    else:
+        end = limit if before <= limit else min(before, len(found))
+        start = max(end - limit, 0)
+    next_cursor = str(end) if len(found) > end else None
+    return found[start:end], next_cursor, str(start) if start > 0 else None
 
 
 def _live_tasks(
-    tasks: TaskStore, owner_user_id: str | None, limit: int
-) -> tuple[list[Task], bool]:
-    """Return the owner's first ``limit`` live tasks in board order, and whether more exist."""
+    tasks: TaskStore,
+    owner_user_id: str | None,
+    limit: int,
+    after: tuple[int, str] | None,
+    before: tuple[int, str] | None,
+) -> tuple[list[Task], str | None, str | None]:
+    """Return a page of the owner's live tasks in board order, and its two cursors.
+
+    A ``before`` read that reaches the top of the board returns the first page,
+    and an ``after`` read with no task after its cursor returns the page before
+    the cursor, so a page read again after the board changed is not empty.
+    """
+    if before is not None:
+        nearest = _live_tasks_beside(tasks, owner_user_id, limit + 1, before=before)[-limit - 1 :]
+        if len(nearest) <= limit:
+            return _live_tasks(tasks, owner_user_id, limit, None, None)
+        page = nearest[-limit:]
+        more_after = bool(
+            _live_tasks_beside(tasks, owner_user_id, 1, after=_board_position(page[-1]))
+        )
+        return page, _board_cursor(page[-1]) if more_after else None, _board_cursor(page[0])
+    nearest = _live_tasks_beside(tasks, owner_user_id, limit + 1, after=after)[: limit + 1]
+    if not nearest and after is not None:
+        return _live_tasks(tasks, owner_user_id, limit, None, after)
+    page = nearest[:limit]
+    more_before = (
+        after is not None
+        and bool(page)
+        and bool(_live_tasks_beside(tasks, owner_user_id, 1, before=_board_position(page[0])))
+    )
+    return (
+        page,
+        _board_cursor(page[-1]) if len(nearest) > limit else None,
+        _board_cursor(page[0]) if more_before else None,
+    )
+
+
+def _live_tasks_beside(
+    tasks: TaskStore,
+    owner_user_id: str | None,
+    limit: int,
+    *,
+    after: tuple[int, str] | None = None,
+    before: tuple[int, str] | None = None,
+) -> list[Task]:
+    """Return each live state's ``limit`` tasks nearest to a board position, in board order."""
     # The board index orders one state at a time, so read each state and merge.
     per_state = [
-        tasks.list(owner_user_id=owner_user_id, states=[state], limit=limit + 1)
+        tasks.list(
+            owner_user_id=owner_user_id, states=[state], limit=limit, after=after, before=before
+        )
         for state in LIVE_TASK_STATES
     ]
-    first = list(islice(heapq.merge(*per_state, key=_board_position, reverse=True), limit + 1))
-    return first[:limit], len(first) > limit
+    return list(heapq.merge(*per_state, key=_board_position, reverse=True))
 
 
 def _board_position(task: Task) -> tuple[int, str]:
     return task.queue_rank, task.id
+
+
+def _board_cursor(task: Task) -> str:
+    return f"{task.queue_rank}:{task.id}"
+
+
+def _board_cursor_position(cursor: str | None) -> tuple[int, str] | None:
+    """Read a board cursor, the ``queue_rank:id`` of the card next to the page."""
+    if cursor is None:
+        return None
+    rank_text, _, task_id = cursor.partition(":")
+    try:
+        uuid_to_bytes(task_id)
+        rank = int(rank_text)
+    except (InvalidUuidError, ValueError) as exc:
+        raise OmnigentError("invalid board cursor", code=ErrorCode.INVALID_INPUT) from exc
+    if rank not in QUEUE_RANK_RANGE:
+        raise OmnigentError("invalid board cursor", code=ErrorCode.INVALID_INPUT)
+    return rank, task_id
+
+
+def _search_offset(cursor: str | None) -> int | None:
+    """Read a search cursor, the index of the match next to the page."""
+    if cursor is None:
+        return None
+    if not (cursor.isascii() and cursor.isdigit()):
+        raise OmnigentError("invalid search cursor", code=ErrorCode.INVALID_INPUT)
+    return int(cursor)
 
 
 def _card(

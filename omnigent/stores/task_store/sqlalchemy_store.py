@@ -6,7 +6,7 @@ import builtins
 from collections.abc import Collection
 from typing import Any, cast
 
-from sqlalchemy import ColumnElement, and_, delete, desc, func, select, update
+from sqlalchemy import ColumnElement, and_, delete, desc, func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
@@ -71,6 +71,24 @@ def _matching(
 def _owned_row(session: Session, task_id: str, owner_user_id: str | None) -> SqlTask | None:
     row = session.get(SqlTask, (current_workspace_id(), task_id))
     return row if row is not None and row.owner_user_id == owner_user_id else None
+
+
+def _below(position: tuple[int, str]) -> ColumnElement[bool]:
+    """Tasks that come after a ``(queue_rank, id)`` board position."""
+    rank, task_id = position
+    return and_(
+        SqlTask.queue_rank <= rank,
+        or_(SqlTask.queue_rank < rank, and_(SqlTask.queue_rank == rank, SqlTask.id < task_id)),
+    )
+
+
+def _above(position: tuple[int, str]) -> ColumnElement[bool]:
+    """Tasks that come before a ``(queue_rank, id)`` board position."""
+    rank, task_id = position
+    return and_(
+        SqlTask.queue_rank >= rank,
+        or_(SqlTask.queue_rank > rank, and_(SqlTask.queue_rank == rank, SqlTask.id > task_id)),
+    )
 
 
 def _rank_above_all(session: Session, owner_user_id: str | None) -> int:
@@ -159,16 +177,24 @@ class SqlAlchemyTaskStore(TaskStore):
         manager_id: str | None = None,
         unmanaged: bool = False,
         limit: int | None = None,
+        after: tuple[int, str] | None = None,
+        before: tuple[int, str] | None = None,
     ) -> builtins.list[Task]:
         """List the owner's tasks in board order (highest rank first)."""
         stmt = select(SqlTask).where(*_matching(owner_user_id, states, unmanaged))
         if manager_id is not None:
             stmt = stmt.where(SqlTask.manager_id == manager_id)
-        stmt = stmt.order_by(desc(SqlTask.queue_rank), desc(SqlTask.id))
+        if after is not None:
+            stmt = stmt.where(_below(after))
+        if before is not None:
+            stmt = stmt.where(_above(before)).order_by(SqlTask.queue_rank, SqlTask.id)
+        else:
+            stmt = stmt.order_by(desc(SqlTask.queue_rank), desc(SqlTask.id))
         if limit is not None:
             stmt = stmt.limit(limit)
         with self._session("list_tasks") as session:
-            return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
+            tasks = [_to_entity(row) for row in session.execute(stmt).scalars().all()]
+        return tasks[::-1] if before is not None else tasks
 
     def count(
         self,

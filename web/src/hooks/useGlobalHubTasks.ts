@@ -1,4 +1,10 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/identity";
 import { apiErrorFromResponse } from "@/lib/sessionsApi";
 
@@ -77,14 +83,21 @@ export interface AgentTaskCard extends AgentTask {
   match?: BoardSearchMatch | null;
 }
 
-/** The first live tasks on the user's board, in board order. */
+/** One page of the live tasks on the user's board, in board order. */
 export interface AgentTaskBoard {
   data: AgentTaskCard[];
-  /** Whether the board has more live tasks than ``data`` holds. */
+  /** Whether more pages follow. */
   has_more: boolean;
+  /** Reads the next page; ``null`` on the last page. */
+  next_cursor?: string | null;
+  /** Reads the page before; ``null`` on the first page. */
+  prev_cursor?: string | null;
   /** How many live tasks on the whole board have no manager. */
   unmanaged_count: number;
 }
+
+/** A board page read: after a page's ``next_cursor``, before its ``prev_cursor``, or the first page. */
+export type BoardPageParam = { after: string } | { before: string } | null;
 
 /** A request for managers; ``queued`` is false when every live task already had one. */
 export interface SpawnManagersRequested {
@@ -110,10 +123,10 @@ export interface AgentTaskChanges {
 export const GLOBALHUB_TASKS_QUERY_KEY = ["globalhub-tasks"] as const;
 export const GLOBALHUB_MANAGERS_QUERY_KEY = ["globalhub-managers"] as const;
 
-/** The cards the board reads first, and how many more each scroll to its end reads. */
-export const BOARD_WINDOW = 20;
-/** The most cards one board read returns. */
-export const BOARD_MAX_CARDS = 1000;
+/** The cards in one board page: the board reads one page first, and one more per scroll to its end. */
+export const BOARD_PAGE_SIZE = 20;
+/** The most pages the board holds; a page read past them drops the page at the other end. */
+export const BOARD_MAX_PAGES = 5;
 // The broker and the managers change the board in the background.
 const BOARD_REFRESH_MS = 10_000;
 
@@ -127,9 +140,12 @@ export function boardSearchWords(query: string): string[] {
   return [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))];
 }
 
-async function fetchBoard(limit: number, query: string): Promise<AgentTaskBoard> {
-  const search = query ? `&q=${encodeURIComponent(query)}` : "";
-  return readJson(await authenticatedFetch(`/v1/agent-tasks/board?limit=${limit}${search}`));
+async function fetchBoard(page: BoardPageParam, query: string): Promise<AgentTaskBoard> {
+  const params = new URLSearchParams({ limit: String(BOARD_PAGE_SIZE) });
+  if (query) params.set("q", query);
+  if (page && "after" in page) params.set("after", page.after);
+  if (page && "before" in page) params.set("before", page.before);
+  return readJson(await authenticatedFetch(`/v1/agent-tasks/board?${params}`));
 }
 
 async function fetchManagers(after: string | null = null): Promise<AgentManager[]> {
@@ -145,15 +161,26 @@ async function fetchManagers(after: string | null = null): Promise<AgentManager[
 }
 
 /**
- * The first ``limit`` live tasks (active, idle or resolved) as cards, in board
- * order; with a ``query``, the tasks that match it, best match first.
+ * The live tasks (active, idle or resolved) as cards, in board order, a page at
+ * a time; with a ``query``, the tasks that match it, best match first. The
+ * board holds at most ``BOARD_MAX_PAGES`` pages, and reads a dropped page
+ * again when the user scrolls back to it. A refresh reads the held pages
+ * again, from the first. The pages drop when the board closes, so it opens at
+ * its top.
  */
-export function useGlobalHubBoard(limit: number, query = "") {
-  return useQuery({
-    queryKey: [...GLOBALHUB_TASKS_QUERY_KEY, "board", limit, query],
-    queryFn: () => fetchBoard(limit, query),
+export function useGlobalHubBoard(query = "") {
+  return useInfiniteQuery({
+    queryKey: [...GLOBALHUB_TASKS_QUERY_KEY, "board", query],
+    queryFn: ({ pageParam }) => fetchBoard(pageParam, query),
+    initialPageParam: null as BoardPageParam,
+    getNextPageParam: (page): BoardPageParam | undefined =>
+      page.next_cursor ? { after: page.next_cursor } : undefined,
+    getPreviousPageParam: (page): BoardPageParam | undefined =>
+      page.prev_cursor ? { before: page.prev_cursor } : undefined,
+    maxPages: BOARD_MAX_PAGES,
+    gcTime: 0,
     refetchInterval: BOARD_REFRESH_MS,
-    // The loaded cards stay on screen while a longer window loads.
+    // A new search keeps the cards on screen until its first page loads.
     placeholderData: keepPreviousData,
   });
 }

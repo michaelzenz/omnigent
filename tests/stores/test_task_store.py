@@ -72,6 +72,24 @@ def test_list_and_count_filter_by_state_and_manager(store: SqlAlchemyTaskStore) 
     assert store.count(owner_user_id=BOB, unmanaged=True) == 1
 
 
+def test_list_beside_a_board_position_reads_the_page_after_or_before_it_and_orders_ties_by_id(
+    store: SqlAlchemyTaskStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bottom = _create(store, "bottom")
+    monkeypatch.setattr(task_tables, "_rank_above_all", lambda _session, _owner: 50)
+    tied = sorted((_create(store, f"tied {index}") for index in range(3)), reverse=True)
+
+    def page(**position: tuple[int, str]) -> list[str]:
+        return [task.id for task in store.list(owner_user_id=ALICE, limit=2, **position)]
+
+    assert page() == tied[:2]
+    assert page(after=(50, tied[1])) == [tied[2], bottom]
+    assert page(after=(50, tied[2])) == [bottom]
+    assert page(before=(1, bottom)) == tied[1:]
+    assert page(before=(50, tied[2])) == tied[:2]
+    assert page(before=(50, tied[0])) == []
+
+
 def test_update_changes_fields_and_tracks_resolution(store: SqlAlchemyTaskStore) -> None:
     manager_id = uuid.uuid4().hex
     task_id = _create(store, "task", manager_id=manager_id)

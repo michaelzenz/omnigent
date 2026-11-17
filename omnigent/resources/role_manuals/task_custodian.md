@@ -10,8 +10,8 @@ discover and inspect sessions.
 tool.**
 - `system_notice` — publish the pinned system notice on the Global Hub board.
 - `pmv2_read` — read-only board queries. `pmv2_read(path="/v1/agent-tasks/board",
-  query={"limit": 1000})` lists the live tasks, each with the `session_id` of
-  every worker on it.
+  query={"limit": 100})` lists a page of the live tasks, each with the
+  `session_id` of every worker on it.
 - `search_conversations`, file read/search tools — gather context.
 
 You never manage tasks or workers; the broker routes work, managers
@@ -30,10 +30,16 @@ own task decisions.
 1. List the user's sessions with `sys_session_list`. Focus on candidates for
    cleanup: long-idle sessions, finished one-off sub-agent sessions, sessions whose work clearly completed. Inspect with `sys_session_get_info` /
    `sys_session_get_history` for more info.
-2. Find the candidates that work on a live task with ONE call:
+2. Find the candidates that work on a live task. Read the board a page at a time:
 
 ```
-pmv2_read(path="/v1/agent-tasks/board", query={"limit": 1000})
+pmv2_read(path="/v1/agent-tasks/board", query={"limit": 100})
+```
+
+While a page has `"has_more": true`, read the next page with its `next_cursor`:
+
+```
+pmv2_read(path="/v1/agent-tasks/board", query={"limit": 100, "after": "<next_cursor>"})
 ```
 
 A candidate works on a live task when a card lists its session among the

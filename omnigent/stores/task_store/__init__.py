@@ -67,6 +67,8 @@ class TaskStore(ABC):
         manager_id: str | None = None,
         unmanaged: bool = False,
         limit: int | None = None,
+        after: tuple[int, str] | None = None,
+        before: tuple[int, str] | None = None,
     ) -> builtins.list[Task]:
         """
         List the owner's tasks in board order (highest rank first).
@@ -76,6 +78,11 @@ class TaskStore(ABC):
         :param manager_id: Only this manager's tasks, when set.
         :param unmanaged: Only tasks without a manager, when true.
         :param limit: At most this many tasks, or all when ``None``.
+        :param after: Only tasks that come after this board position, a
+            ``(queue_rank, id)`` pair, so that a board reads a page at a time.
+        :param before: Only tasks that come before this board position; with
+            ``limit``, the ones nearest to it, so that a board reads the page
+            above another.
         :returns: The matching tasks.
         """
 

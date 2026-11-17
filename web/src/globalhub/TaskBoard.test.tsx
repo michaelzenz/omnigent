@@ -27,36 +27,42 @@ const STORAGE_MANAGER = {
   session_missing: false,
 };
 
-/** The board reads the board sent, each with its window size and search. */
-function boardReads(): { limit: number; query: string | null }[] {
+interface BoardRead {
+  limit: number;
+  query: string | null;
+  after: string | null;
+  before: string | null;
+}
+
+function readOf(path: string): BoardRead {
+  const params = new URL(path, "http://board.example.com").searchParams;
+  return {
+    limit: Number(params.get("limit")),
+    query: params.get("q"),
+    after: params.get("after"),
+    before: params.get("before"),
+  };
+}
+
+/** The board reads the board sent, each with its page size, search and cursors. */
+function boardReads(): BoardRead[] {
   return fetchMock.mock.calls
     .map(([input]) => String(input))
     .filter((path) => path.startsWith(BOARD_PATH))
-    .map((path) => {
-      const params = new URL(path, "http://board.example.com").searchParams;
-      return { limit: Number(params.get("limit")), query: params.get("q") };
-    });
+    .map(readOf);
 }
 
-/** Serve the managers, the board read for each window and search, and requests for managers. */
-function serveBoard(read: (limit: number, query: string | null) => AgentTaskBoard): void {
+/** Serve the managers, the board page for each read, and requests for managers. */
+function serveBoard(page: (read: BoardRead) => AgentTaskBoard): void {
   fetchMock.mockImplementation(async (input) => {
     const path = String(input);
     if (path.startsWith("/v1/agent-tasks/managers?include_full=true")) {
       return jsonResponse({ data: [STORAGE_MANAGER] });
     }
-    if (path.startsWith(BOARD_PATH)) {
-      const params = new URL(path, "http://board.example.com").searchParams;
-      return jsonResponse(read(Number(params.get("limit")), params.get("q")));
-    }
+    if (path.startsWith(BOARD_PATH)) return jsonResponse(page(readOf(path)));
     if (path === SPAWN_PATH) return jsonResponse({ unmanaged_count: 2, queued: true });
     return jsonResponse({ detail: "Not found" }, 404);
   });
-}
-
-/** The window sizes the board read, in order. */
-function readLimits(): number[] {
-  return boardReads().map((read) => read.limit);
 }
 
 function renderBoard(query?: string): QueryClient {
@@ -75,7 +81,10 @@ function renderBoard(query?: string): QueryClient {
   return client;
 }
 
-/** Reports every observed element as in view, as when the end of the list is on screen. */
+/**
+ * Reports every observed element as in view, as when the end of the list is on
+ * screen. As in a browser, the report comes in a later task.
+ */
 class InViewObserver {
   private readonly report: IntersectionObserverCallback;
   private connected = true;
@@ -85,11 +94,11 @@ class InViewObserver {
   }
 
   observe(target: Element): void {
-    queueMicrotask(() => {
+    setTimeout(() => {
       if (!this.connected) return;
       const entry = { isIntersecting: true, target } as IntersectionObserverEntry;
       this.report([entry], this as unknown as IntersectionObserver);
-    });
+    }, 0);
   }
 
   unobserve(): void {}
@@ -101,6 +110,35 @@ class InViewObserver {
   takeRecords(): IntersectionObserverEntry[] {
     return [];
   }
+}
+
+/** Reports no element in view, so a page loads only when "Load more" is clicked. */
+class OutOfViewObserver {
+  observe(): void {}
+
+  unobserve(): void {}
+
+  disconnect(): void {}
+
+  takeRecords(): IntersectionObserverEntry[] {
+    return [];
+  }
+}
+
+/** Clicks the lowest "Load more" once for each page from ``first`` to ``last``, in order. */
+async function loadPagesBelow(first: number, last: number): Promise<void> {
+  if (first > last) return;
+  const loadMore = screen.getAllByRole("button", { name: "Load more" });
+  fireEvent.click(loadMore[loadMore.length - 1]);
+  await screen.findByTestId(`task-card-t${first}`);
+  await loadPagesBelow(first + 1, last);
+}
+
+/** The tasks the board shows, top to bottom. */
+function shownTasks(): string[] {
+  return screen
+    .queryAllByTestId(/^task-card-t\d$/)
+    .map((card) => (card.dataset.testid ?? "").replace("task-card-", ""));
 }
 
 afterEach(() => {
@@ -130,7 +168,7 @@ describe("TaskBoard", () => {
     expect(await within(cards[0]).findByText("Storage")).toBeInTheDocument();
     expect(screen.getByTestId("task-card-move-to-end-c")).toBeDisabled();
     expect(screen.queryByTestId("globalhub-unmanaged")).toBeNull();
-    expect(readLimits()).toEqual([20]);
+    expect(boardReads()).toEqual([{ limit: 20, query: null, after: null, before: null }]);
   });
 
   it("asks the broker for managers once, until the number of unmanaged tasks changes", async () => {
@@ -153,19 +191,70 @@ describe("TaskBoard", () => {
     expect(screen.queryByText("Sent to the broker.")).toBeNull();
   });
 
-  it("reads 20 more cards each time the end of the list is in view, until no more are left", async () => {
+  it("reads one more page each time the end of the list is in view, and shows a task two pages send once", async () => {
     vi.stubGlobal("IntersectionObserver", InViewObserver);
-    serveBoard((limit) => ({ data: [agentTask("t1")], has_more: limit < 100, unmanaged_count: 0 }));
+    serveBoard(({ after }) => {
+      const page = after === null ? 1 : Number(after.replace("page-", "")) + 1;
+      return {
+        data: page === 2 ? [agentTask("t1"), agentTask("t2")] : [agentTask(`t${page}`)],
+        has_more: page < 5,
+        next_cursor: page < 5 ? `page-${page}` : null,
+        unmanaged_count: 0,
+      };
+    });
 
     renderBoard();
 
-    await waitFor(() => expect(readLimits()).toEqual([20, 40, 60, 80, 100]));
+    await waitFor(() =>
+      expect(boardReads().map((read) => read.after)).toEqual([
+        null,
+        "page-1",
+        "page-2",
+        "page-3",
+        "page-4",
+      ]),
+    );
     // The board's last card is loaded once no more are left.
-    await waitFor(() => expect(screen.getByTestId("task-card-move-to-end-t1")).toBeDisabled());
+    await waitFor(() => expect(screen.getByTestId("task-card-move-to-end-t5")).toBeDisabled());
+    expect(screen.getAllByTestId(/^task-card-t\d$/).map((card) => card.dataset.testid)).toEqual([
+      "task-card-t1",
+      "task-card-t2",
+      "task-card-t3",
+      "task-card-t4",
+      "task-card-t5",
+    ]);
+  });
+
+  it("holds five pages, and reads a dropped page again from the top of the list", async () => {
+    vi.stubGlobal("IntersectionObserver", OutOfViewObserver);
+    serveBoard(({ after, before }) => {
+      let page = 1;
+      if (after) page = Number(after.replace("page-", "")) + 1;
+      if (before) page = Number(before.replace("page-", "")) - 1;
+      return {
+        data: [agentTask(`t${page}`)],
+        has_more: page < 7,
+        next_cursor: page < 7 ? `page-${page}` : null,
+        prev_cursor: page > 1 ? `page-${page}` : null,
+        unmanaged_count: 0,
+      };
+    });
+    renderBoard();
+    await screen.findByTestId("task-card-t1");
+
+    await loadPagesBelow(2, 7);
+
+    expect(shownTasks()).toEqual(["t3", "t4", "t5", "t6", "t7"]);
+    expect(screen.getByTestId("task-card-move-to-end-t7")).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+
+    await waitFor(() => expect(shownTasks()).toEqual(["t2", "t3", "t4", "t5", "t6"]));
+    expect(boardReads().at(-1)).toEqual({ limit: 20, query: null, after: null, before: "page-3" });
   });
 
   it("reads the matching cards for a search, and says so when none match", async () => {
-    serveBoard((_limit, query) => ({
+    serveBoard(({ query }) => ({
       data:
         query === "retries"
           ? [agentTask("t1", { match: { hits: 1, asset_ids: [], worker_ids: [] } })]
@@ -177,7 +266,7 @@ describe("TaskBoard", () => {
     renderBoard("retries");
 
     expect(await screen.findByTestId("task-card-t1")).toBeInTheDocument();
-    expect(boardReads()).toEqual([{ limit: 20, query: "retries" }]);
+    expect(boardReads()).toEqual([{ limit: 20, query: "retries", after: null, before: null }]);
     // A search result's place on the board is not known, so it can still move down.
     expect(screen.getByTestId("task-card-move-to-end-t1")).toBeEnabled();
 

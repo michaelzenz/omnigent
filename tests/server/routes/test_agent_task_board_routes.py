@@ -68,7 +68,7 @@ async def _board(
     return response.json()
 
 
-async def test_the_board_reads_the_live_tasks_in_board_order_a_window_at_a_time(
+async def test_the_board_reads_the_live_tasks_in_board_order_a_page_at_a_time_down_and_up(
     auth_client: httpx.AsyncClient, db_uri: str
 ) -> None:
     # Each new task goes to the top of its owner's board.
@@ -78,13 +78,26 @@ async def test_the_board_reads_the_live_tasks_in_board_order_a_window_at_a_time(
     active = _task(db_uri, "Active", manager_id=uuid.uuid4().hex)
     _task(db_uri, "Bob's", owner=BOB_ID)
 
-    window = await _board(auth_client, limit=2)
+    first = await _board(auth_client, limit=2)
+    rest = await _board(auth_client, limit=2, after=first["next_cursor"])
+    back = await _board(auth_client, limit=2, before=rest["prev_cursor"])
     whole = await _board(auth_client)
     bobs = await _board(auth_client, headers=BOB)
 
-    assert ([card["id"] for card in window["data"]], window["has_more"]) == (
+    assert ([card["id"] for card in first["data"]], first["has_more"], first["prev_cursor"]) == (
         [active, idle],
         True,
+        None,
+    )
+    assert ([card["id"] for card in rest["data"]], rest["has_more"], rest["next_cursor"]) == (
+        [resolved],
+        False,
+        None,
+    )
+    assert ([card["id"] for card in back["data"]], back["next_cursor"], back["prev_cursor"]) == (
+        [active, idle],
+        first["next_cursor"],
+        None,
     )
     assert ([card["id"] for card in whole["data"]], whole["has_more"]) == (
         [active, idle, resolved],
@@ -92,11 +105,53 @@ async def test_the_board_reads_the_live_tasks_in_board_order_a_window_at_a_time(
     )
     assert "internal_note" not in whole["data"][0]
     assert [card["title"] for card in bobs["data"]] == ["Bob's"]
-    # The count covers the whole board, not only the window.
-    assert [board["unmanaged_count"] for board in (window, whole, bobs)] == [2, 2, 1]
+    # The count covers the whole board, not only the page.
+    assert [board["unmanaged_count"] for board in (first, rest, whole, bobs)] == [2, 2, 2, 1]
 
 
-async def test_a_search_returns_the_cards_that_hold_the_most_words_first_a_window_at_a_time(
+async def test_a_board_read_refuses_a_cursor_that_the_board_did_not_send(
+    auth_client: httpx.AsyncClient,
+) -> None:
+    reads = [
+        await auth_client.get("/v1/agent-tasks/board", params=params, headers=ALICE)
+        for params in (
+            {"after": "not-a-cursor"},
+            {"before": "5:not-a-task-id"},
+            {"after": f"{10**40}:{uuid.uuid4().hex}"},
+            {"after": f"5:{uuid.uuid4().hex}", "before": f"7:{uuid.uuid4().hex}"},
+            {"q": "fix", "after": f"5:{uuid.uuid4().hex}"},
+            {"q": "fix", "before": "²"},
+        )
+    ]
+
+    assert [read.status_code for read in reads] == [400, 400, 400, 400, 400, 400]
+
+
+async def test_a_board_read_past_either_end_returns_the_page_at_that_end(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    low = _task(db_uri, "Low")
+    middle = _task(db_uri, "Middle")
+    high = _task(db_uri, "High")
+    gone = uuid.uuid4().hex
+
+    above_top = await _board(auth_client, limit=2, before=f"{2**62}:{gone}")
+    below_bottom = await _board(auth_client, limit=2, after=f"{-(2**62)}:{gone}")
+    past_matches = await _board(auth_client, q="low", limit=1, after="5")
+
+    assert ([card["id"] for card in above_top["data"]], above_top["prev_cursor"]) == (
+        [high, middle],
+        None,
+    )
+    assert ([card["id"] for card in below_bottom["data"]], below_bottom["has_more"]) == (
+        [middle, low],
+        False,
+    )
+    assert below_bottom["prev_cursor"] is not None
+    assert [card["id"] for card in past_matches["data"]] == [low]
+
+
+async def test_a_search_returns_the_cards_that_hold_the_most_words_first_a_page_at_a_time(
     auth_client: httpx.AsyncClient, db_uri: str
 ) -> None:
     platform = SqlAlchemyManagerStore(db_uri).create(
@@ -109,7 +164,9 @@ async def test_a_search_returns_the_cards_that_hold_the_most_words_first_a_windo
     _task(db_uri, "Fix Bob's retries", owner=BOB_ID)
 
     found = await _board(auth_client, q="retries FIX")
-    window = await _board(auth_client, q="retries FIX", limit=1)
+    first = await _board(auth_client, q="retries FIX", limit=1)
+    rest = await _board(auth_client, q="retries FIX", limit=1, after=first["next_cursor"])
+    back = await _board(auth_client, q="retries FIX", limit=1, before=rest["prev_cursor"])
     by_manager_name = await _board(auth_client, q="platform")
     plain = await _board(auth_client)
 
@@ -117,7 +174,9 @@ async def test_a_search_returns_the_cards_that_hold_the_most_words_first_a_windo
         (both_words, 2),
         (one_word, 1),
     ]
-    assert ([card["id"] for card in window["data"]], window["has_more"]) == ([both_words], True)
+    assert ([card["id"] for card in first["data"]], first["has_more"]) == ([both_words], True)
+    assert ([card["id"] for card in rest["data"]], rest["has_more"]) == ([one_word], False)
+    assert ([card["id"] for card in back["data"]], back["prev_cursor"]) == ([both_words], None)
     # The manager's name is not searched.
     assert by_manager_name["data"] == []
     assert {card["match"] is None for card in plain["data"]} == {True}

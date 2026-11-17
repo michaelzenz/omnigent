@@ -6845,17 +6845,20 @@ class AgentTaskBoardCard(BaseModel):
 
 
 class AgentTaskBoard(BaseModel):
-    """The first live tasks on the caller's board, in board order, as cards.
+    """One page of the live tasks on the caller's board, in board order, as cards.
 
     A search returns the matching tasks instead, best match first.
-    ``has_more`` says the board has more live tasks than ``data`` holds.
-    ``unmanaged_count`` counts the live tasks on the whole board that have no
-    manager.
+    ``has_more`` says that more pages follow; ``next_cursor`` reads the next
+    one, and is null on the last page. ``prev_cursor`` reads the page before,
+    and is null on the first page. ``unmanaged_count`` counts the live tasks
+    on the whole board that have no manager.
     """
 
     object: Literal["agent.task.board.cards"] = "agent.task.board.cards"
     data: list[AgentTaskBoardCard]
     has_more: bool
+    next_cursor: str | None = None
+    prev_cursor: str | None = None
     unmanaged_count: int
 
 

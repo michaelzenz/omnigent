@@ -1325,7 +1325,7 @@
         "type": "object"
       },
       "AgentTaskBoard": {
-        "description": "The first live tasks on the caller's board, in board order, as cards.\n\nA search returns the matching tasks instead, best match first.\n`has_more` says the board has more live tasks than `data` holds.\n`unmanaged_count` counts the live tasks on the whole board that have no\nmanager.",
+        "description": "One page of the live tasks on the caller's board, in board order, as cards.\n\nA search returns the matching tasks instead, best match first.\n`has_more` says that more pages follow; `next_cursor` reads the next\none, and is null on the last page. `prev_cursor` reads the page before,\nand is null on the first page. `unmanaged_count` counts the live tasks\non the whole board that have no manager.",
         "properties": {
           "data": {
             "items": {
@@ -1338,11 +1338,33 @@
             "title": "Has More",
             "type": "boolean"
           },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
           "object": {
             "const": "agent.task.board.cards",
             "default": "agent.task.board.cards",
             "title": "Object",
             "type": "string"
+          },
+          "prev_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prev Cursor"
           },
           "unmanaged_count": {
             "format": "int64",
@@ -18785,7 +18807,7 @@
     },
     "/v1/agent-tasks/board": {
       "get": {
-        "description": "Read the first `limit` live tasks on the caller's board as cards, in board order.\n\nWith a query `q`, read the first `limit` live tasks whose cards hold\nany of its words instead, best match first, as `board_search` ranks\nthem. A worker whose session no longer exists is left off its card. The\ncount of tasks without a manager covers the whole board.",
+        "description": "Read a page of `limit` live tasks on the caller's board as cards, in board order.\n\n`after` is the `next_cursor` of the page above, and `before` the\n`prev_cursor` of the page below; without either, the page starts at\nthe top of the board. A read past either end of the board returns the\npage at that end. With a query `q`, the pages hold the live tasks\nwhose cards hold any of its words instead, best match first, as\n`board_search` ranks them. A worker whose session no longer exists is\nleft off its card. The count of tasks without a manager covers the\nwhole board.",
         "operationId": "read_board_v1_agent_tasks_board_get",
         "parameters": [
           {
@@ -18794,7 +18816,7 @@
             "required": false,
             "schema": {
               "default": 20,
-              "maximum": 1000,
+              "maximum": 100,
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
@@ -18809,6 +18831,40 @@
               "maxLength": 200,
               "title": "Q",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
             }
           }
         ],
