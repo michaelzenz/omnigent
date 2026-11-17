@@ -79,7 +79,7 @@ describe("TaskCard", () => {
     expect(card.queryByText(/\*\*/)).toBeNull();
     expect(card.getByText("active")).toBeInTheDocument();
     expect(card.getByText("Storage")).toBeInTheDocument();
-    expect(card.getByText("P1")).toBeInTheDocument();
+    expect(card.getByTestId("task-card-priority-t1")).toHaveTextContent("P1");
     expect(card.queryByText("Unmanaged")).toBeNull();
   });
 
@@ -136,6 +136,18 @@ describe("TaskCard", () => {
     fireEvent.click(screen.getByTestId(button));
 
     expect(await sentRequest()).toEqual(expected);
+  });
+
+  it("saves the priority picked from the colored menu", async () => {
+    renderCard(agentTask("t1", { priority: 2 }));
+    const trigger = screen.getByTestId("task-card-priority-t1");
+    expect(trigger).toHaveTextContent("P2");
+
+    fireEvent.pointerDown(trigger, new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByTestId("task-card-priority-option-0"));
+
+    expect(await sentRequest()).toEqual(["/v1/agent-tasks/t1", "PATCH", { priority: 0 }]);
   });
 
   it("asks before it deletes the task permanently", async () => {

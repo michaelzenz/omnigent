@@ -103,6 +103,8 @@ export interface AgentManager {
 /** Fields a card can change on a task. */
 export interface AgentTaskChanges {
   state?: AgentTaskState;
+  /** 0 (P0, most urgent) to 3 (P3). */
+  priority?: number;
 }
 
 export const GLOBALHUB_TASKS_QUERY_KEY = ["globalhub-tasks"] as const;
@@ -183,7 +185,7 @@ function useTaskAction<T = void>(action: (variables: T) => Promise<void>) {
   });
 }
 
-/** Change a task's state; ``agent-resolved`` also moves it to the end. */
+/** Change a task's state or priority; ``agent-resolved`` also moves it to the end. */
 export function usePatchAgentTask(taskId: string) {
   return useTaskAction((changes: AgentTaskChanges) =>
     sendTaskRequest(taskPath(taskId), {

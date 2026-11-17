@@ -5,6 +5,13 @@ import { RunningDot } from "@/components/RunningDot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   type AgentTask,
   type AgentTaskCard,
   useDeleteAgentTaskPermanently,
@@ -29,6 +36,29 @@ const STATE_BADGE_CLASSES: Record<AgentTask["state"], string> = {
     "border-[rgba(120,113,108,0.45)] bg-[rgba(120,113,108,0.06)] text-[#78716c] dark:bg-[rgba(120,113,108,0.08)] dark:text-[#a8a29e]",
 };
 
+const PRIORITY_COLORS = [
+  {
+    value: 0,
+    pill: "border-[rgba(239,68,68,0.55)] bg-[rgba(239,68,68,0.07)] text-[#b91c1c] dark:bg-[rgba(239,68,68,0.08)] dark:text-[#f87171]",
+    dot: "bg-[#ef4444]",
+  },
+  {
+    value: 1,
+    pill: "border-[rgba(249,115,22,0.55)] bg-[rgba(249,115,22,0.07)] text-[#c2410c] dark:bg-[rgba(249,115,22,0.08)] dark:text-[#fb923c]",
+    dot: "bg-[#f97316]",
+  },
+  {
+    value: 2,
+    pill: "border-[rgba(234,179,8,0.6)] bg-[rgba(234,179,8,0.09)] text-[#a16207] dark:bg-[rgba(234,179,8,0.08)] dark:text-[#facc15]",
+    dot: "bg-[#eab308]",
+  },
+  {
+    value: 3,
+    pill: "border-[rgba(34,197,94,0.55)] bg-[rgba(34,197,94,0.07)] text-[#15803d] dark:bg-[rgba(34,197,94,0.08)] dark:text-[#4ade80]",
+    dot: "bg-[#22c55e]",
+  },
+];
+
 interface TaskCardProps {
   task: AgentTaskCard;
   /** The owning manager's name, or ``null`` until the managers load. */
@@ -48,8 +78,12 @@ export const TaskCard = memo(function TaskCard({
 }: TaskCardProps) {
   const moveToEnd = useMoveTaskToQueueEnd(task.id);
   const resolve = usePatchAgentTask(task.id);
+  const reprioritize = usePatchAgentTask(task.id);
   const resolved = task.state === "agent-resolved";
-  const failure = moveToEnd.error ?? resolve.error;
+  const failure = moveToEnd.error ?? resolve.error ?? reprioritize.error;
+  const priority = reprioritize.isPending
+    ? (reprioritize.variables?.priority ?? task.priority)
+    : task.priority;
   const workersRunning = task.workers.some(
     (worker) => getSessionState(worker.session)?.kind === "running",
   );
@@ -150,7 +184,14 @@ export const TaskCard = memo(function TaskCard({
             </TaskDetail>
             <TaskDetail label="Workers">{task.workers.length}</TaskDetail>
             <TaskDetail label="Created">{relativeTime(task.created_at * 1000)}</TaskDetail>
-            <TaskDetail label="Priority">P{task.priority}</TaskDetail>
+            <TaskDetail label="Priority">
+              <PrioritySelect
+                taskId={task.id}
+                priority={priority}
+                disabled={reprioritize.isPending}
+                onChange={(value) => reprioritize.mutate({ priority: value })}
+              />
+            </TaskDetail>
           </dl>
         </div>
         <div className="relative min-w-0">
@@ -185,6 +226,61 @@ function ManagerName({
       <MessageSquareIcon aria-hidden />
       <span className="truncate">{title}</span>
     </ChatButton>
+  );
+}
+
+/** The task's priority as a colored menu, P0 (red) to P3 (green); a pick saves it at once. */
+function PrioritySelect({
+  taskId,
+  priority,
+  disabled,
+  onChange,
+}: {
+  taskId: string;
+  priority: number;
+  disabled: boolean;
+  onChange: (priority: number) => void;
+}) {
+  return (
+    <Select
+      value={String(priority)}
+      disabled={disabled}
+      onValueChange={(value) => onChange(Number(value))}
+    >
+      <SelectTrigger
+        size="sm"
+        aria-label="Priority"
+        className={cn("border-[1.5px] font-semibold", PRIORITY_COLORS[priority]?.pill)}
+        data-testid={`task-card-priority-${taskId}`}
+      >
+        <SelectValue>
+          <PriorityLabel priority={priority} />
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {PRIORITY_COLORS.map(({ value }) => (
+          <SelectItem
+            key={value}
+            value={String(value)}
+            data-testid={`task-card-priority-option-${value}`}
+          >
+            <PriorityLabel priority={value} />
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function PriorityLabel({ priority }: { priority: number }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span
+        aria-hidden
+        className={cn("size-2 shrink-0 rounded-full", PRIORITY_COLORS[priority]?.dot)}
+      />
+      P{priority}
+    </span>
   );
 }
 
