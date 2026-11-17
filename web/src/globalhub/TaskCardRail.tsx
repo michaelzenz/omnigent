@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronRightIcon, MessageSquareIcon, UnlinkIcon, UsersIcon, XIcon } from "lucide-react";
+import { ChevronRightIcon, MessageSquareIcon, UsersIcon, XIcon } from "lucide-react";
 import { SessionStateBadge } from "@/components/SessionStateBadge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -7,12 +7,10 @@ import {
   type AgentTaskCard,
   type AgentTaskWorker,
   useDeleteTaskAsset,
-  useUntrackWorker,
 } from "@/hooks/useGlobalHubTasks";
 import { getSessionState } from "@/hooks/useSessionState";
 import { cn } from "@/lib/utils";
 import { groupAssets } from "./assetGroups";
-import { ConfirmDialog } from "./ConfirmDialog";
 import { ChatButton } from "./GlobalHubChat";
 import { OpenSessionLink } from "./OpenSessionLink";
 import { useWorkersWithUpdates } from "./useWorkerUpdates";
@@ -201,68 +199,38 @@ function WorkerList({
   /** The workers whose session has new messages. */
   updatedIds: ReadonlySet<string>;
 }) {
-  const untrack = useUntrackWorker();
-  const [confirming, setConfirming] = useState<AgentTaskWorker | null>(null);
-  const close = () => setConfirming(null);
   if (workers.length === 0) {
     return <p className="p-1 text-sm text-muted-foreground">No workers yet.</p>;
   }
   return (
-    <>
-      <ul className="space-y-2">
-        {workers.map((worker) => {
-          const label = workerLabel(worker);
-          // As on the sidebar, approvals and running turns outrank the dot.
-          const state =
-            getSessionState(worker.session) ??
-            (updatedIds.has(worker.id) ? { kind: "unseen" as const } : null);
-          return (
-            <li
-              key={worker.id}
-              className={cn(
-                "flex flex-col gap-1.5 rounded-lg border border-border bg-background p-2",
-                matchedIds.includes(worker.id) && SEARCH_MATCH_CLASSES,
-              )}
-              data-testid={`task-worker-${worker.id}`}
-            >
-              <span className="text-sm font-medium break-words" data-board-search-text>
-                {label}
-              </span>
-              <div className="flex min-w-0 items-center justify-between gap-2">
-                {state ? <SessionStateBadge state={state} /> : <span />}
-                <div className="flex shrink-0 items-center gap-1">
-                  <WorkerSessionButtons worker={worker} />
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    className="text-muted-foreground hover:text-destructive"
-                    aria-label={`Untrack ${label}`}
-                    title="Untrack"
-                    onClick={() => setConfirming(worker)}
-                  >
-                    <UnlinkIcon aria-hidden />
-                  </Button>
-                </div>
+    <ul className="space-y-2">
+      {workers.map((worker) => {
+        // As on the sidebar, approvals and running turns outrank the dot.
+        const state =
+          getSessionState(worker.session) ??
+          (updatedIds.has(worker.id) ? { kind: "unseen" as const } : null);
+        return (
+          <li
+            key={worker.id}
+            className={cn(
+              "flex flex-col gap-1.5 rounded-lg border border-border bg-background p-2",
+              matchedIds.includes(worker.id) && SEARCH_MATCH_CLASSES,
+            )}
+            data-testid={`task-worker-${worker.id}`}
+          >
+            <span className="text-sm font-medium break-words" data-board-search-text>
+              {workerLabel(worker)}
+            </span>
+            <div className="flex min-w-0 items-center justify-between gap-2">
+              {state ? <SessionStateBadge state={state} /> : <span />}
+              <div className="flex shrink-0 items-center gap-1">
+                <WorkerSessionButtons worker={worker} />
               </div>
-            </li>
-          );
-        })}
-      </ul>
-      <ConfirmDialog
-        open={confirming !== null}
-        onOpenChange={(open) => {
-          if (!open) close();
-        }}
-        title="Untrack this worker?"
-        description="The session keeps running. Its next finished turn goes to the broker, which can add it to a task again."
-        confirmLabel="Untrack"
-        pending={untrack.isPending}
-        error={untrack.error}
-        onConfirm={() => {
-          if (confirming) untrack.mutate(confirming.id, { onSuccess: close });
-        }}
-      />
-    </>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

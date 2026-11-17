@@ -138,19 +138,16 @@ describe("TaskCard", () => {
     expect(await sentRequest()).toEqual(expected);
   });
 
-  it.each([
-    { button: "task-card-archive-t1", path: "/v1/agent-tasks/t1" },
-    { button: "task-card-delete-t1", path: "/v1/agent-tasks/t1/permanent" },
-  ])("$button asks before it sends DELETE", async ({ button, path }) => {
+  it("asks before it deletes the task permanently", async () => {
     renderCard(agentTask("t1"));
 
-    fireEvent.click(screen.getByTestId(button));
+    fireEvent.click(screen.getByTestId("task-card-delete-t1"));
     const sentBeforeConfirming = fetchMock.mock.calls.length;
     fireEvent.click(await screen.findByTestId("task-confirm-button"));
 
     expect([sentBeforeConfirming, ...(await sentRequest())]).toEqual([
       0,
-      path,
+      "/v1/agent-tasks/t1/permanent",
       "DELETE",
       undefined,
     ]);

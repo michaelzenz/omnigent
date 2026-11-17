@@ -1,5 +1,5 @@
 import { memo, type ReactNode, useState } from "react";
-import { ArchiveIcon, CheckIcon, MessageSquareIcon, XIcon } from "lucide-react";
+import { CheckIcon, MessageSquareIcon, XIcon } from "lucide-react";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { RunningDot } from "@/components/RunningDot";
 import { Badge } from "@/components/ui/badge";
@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import {
   type AgentTask,
   type AgentTaskCard,
-  useArchiveAgentTask,
   useDeleteAgentTaskPermanently,
   useMoveTaskToQueueEnd,
   usePatchAgentTask,
@@ -122,7 +121,7 @@ export const TaskCard = memo(function TaskCard({
                 <CheckIcon className="size-4 text-[#15803d] dark:text-[#4ade80]" aria-hidden />
               </Button>
             )}
-            <RemoveTaskButtons task={task} />
+            <DeleteTaskButton task={task} />
           </div>
         </div>
         {failure && (
@@ -179,10 +178,11 @@ function ManagerName({
     <ChatButton
       target={{ sessionId, title, kind: "Manager" }}
       label={`Chat with ${title}`}
-      variant="link"
-      className="h-auto max-w-full justify-start gap-1 p-0 font-medium text-foreground aria-pressed:text-primary"
+      variant="outline"
+      size="lg"
+      className="w-full justify-start font-medium aria-pressed:bg-accent aria-pressed:text-foreground"
     >
-      <MessageSquareIcon className="size-3.5 shrink-0" aria-hidden />
+      <MessageSquareIcon aria-hidden />
       <span className="truncate">{title}</span>
     </ChatButton>
   );
@@ -199,54 +199,28 @@ function TaskDetail({ label, children }: { label: string; children: ReactNode })
   );
 }
 
-function RemoveTaskButtons({ task }: { task: AgentTask }) {
-  const archive = useArchiveAgentTask(task.id);
+function DeleteTaskButton({ task }: { task: AgentTask }) {
   const remove = useDeleteAgentTaskPermanently(task.id);
-  const [confirming, setConfirming] = useState<"archive" | "delete" | null>(null);
-  const pending = archive.isPending || remove.isPending;
-  const close = () => setConfirming(null);
-  const onOpenChange = (open: boolean) => {
-    if (!open) close();
-  };
+  const [confirming, setConfirming] = useState(false);
+  const close = () => setConfirming(false);
 
   return (
     <>
       <Button
         variant="ghost"
         size="icon-sm"
-        disabled={pending}
-        aria-label="Archive task"
-        title="Archive task"
-        onClick={() => setConfirming("archive")}
-        data-testid={`task-card-archive-${task.id}`}
-      >
-        <ArchiveIcon className="size-4" aria-hidden />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
         className="hover:bg-destructive/10!"
-        disabled={pending}
+        disabled={remove.isPending}
         aria-label="Delete task permanently"
         title="Delete task permanently"
-        onClick={() => setConfirming("delete")}
+        onClick={() => setConfirming(true)}
         data-testid={`task-card-delete-${task.id}`}
       >
         <XIcon className="size-4 text-destructive" aria-hidden />
       </Button>
       <ConfirmDialog
-        open={confirming === "archive"}
-        onOpenChange={onOpenChange}
-        title="Archive task?"
-        description="The task leaves the board, but its data is kept."
-        confirmLabel="Archive"
-        pending={archive.isPending}
-        error={archive.error}
-        onConfirm={() => archive.mutate(undefined, { onSuccess: close })}
-      />
-      <ConfirmDialog
-        open={confirming === "delete"}
-        onOpenChange={onOpenChange}
+        open={confirming}
+        onOpenChange={setConfirming}
         title="Delete task permanently?"
         description="This cannot be undone. The task is removed with its overview and links. Its sessions stay in your session list."
         confirmLabel="Delete permanently"

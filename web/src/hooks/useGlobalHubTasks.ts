@@ -201,24 +201,10 @@ export function useMoveTaskToQueueEnd(taskId: string) {
   );
 }
 
-/** Take a task off the board and keep its data. */
-export function useArchiveAgentTask(taskId: string) {
-  return useTaskAction(() => sendTaskRequest(taskPath(taskId), { method: "DELETE" }));
-}
-
 /** Remove a task for good, with its workers and links. */
 export function useDeleteAgentTaskPermanently(taskId: string) {
   return useTaskAction(() =>
     sendTaskRequest(`${taskPath(taskId)}/permanent`, { method: "DELETE" }),
-  );
-}
-
-/** Take a session off its task; the session keeps running. */
-export function useUntrackWorker() {
-  return useTaskAction((workerId: string) =>
-    sendTaskRequest(`/v1/task-workers/${encodeURIComponent(workerId)}/untrack`, {
-      method: "POST",
-    }),
   );
 }
 

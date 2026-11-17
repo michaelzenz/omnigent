@@ -193,19 +193,4 @@ describe("TaskCardRail", () => {
     expect(screen.getByTestId("task-asset-a2")).toHaveClass("ring-amber-400/50");
     expect(screen.getByTestId("task-asset-a1")).not.toHaveClass("ring-amber-400/50");
   });
-
-  it("untracks a worker after asking", async () => {
-    renderRail(agentTask("t1", { workers: [taskWorker("w1", { title: "Fixing retries" })] }));
-    openWorkersTab();
-
-    fireEvent.click(screen.getByRole("button", { name: "Untrack Fixing retries" }));
-    const sentBeforeConfirming = fetchMock.mock.calls.length;
-    fireEvent.click(await screen.findByTestId("task-confirm-button"));
-
-    expect([sentBeforeConfirming, ...(await sentRequest())]).toEqual([
-      0,
-      "/v1/task-workers/w1/untrack",
-      "POST",
-    ]);
-  });
 });
