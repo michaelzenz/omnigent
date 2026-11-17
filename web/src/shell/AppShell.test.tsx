@@ -638,6 +638,7 @@ function renderShell(
         }
       />
       <Route path="extensions/:extensionId/*" element={<div>extension page</div>} />
+      <Route path="globalhub" element={<div>globalhub page</div>} />
     </>,
     <AppShellWithRerenderProbe enabled={options.rerenderable === true} />,
   );
@@ -3057,6 +3058,41 @@ describe("Extension pages own the header", () => {
 
     expect(document.querySelector("header.chat-header")).not.toBeNull();
     expect(screen.getByRole("main")).toHaveAttribute("data-shell-header", "visible");
+  });
+
+  it("lets GlobalHub own the header while the sidebar is open", () => {
+    mockConversations([]);
+    renderShell("/globalhub");
+
+    expect(screen.getByText("globalhub page")).toBeInTheDocument();
+    expect(screen.getByRole("main")).toHaveAttribute("data-shell-header", "visible");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open sidebar" }));
+
+    expect(document.querySelector("header.chat-header")).toBeNull();
+    expect(screen.getByRole("main")).toHaveAttribute("data-shell-header", "hidden");
+  });
+
+  it("lets GlobalHub own the header in the macOS desktop app with the sidebar collapsed", () => {
+    vi.stubGlobal("omnigentDesktop", {
+      kind: "electron",
+      setBadgeCount: vi.fn(),
+      onDesktopCommand: () => () => {},
+      setDesktopCommandState: () => {},
+    });
+    const userAgent = vi
+      .spyOn(navigator, "userAgent", "get")
+      .mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
+    try {
+      mockConversations([]);
+      renderShell("/globalhub");
+
+      expect(document.querySelector("header.chat-header")).toBeNull();
+      expect(screen.getByRole("main")).toHaveAttribute("data-shell-header", "hidden");
+    } finally {
+      userAgent.mockRestore();
+      vi.unstubAllGlobals();
+    }
   });
 });
 

@@ -406,10 +406,6 @@ function AppShellImpl() {
   const [searchParams, setSearchParams] = useSearchParams();
   const agentsPanelRequested = searchParams.get("panel") === "agents";
   const [sidebarOpen, setSidebarOpen] = useCanvasSidebar(canvasMode, initialSidebarOpen);
-  // Extension pages own their top chrome. The shell header only carries the
-  // collapsed-sidebar toggle there, so skip it while the sidebar is open and
-  // let the page use the full height (ExtensionViewHost drops its inset).
-  const extensionOwnsHeader = extensionId !== undefined && sidebarOpen;
   const [sidebarPeek, setSidebarPeek] = useState(false);
   useEffect(() => {
     if (canvasMode) setSidebarPeek(false);
@@ -449,6 +445,13 @@ function AppShellImpl() {
   // Below md an open sidebar is a full-window drawer, so narrowing closes it
   // (except the settings menu) and remembers the desktop state for widening.
   const mobileViewport = useIsMobileViewport();
+  // Extension pages and GlobalHub own their top chrome; the shell header only
+  // carries the collapsed-sidebar toggle there. The macOS title-bar cluster has
+  // its own toggle, so GlobalHub drops the header there at desktop widths.
+  const onGlobalHub = location.pathname.replace(/\/$/, "") === rebasePath("/globalhub");
+  const pageOwnsHeader =
+    (extensionId !== undefined || onGlobalHub) &&
+    (sidebarOpen || (onGlobalHub && isMacElectronShell() && !mobileViewport));
   const atSettingsRoot =
     inSettings && location.pathname.replace(/\/$/, "") === rebasePath("/settings");
   const lastMobileViewportRef = useRef(mobileViewport);
@@ -2948,7 +2951,7 @@ function AppShellImpl() {
                   } as CSSProperties
                 }
               >
-                {!extensionOwnsHeader && (
+                {!pageOwnsHeader && (
                   <ChatHeader
                     // Real docked state — deliberately NOT `|| sidebarPeek`. Peek
                     // is a transient card floating over the collapsed layout (the
@@ -3030,7 +3033,7 @@ function AppShellImpl() {
                 )}
                 <GridSessionMain
                   className="relative flex min-h-0 min-w-0 flex-1 flex-col"
-                  data-shell-header={extensionOwnsHeader ? "hidden" : "visible"}
+                  data-shell-header={pageOwnsHeader ? "hidden" : "visible"}
                   data-session-id={conversationId}
                 >
                   <SubagentPanelOpenerContext.Provider value={openSubagentInPanel}>

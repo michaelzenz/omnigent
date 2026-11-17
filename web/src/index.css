@@ -2979,11 +2979,18 @@ html[data-electron-mac] .breadcrumb-folder {
   min-height: 0 !important;
 }
 
-/* Extension pages sit below the shell header overlay. When AppShell drops that
- * header (sidebar open on an extension route), the page takes the full height.
+/* Extension pages and GlobalHub sit below the shell header overlay. When
+ * AppShell drops that header, the page takes the full height.
  * Unlayered on purpose so it beats the responsive inset utilities. */
-main[data-shell-header="hidden"] .extension-view-host {
+main[data-shell-header="hidden"] :is(.extension-view-host, .globalhub-page) {
   padding-top: 0;
+}
+
+html[data-electron-mac]
+  .app-shell:not([data-sidebar-open])
+  main[data-shell-header="hidden"]
+  .globalhub-header {
+  padding-left: var(--mac-header-actions-clearance);
 }
 
 main[data-shell-header="hidden"] .extension-view-status {
