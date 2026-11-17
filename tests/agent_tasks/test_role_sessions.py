@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import uuid
 
 import pytest
@@ -234,3 +235,24 @@ def test_globalhub_project_is_created_once_per_user(stores: RoleSessionStores) -
         GLOBALHUB_PROJECT_NAME
     ]
     assert ensure_globalhub_project(None, ALICE) is None
+
+
+def test_the_first_role_session_announces_the_new_globalhub_project(
+    stores: RoleSessionStores,
+) -> None:
+    """Open apps learn about the project, so they can show the session inside it."""
+    announced: list[str | None] = []
+    announcing = dataclasses.replace(stores, on_project_created=announced.append)
+    manager = builtin_role(MANAGER_ROLE_KEY)
+    assert manager is not None
+
+    first = create_role_session(
+        manager, user_id=ALICE, placement=PLACEMENT, title="First", stores=announcing
+    )
+    second = create_role_session(
+        manager, user_id=ALICE, placement=PLACEMENT, title="Second", stores=announcing
+    )
+
+    assert announced == [ALICE]
+    assert first.project_id == second.project_id
+    assert first.project_id == ensure_globalhub_project(stores.project_store, ALICE)

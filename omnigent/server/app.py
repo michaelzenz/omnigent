@@ -173,6 +173,7 @@ from omnigent.server.routes.sessions import (
     CLIENT_SESSION_EVENT_TYPES,
     SessionLiveness,
     announce_hosts_changed,
+    announce_projects_changed,
     create_sessions_router,
     set_relay_host_offline_probe,
     set_server_host_registry,
@@ -4227,6 +4228,7 @@ def create_app(
             user_settings_store=user_settings_store,
             project_store=project_store,
             permission_store=permission_store,
+            on_project_created=announce_projects_changed,
         )
         app.include_router(
             create_user_settings_router(

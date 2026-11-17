@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 import weakref
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -43,6 +44,9 @@ class RoleSessionStores:
         project; ``None`` leaves them unfiled.
     :param permission_store: Grants the user ownership of their role sessions;
         ``None`` on servers without permissions.
+    :param on_project_created: Called with the user id when a role session
+        also creates the user's GlobalHub project, so that the user's open
+        apps can show the project; ``None`` tells nobody.
     """
 
     conversation_store: Any
@@ -50,6 +54,7 @@ class RoleSessionStores:
     user_settings_store: UserSettingsStore
     project_store: Any | None = None
     permission_store: Any | None = None
+    on_project_created: Callable[[str | None], None] | None = None
 
 
 def require_globalhub_placement(
@@ -102,7 +107,9 @@ def create_role_session(
         title=title,
         host_id=placement.host_id,
         workspace=placement.workspace,
-        project_id=ensure_globalhub_project(stores.project_store, user_id),
+        project_id=ensure_globalhub_project(
+            stores.project_store, user_id, on_created=stores.on_project_created
+        ),
         labels={ROLE_LABEL: role.session_label},
         model_override=model or role_definition(role, overrides).model,
     )
@@ -159,22 +166,37 @@ async def ensure_watcher_session(
         )
 
 
-def ensure_globalhub_project(project_store: Any | None, user_id: str | None) -> str | None:
+def ensure_globalhub_project(
+    project_store: Any | None,
+    user_id: str | None,
+    *,
+    on_created: Callable[[str | None], None] | None = None,
+) -> str | None:
     """Return the user's GlobalHub project id, creating the project when missing.
 
     :param project_store: The server's project store, or ``None``.
     :param user_id: The owner, or ``None`` in single-user mode.
+    :param on_created: Called with ``user_id`` when this call creates the project.
     :returns: The project id, or ``None`` when the server has no project store.
     """
-    return ensure_named_project(project_store, user_id, GLOBALHUB_PROJECT_NAME)
+    return ensure_named_project(
+        project_store, user_id, GLOBALHUB_PROJECT_NAME, on_created=on_created
+    )
 
 
-def ensure_named_project(project_store: Any | None, user_id: str | None, name: str) -> str | None:
+def ensure_named_project(
+    project_store: Any | None,
+    user_id: str | None,
+    name: str,
+    *,
+    on_created: Callable[[str | None], None] | None = None,
+) -> str | None:
     """Return the id of the user's project named ``name``, creating the project when missing.
 
     :param project_store: The server's project store, or ``None``.
     :param user_id: The owner, or ``None`` in single-user mode.
     :param name: The exact project name, e.g. ``"GlobalHub"``.
+    :param on_created: Called with ``user_id`` when this call creates the project.
     :returns: The project id, or ``None`` when the server has no project store.
     """
     if project_store is None:
@@ -183,7 +205,7 @@ def ensure_named_project(project_store: Any | None, user_id: str | None, name: s
     if existing is not None:
         return existing
     try:
-        return project_store.create(uuid.uuid4().hex, name, user_id).id
+        project_id = project_store.create(uuid.uuid4().hex, name, user_id).id
     except OmnigentError as exc:
         # Another request created the project first; use theirs.
         found = (
@@ -194,6 +216,9 @@ def ensure_named_project(project_store: Any | None, user_id: str | None, name: s
         if found is None:
             raise
         return found
+    if on_created is not None:
+        on_created(user_id)
+    return project_id
 
 
 def is_role_session_current(
