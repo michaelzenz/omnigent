@@ -262,6 +262,10 @@ function omnigentDir(plan) {
 const DEFAULT_LAUNCH = Object.freeze({ command: "omnigent", env: "" });
 
 /**
+ * The app's own build runs with `OMNIGENT_WRAPPER_BYPASS=1`: a machine can
+ * require a wrapper command for `omnigent` (`OMNIGENT_REQUIRE_WRAPPER`), and
+ * that wrapper runs another build.
+ *
  * @param {RemotePlan} plan
  * @returns {RemoteLaunch}
  */
@@ -270,6 +274,7 @@ function remoteLaunch(plan) {
   const assignments = [
     plan.dataDir && `OMNIGENT_DATA_DIR="$HOME/${plan.dataDir}"`,
     plan.configHome && `OMNIGENT_CONFIG_HOME="$HOME/${plan.configHome}"`,
+    plan.build && "OMNIGENT_WRAPPER_BYPASS=1",
     // Where the app puts the Databricks CLI when the machine has none.
     plan.build && `PATH="$HOME/${dir}/bin:$PATH"`,
   ].filter(Boolean);
@@ -547,6 +552,7 @@ function shownLaunch(plan) {
   const words = [
     plan.dataDir && `OMNIGENT_DATA_DIR=~/${plan.dataDir}`,
     plan.configHome && `OMNIGENT_CONFIG_HOME=~/${plan.configHome}`,
+    plan.build && "OMNIGENT_WRAPPER_BYPASS=1",
     plan.build ? `~/${dir}/venv/bin/omnigent` : "omnigent",
   ].filter(Boolean);
   return `${words.join(" ")} `;

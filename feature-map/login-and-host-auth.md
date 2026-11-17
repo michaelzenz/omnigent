@@ -75,7 +75,9 @@ be able to write resources without a separate Omnigent account.
   it into a venv under the app's Omnigent directory on the machine. A machine
   on another build gets that build and a restarted host. A machine without the
   Databricks CLI gets the pinned CLI in that directory's `bin`. The app refuses
-  a server whose build it can't tell before it connects. After an install, the
+  a server whose build it can't tell before it connects. The app runs its own
+  build with `OMNIGENT_WRAPPER_BYPASS=1`, so a machine that requires a wrapper
+  command for `omnigent` (`OMNIGENT_REQUIRE_WRAPPER`) still runs it. After an install, the
   venv's package and its `omnigent --version` must name the server's commit,
   or the connect stops before sign-in. The started host must report the same
   `--version` line in `host status`. The app restarts a background host on

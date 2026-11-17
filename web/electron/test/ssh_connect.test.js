@@ -241,8 +241,8 @@ describe("remote plans", () => {
   it("show the install and the remote directories in the consent window's commands", () => {
     assert.deepEqual(describeCommands(SERVER, "box", BUILD_PLAN), [
       `ssh box uv pip install 'omnigent[databricks] @ git+${FORK}@${COMMIT}' into ~/.omnigent-pmv2/venv  # when it runs another build`,
-      `ssh box OMNIGENT_DATA_DIR=~/.omnigent-pmv2 ~/.omnigent-pmv2/venv/bin/omnigent login '${SERVER}'`,
-      `ssh box OMNIGENT_DATA_DIR=~/.omnigent-pmv2 ~/.omnigent-pmv2/venv/bin/omnigent host --server '${SERVER}' --background --non-interactive`,
+      `ssh box OMNIGENT_DATA_DIR=~/.omnigent-pmv2 OMNIGENT_WRAPPER_BYPASS=1 ~/.omnigent-pmv2/venv/bin/omnigent login '${SERVER}'`,
+      `ssh box OMNIGENT_DATA_DIR=~/.omnigent-pmv2 OMNIGENT_WRAPPER_BYPASS=1 ~/.omnigent-pmv2/venv/bin/omnigent host --server '${SERVER}' --background --non-interactive`,
     ]);
     assert.deepEqual(describeCommands(SERVER, "box"), [
       `ssh box omnigent login '${SERVER}'`,
@@ -283,6 +283,7 @@ describe("buildReportScript on a real shell", () => {
       omnigent: [
         "echo warming up >&2",
         '[ "$OMNIGENT_DATA_DIR" = "$HOME/.omnigent-pmv2" ] || exit 1',
+        '[ "$OMNIGENT_WRAPPER_BYPASS" = 1 ] || exit 1',
         "echo 'omnigent 0.22.0.dev0 (c7e736d7, built 2026-11-16T10:00:00Z)'",
       ].join("\n"),
     });
@@ -1010,7 +1011,7 @@ describe("runSshConnect with the server's build", () => {
     assert.ok(install.includes(`"omnigent[databricks] @ git+${FORK}@${COMMIT}"`), install);
     assert.ok(
       login.includes(
-        `BROWSER=none OMNIGENT_DATA_DIR="$HOME/.omnigent-pmv2" PATH="$HOME/.omnigent-pmv2/bin:$PATH" $group ${VENV_OMNIGENT} login`,
+        `BROWSER=none OMNIGENT_DATA_DIR="$HOME/.omnigent-pmv2" OMNIGENT_WRAPPER_BYPASS=1 PATH="$HOME/.omnigent-pmv2/bin:$PATH" $group ${VENV_OMNIGENT} login`,
       ),
       login,
     );
@@ -1124,7 +1125,7 @@ describe("runSshConnect with the server's build", () => {
     assert.equal(result.ok, false);
     assert.equal(
       result.error,
-      `The Omnigent host on my-ec2 runs "${binaryLine(OTHER_COMMIT)}", not the installed "${binaryLine(SERVER_COMMIT)}". The app doesn't restart a foreground host, a service host, or a host for another URL. Stop it with "OMNIGENT_DATA_DIR=~/.omnigent-pmv2 ~/.omnigent-pmv2/venv/bin/omnigent host stop --server '${SERVER}'" (or "host disable" for a service), then connect again.`,
+      `The Omnigent host on my-ec2 runs "${binaryLine(OTHER_COMMIT)}", not the installed "${binaryLine(SERVER_COMMIT)}". The app doesn't restart a foreground host, a service host, or a host for another URL. Stop it with "OMNIGENT_DATA_DIR=~/.omnigent-pmv2 OMNIGENT_WRAPPER_BYPASS=1 ~/.omnigent-pmv2/venv/bin/omnigent host stop --server '${SERVER}'" (or "host disable" for a service), then connect again.`,
     );
     assert.deepEqual(execs(session), ["exec report", "exec login", "exec host"]);
   });
