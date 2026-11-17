@@ -76,6 +76,7 @@ function ChatPanelBody({ target }: { target: ChatTarget }) {
           childId={target.sessionId}
           fullSession
           readOnly={readOnly}
+          messagePrefix={target.taskId ? `taskid: ${target.taskId}\n` : undefined}
         />
       </div>
       {readOnlyReason !== null && (

@@ -170,6 +170,7 @@ export function SideChatPane({
   onStart,
   readOnly: restoredReadOnly = false,
   fullSession = false,
+  messagePrefix,
 }: {
   childId: string;
   selectionParentId?: string;
@@ -178,6 +179,8 @@ export function SideChatPane({
   readOnly?: boolean;
   /** Display an existing session with its complete history and scoped composer. */
   fullSession?: boolean;
+  /** Text put before each ordinary message, such as a task reference; slash commands go as typed. */
+  messagePrefix?: string;
 }) {
   const pending = isPendingSideChat(childId);
   const starting = useChatStore((s) => s.sideChatComposers[childId]?.starting ?? false);
@@ -525,6 +528,7 @@ export function SideChatPane({
                 starting={starting}
                 onStart={onStart ? startSideChat : undefined}
                 onSend={followSentMessage}
+                messagePrefix={messagePrefix}
               />
             )}
           </div>
@@ -555,6 +559,7 @@ function SideChatComposer({
   starting,
   onStart,
   onSend,
+  messagePrefix,
 }: {
   fullSession: boolean;
   childId: string;
@@ -570,6 +575,7 @@ function SideChatComposer({
   onStart?: (text: string) => Promise<void>;
   /** Called when a live tab sends or queues a follow-up. */
   onSend: () => void;
+  messagePrefix?: string;
 }) {
   const send = useChatStore((s) => s.send);
   const sendSlashCommand = useChatStore((s) => s.sendSlashCommand);
@@ -972,6 +978,8 @@ function SideChatComposer({
     }
     const outgoing = files.length > 0 ? files : undefined;
     const message = serializeReplyDraft({ quotes, text: trimmed });
+    const sentMessage =
+      messagePrefix && !isSlashCommandText(trimmed) ? `${messagePrefix}${message}` : message;
     const child = conversationRegistry.peek(childId)?.getState();
     if (
       queues &&
@@ -988,14 +996,16 @@ function SideChatComposer({
     ) {
       clearComposer(childId);
       onSend();
-      enqueueMessage(message, outgoing, snapshotReplyDraft({ quotes, text: trimmed }), childId);
+      enqueueMessage(sentMessage, outgoing, snapshotReplyDraft({ quotes, text: trimmed }), childId);
       return;
     }
     // A running Codex chat refuses a steered /compact; keep the draft as the main composer does.
     if (isCompactControl(harness, message, outgoing) && rejectBusyCompact(childId)) return;
     clearComposer(childId);
     onSend();
-    void send(message, agentId, outgoing, { pinnedConversationId: childId }).finally(refreshLabels);
+    void send(sentMessage, agentId, outgoing, { pinnedConversationId: childId }).finally(
+      refreshLabels,
+    );
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, intent: ComposerKeyIntent) => {

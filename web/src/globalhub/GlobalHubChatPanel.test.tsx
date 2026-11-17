@@ -12,12 +12,18 @@ vi.mock("@/lib/identity", async (importOriginal) => ({
   getCurrentUserId: () => identity.userId,
 }));
 vi.mock("@/components/chat/SideChatPane", () => ({
-  SideChatPane: (props: { childId: string; fullSession?: boolean; readOnly?: boolean }) => (
+  SideChatPane: (props: {
+    childId: string;
+    fullSession?: boolean;
+    readOnly?: boolean;
+    messagePrefix?: string;
+  }) => (
     <div
       data-testid="side-chat"
       data-session={props.childId}
       data-full-session={String(props.fullSession)}
       data-read-only={String(props.readOnly)}
+      data-message-prefix={props.messagePrefix ?? ""}
     />
   ),
 }));
@@ -84,11 +90,12 @@ describe("GlobalHubChatPanel", () => {
     expect(screen.getByText("Manager")).toBeInTheDocument();
     const chat = screen.getByTestId("side-chat");
     // A full session shows no settings control, so the panel cannot change the harness.
-    expect([chat.dataset.session, chat.dataset.fullSession, chat.dataset.readOnly]).toEqual([
-      "s-m1",
-      "true",
-      "false",
-    ]);
+    expect([
+      chat.dataset.session,
+      chat.dataset.fullSession,
+      chat.dataset.readOnly,
+      chat.dataset.messagePrefix,
+    ]).toEqual(["s-m1", "true", "false", ""]);
     expect(screen.getByRole("link", { name: "Open Session s-m1 full screen" })).toHaveAttribute(
       "href",
       "/c/s-m1",
@@ -113,6 +120,30 @@ describe("GlobalHubChatPanel", () => {
     await press(screen.getByRole("button", { name: "Chat with Fixing retries" }));
     await press(screen.getByRole("button", { name: "Chat with Fixing retries" }));
     expect(panel()).toBeNull();
+  });
+
+  it("starts each message with the task id of the card that opened the manager's chat", async () => {
+    render(
+      <MemoryRouter>
+        <GlobalHubChatProvider>
+          <ChatButton target={{ ...MANAGER, taskId: "t-a" }} label="Chat about A" />
+          <ChatButton target={{ ...MANAGER, taskId: "t-b" }} label="Chat about B" />
+          <div className="relative">
+            <GlobalHubChatPanel />
+          </div>
+        </GlobalHubChatProvider>
+      </MemoryRouter>,
+    );
+
+    await press(screen.getByRole("button", { name: "Chat about A" }));
+    expect(screen.getByTestId("side-chat").dataset.messagePrefix).toBe("taskid: t-a\n");
+
+    await press(screen.getByRole("button", { name: "Chat about B" }));
+    expect(screen.getByTestId("side-chat").dataset.messagePrefix).toBe("taskid: t-b\n");
+    expect(screen.getByRole("button", { name: "Chat about A" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
   });
 
   it("keeps each user's resized width for every later open, and never goes below 320 px", () => {

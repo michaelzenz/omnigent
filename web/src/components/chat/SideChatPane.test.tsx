@@ -1301,6 +1301,22 @@ describe("side-chat interrupt", () => {
     ]);
   });
 
+  it("puts the message prefix before an ordinary message but not before a slash command", () => {
+    conversationRegistry.acquire(childId).setState({ sessionStatus: "idle" });
+    renderPane(<SideChatPane childId={childId} fullSession messagePrefix={"taskid: t1\n"} />);
+    const input = screen.getByTestId("side-chat-input");
+
+    fireEvent.change(input, { target: { value: "How is it going?" } });
+    fireEvent.click(screen.getByTestId("side-chat-send"));
+    fireEvent.change(input, { target: { value: "/compact" } });
+    fireEvent.click(screen.getByTestId("side-chat-send"));
+
+    expect(send.mock.calls.map(([message]) => message)).toEqual([
+      "taskid: t1\nHow is it going?",
+      "/compact",
+    ]);
+  });
+
   it("keeps a /compact draft that a running Codex side chat refuses to steer", () => {
     writeAlwaysSteer(true);
     renderPane(<SideChatPane childId={childId} />);

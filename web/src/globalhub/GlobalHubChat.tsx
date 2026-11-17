@@ -15,12 +15,18 @@ export interface ChatTarget {
   /** Shown until the session loads. */
   title: string;
   kind: "Manager" | "Worker";
+  /** The task the chat is about; each message then starts with ``taskid: <id>``. */
+  taskId?: string;
+}
+
+function sameChat(left: ChatTarget, right: ChatTarget): boolean {
+  return left.sessionId === right.sessionId && left.taskId === right.taskId;
 }
 
 interface GlobalHubChat {
   /** The session the panel shows, or ``null`` while it is closed. */
   target: ChatTarget | null;
-  /** Show ``target``, or close the panel when it already shows that session. */
+  /** Show ``target``, or close the panel when it already shows that session for that task. */
   toggle: (target: ChatTarget) => void;
   close: () => void;
 }
@@ -36,7 +42,7 @@ export function GlobalHubChatProvider({ children }: { children: ReactNode }) {
   const [target, setTarget] = useState<ChatTarget | null>(null);
   const toggle = useCallback(
     (next: ChatTarget) =>
-      setTarget((current) => (current?.sessionId === next.sessionId ? null : next)),
+      setTarget((current) => (current !== null && sameChat(current, next) ? null : next)),
     [],
   );
   const close = useCallback(() => setTarget(null), []);
@@ -67,7 +73,7 @@ export function ChatButton({ target, label, ...buttonProps }: ChatButtonProps) {
       data-globalhub-chat-opener=""
       aria-label={label}
       title={label}
-      aria-pressed={chat.target?.sessionId === target.sessionId}
+      aria-pressed={chat.target !== null && sameChat(chat.target, target)}
       onClick={() => chat.toggle(target)}
     />
   );

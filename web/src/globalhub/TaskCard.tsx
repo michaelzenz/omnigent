@@ -217,7 +217,7 @@ function ManagerName({
   if (sessionId === null) return title;
   return (
     <ChatButton
-      target={{ sessionId, title, kind: "Manager" }}
+      target={{ sessionId, title, kind: "Manager", taskId: task.id }}
       label={`Chat with ${title}`}
       variant="outline"
       size="lg"
