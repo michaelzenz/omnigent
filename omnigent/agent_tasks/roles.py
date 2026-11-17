@@ -52,7 +52,7 @@ class BuiltinRole:
 
     def default_manual(self) -> str:
         """Return the manual packaged with omnigent for this role."""
-        return _read_packaged_manual(self.manual_file)
+        return read_packaged_manual(self.manual_file)
 
 
 @dataclass(frozen=True)
@@ -155,5 +155,6 @@ def role_definition(role: BuiltinRole, overrides: Mapping[str, str]) -> RoleDefi
 
 
 @cache
-def _read_packaged_manual(file_name: str) -> str:
+def read_packaged_manual(file_name: str) -> str:
+    """Return a manual packaged with omnigent, e.g. ``"task_watcher.md"``."""
     return files("omnigent.resources.role_manuals").joinpath(file_name).read_text(encoding="utf-8")

@@ -4236,6 +4236,7 @@ def create_app(
                 auth_provider,
                 schedules=board_stores.role_schedules if board_stores else None,
                 role_sessions=role_session_stores,
+                watchers=board_stores.watchers if board_stores else None,
             ),
             prefix="/v1",
             tags=["settings"],

@@ -31,6 +31,7 @@ ROLE_PROFILES_ROUTE = "/v1/agent-tasks/roles/profiles"
 MANAGER_PROFILE_ROUTE = "/v1/agent-tasks/roles/manager:default/profile"
 CUSTODIAN_PROFILE_ROUTE = "/v1/agent-tasks/roles/custodian/profile"
 CUSTODIAN_SESSION_ROUTE = "/v1/agent-tasks/roles/custodian/session"
+WATCHERS_ROUTE = "/v1/agent-tasks/watchers"
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
 
@@ -202,7 +203,7 @@ async def test_custodian_profile_saves_its_schedule_and_refuses_a_bad_one(
     assert deleted.json()["schedule"] is None
 
 
-async def test_the_first_placement_turns_on_the_custodians_daily_sweep(
+async def test_the_first_placement_turns_on_the_custodians_sweep_and_adds_the_default_watchers(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def canonical_workspace(**_kwargs: object) -> str:
@@ -219,14 +220,34 @@ async def test_the_first_placement_turns_on_the_custodians_daily_sweep(
     )
     first = await client.put(GLOBALHUB_ROUTE, json={**placement, "timezone": "America/New_York"})
     started = (await client.get(CUSTODIAN_PROFILE_ROUTE)).json()["schedule"]
+    default_watchers = (await client.get(WATCHERS_ROUTE)).json()["data"]
+    await client.delete(f"{WATCHERS_ROUTE}/{default_watchers[0]['id']}")
     off = {"enabled": False, "rrule": started["rrule"], "timezone": started["timezone"]}
     await client.put(CUSTODIAN_PROFILE_ROUTE, json={"schedule": off})
     await client.put(GLOBALHUB_ROUTE, json=GLOBALHUB_UNSET)
     await client.put(GLOBALHUB_ROUTE, json={**placement, "timezone": "UTC"})
     kept = (await client.get(CUSTODIAN_PROFILE_ROUTE)).json()["schedule"]
+    watchers_after_placing_again = (await client.get(WATCHERS_ROUTE)).json()["data"]
 
     assert refused.status_code == 400
     assert first.status_code == 200, first.text
+    assert [
+        (watcher["name"], watcher["customized"], watcher["schedule"]["rrule"])
+        for watcher in default_watchers
+    ] == [
+        ("GitHub watcher", ["manual"], "FREQ=MINUTELY;INTERVAL=30"),
+        ("Slack watcher", ["manual"], "FREQ=MINUTELY;INTERVAL=30"),
+        ("Jira watcher", ["manual"], "FREQ=MINUTELY;INTERVAL=30"),
+    ]
+    assert [watcher["schedule"]["next_run_at"] for watcher in default_watchers] == [
+        1_800_001_800,
+        1_800_001_800,
+        1_800_001_800,
+    ]
+    assert [watcher["name"] for watcher in watchers_after_placing_again] == [
+        "Slack watcher",
+        "Jira watcher",
+    ]
     # Now is 08:00 UTC on 2027-01-15, a winter day, so 09:00 in New York is 14:00 UTC.
     assert started == {
         "enabled": True,

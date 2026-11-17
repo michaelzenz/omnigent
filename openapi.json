@@ -30406,7 +30406,7 @@
         ]
       },
       "put": {
-        "description": "Set or clear where the caller's GlobalHub role sessions run.\n\nThe host must be the caller's own and online, and the workspace an\nexisting directory on it. The canonical path is stored. A caller's\nfirst placement turns on the custodian's daily sweep, unless the caller\nhas a custodian schedule already. Each placement starts the custodian\nsession there, unless it runs there already.",
+        "description": "Set or clear where the caller's GlobalHub role sessions run.\n\nThe host must be the caller's own and online, and the workspace an\nexisting directory on it. The canonical path is stored. A caller's\nfirst placement turns on the custodian's daily sweep, unless the caller\nhas a custodian schedule already. It also adds the default GitHub,\nSlack and Jira watchers, unless the caller got them before.\nEach placement starts the custodian session there, unless it runs\nthere already.",
         "operationId": "save_globalhub_settings_v1_settings_globalhub_put",
         "requestBody": {
           "content": {

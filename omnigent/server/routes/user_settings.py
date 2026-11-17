@@ -7,6 +7,7 @@ import logging
 
 from fastapi import APIRouter, Request
 
+from omnigent.agent_tasks.default_watchers import add_default_watchers
 from omnigent.agent_tasks.role_schedules import (
     DEFAULT_CUSTODIAN_RRULE,
     require_role_schedule,
@@ -31,6 +32,7 @@ from omnigent.server.schemas import (
 from omnigent.server.server_config import SESSION_TITLE_INSTRUCTIONS_MAX_CHARS
 from omnigent.stores.role_schedule_store import RoleScheduleStore
 from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
+from omnigent.stores.watcher_store import WatcherStore
 
 _logger = logging.getLogger(__name__)
 
@@ -40,6 +42,7 @@ def create_user_settings_router(
     auth_provider: AuthProvider | None = None,
     schedules: RoleScheduleStore | None = None,
     role_sessions: RoleSessionStores | None = None,
+    watchers: WatcherStore | None = None,
 ) -> APIRouter:
     """Build the caller-scoped settings router.
 
@@ -49,6 +52,8 @@ def create_user_settings_router(
         server without the GlobalHub board.
     :param role_sessions: Where GlobalHub role sessions are created; ``None``
         starts no custodian when the caller picks a placement.
+    :param watchers: Where a new GlobalHub user's default watchers are created;
+        ``None`` adds none.
     :returns: A configured :class:`APIRouter`.
     """
     router = APIRouter()
@@ -110,8 +115,10 @@ def create_user_settings_router(
         The host must be the caller's own and online, and the workspace an
         existing directory on it. The canonical path is stored. A caller's
         first placement turns on the custodian's daily sweep, unless the caller
-        has a custodian schedule already. Each placement starts the custodian
-        session there, unless it runs there already.
+        has a custodian schedule already. It also adds the default GitHub,
+        Slack and Jira watchers, unless the caller got them before.
+        Each placement starts the custodian session there, unless it runs
+        there already.
         """
         user_id = require_user(request, auth_provider)
         timezone = body.timezone or "UTC"
@@ -139,6 +146,15 @@ def create_user_settings_router(
                 timezone=timezone,
                 now=now_epoch(),
             )
+            if watchers is not None:
+                await asyncio.to_thread(
+                    add_default_watchers,
+                    watchers,
+                    schedules,
+                    store,
+                    owner_user_id=user_id,
+                    now=now_epoch(),
+                )
         if role_sessions is not None and placement is not None:
             await _start_custodian(role_sessions, user_id)
         if body.report_new_sessions is not None:

@@ -61,6 +61,8 @@ _MAX_SESSION_ID_BYTES = 256
 GLOBALHUB_NEW_SESSION_REPORTS_PREFERENCE_KEY = "globalhub_new_session_reports"
 # Only the "off" value is stored; no row means the reports are on.
 _NEW_SESSION_REPORTS_OFF = "off"
+GLOBALHUB_DEFAULT_WATCHERS_PREFERENCE_KEY = "globalhub_default_watchers"
+_DEFAULT_WATCHERS_ADDED = "added"
 
 
 @dataclass(frozen=True)
@@ -255,6 +257,28 @@ class UserSettingsStore:
             "save_globalhub_new_session_reports",
             GLOBALHUB_NEW_SESSION_REPORTS_PREFERENCE_KEY,
             None if enabled else _NEW_SESSION_REPORTS_OFF,
+            user_id=user_id,
+        )
+
+    def get_globalhub_default_watchers_added(self, *, user_id: str | None) -> bool:
+        """Whether the user got the default GlobalHub watchers, so they are not added again."""
+        value = self._read(
+            "read_globalhub_default_watchers",
+            GLOBALHUB_DEFAULT_WATCHERS_PREFERENCE_KEY,
+            user_id=user_id,
+            max_decoded_bytes=len(_DEFAULT_WATCHERS_ADDED),
+        )
+        return value == _DEFAULT_WATCHERS_ADDED
+
+    def save_globalhub_default_watchers_added(self, *, user_id: str | None) -> None:
+        """Record that the user got the default GlobalHub watchers.
+
+        :param user_id: The user, or ``None`` in single-user mode.
+        """
+        self._write(
+            "save_globalhub_default_watchers",
+            GLOBALHUB_DEFAULT_WATCHERS_PREFERENCE_KEY,
+            _DEFAULT_WATCHERS_ADDED,
             user_id=user_id,
         )
 
