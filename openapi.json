@@ -1782,7 +1782,7 @@
         "type": "object"
       },
       "AgentTaskDeletedResponse": {
-        "description": "A task archived (`permanent` false) or permanently deleted.",
+        "description": "A task deleted permanently.",
         "properties": {
           "deleted": {
             "const": true,
@@ -1799,15 +1799,10 @@
             "default": "agent.task",
             "title": "Object",
             "type": "string"
-          },
-          "permanent": {
-            "title": "Permanent",
-            "type": "boolean"
           }
         },
         "required": [
-          "id",
-          "permanent"
+          "id"
         ],
         "title": "AgentTaskDeletedResponse",
         "type": "object"
@@ -2423,32 +2418,6 @@
           "created_at"
         ],
         "title": "AgentTaskSubscriptionResponse",
-        "type": "object"
-      },
-      "AgentTaskWorkerDeletedResponse": {
-        "description": "A worker removed from its task; its session keeps running.",
-        "properties": {
-          "deleted": {
-            "const": true,
-            "default": true,
-            "title": "Deleted",
-            "type": "boolean"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "object": {
-            "const": "agent.task.worker",
-            "default": "agent.task.worker",
-            "title": "Object",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id"
-        ],
-        "title": "AgentTaskWorkerDeletedResponse",
         "type": "object"
       },
       "AgentTaskWorkerList": {
@@ -19900,47 +19869,6 @@
       }
     },
     "/v1/agent-tasks/{task_id}": {
-      "delete": {
-        "description": "Archive one of the caller's tasks: it leaves the board but stays readable.",
-        "operationId": "archive_task_v1_agent_tasks__task_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "task_id",
-            "required": true,
-            "schema": {
-              "title": "Task Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentTaskDeletedResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Archive Task",
-        "tags": [
-          "agent-tasks"
-        ]
-      },
       "get": {
         "description": "Read one of the caller's tasks.",
         "operationId": "get_task_v1_agent_tasks__task_id__get",
@@ -31047,49 +30975,6 @@
           }
         },
         "summary": "Dismiss Event",
-        "tags": [
-          "agent-tasks"
-        ]
-      }
-    },
-    "/v1/task-workers/{worker_id}/untrack": {
-      "post": {
-        "description": "Remove one of the caller's workers from its task; the session keeps running.",
-        "operationId": "untrack_worker_v1_task_workers__worker_id__untrack_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "worker_id",
-            "required": true,
-            "schema": {
-              "title": "Worker Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentTaskWorkerDeletedResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Untrack Worker",
         "tags": [
           "agent-tasks"
         ]

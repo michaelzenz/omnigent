@@ -156,7 +156,7 @@ async def test_batch_get_skips_unknown_foreign_and_malformed_ids(
     assert [task["title"] for task in response.json()["data"]] == ["first", "second"]
 
 
-async def test_move_to_end_archive_and_permanent_delete(
+async def test_move_to_end_and_permanent_delete(
     auth_client: httpx.AsyncClient, db_uri: str
 ) -> None:
     manager_id, _ = _manager(db_uri)
@@ -166,16 +166,7 @@ async def test_move_to_end_archive_and_permanent_delete(
     await auth_client.post(f"{ROUTE}/{two}/move-to-queue-end", headers=ALICE)
     assert await _board(auth_client) == ["one", "two"]
 
-    archived = await auth_client.delete(f"{ROUTE}/{two}", headers=ALICE)
-    assert archived.json() == {
-        "object": "agent.task",
-        "id": two,
-        "deleted": True,
-        "permanent": False,
-    }
-    assert (await auth_client.get(f"{ROUTE}/{two}", headers=ALICE)).json()["state"] == "archived"
-
     assert (await auth_client.delete(f"{ROUTE}/{two}/permanent", headers=BOB)).status_code == 404
     deleted = await auth_client.delete(f"{ROUTE}/{two}/permanent", headers=ALICE)
-    assert deleted.json()["permanent"] is True
+    assert deleted.json() == {"object": "agent.task", "id": two, "deleted": True}
     assert (await auth_client.get(f"{ROUTE}/{two}", headers=ALICE)).status_code == 404

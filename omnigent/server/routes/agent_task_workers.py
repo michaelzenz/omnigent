@@ -19,7 +19,6 @@ from omnigent.server.routes._origin import require_trusted_origin
 from omnigent.server.schemas import (
     AdoptAgentTaskSessionRequest,
     AgentTaskSessionAdoption,
-    AgentTaskWorkerDeletedResponse,
     AgentTaskWorkerList,
     AgentTaskWorkerResponse,
     StartAgentTaskWorkerRequest,
@@ -124,16 +123,6 @@ def create_agent_task_workers_router(
         await require_owned_task(task_id, user_id)
         found = await asyncio.to_thread(workers.list_for_tasks, [task_id], owner_user_id=user_id)
         return AgentTaskWorkerList(data=[worker_response(worker) for worker in found])
-
-    @router.post(
-        "/task-workers/{worker_id}/untrack", response_model=AgentTaskWorkerDeletedResponse
-    )
-    async def untrack_worker(request: Request, worker_id: str) -> AgentTaskWorkerDeletedResponse:
-        """Remove one of the caller's workers from its task; the session keeps running."""
-        user_id = require_user(request, auth_provider)
-        if not await asyncio.to_thread(workers.delete, worker_id, owner_user_id=user_id):
-            raise OmnigentError("worker not found", code=ErrorCode.NOT_FOUND)
-        return AgentTaskWorkerDeletedResponse(id=worker_id)
 
     return router
 

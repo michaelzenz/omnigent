@@ -6349,12 +6349,11 @@ class BatchGetAgentTasksRequest(BaseModel):
 
 
 class AgentTaskDeletedResponse(BaseModel):
-    """A task archived (``permanent`` false) or permanently deleted."""
+    """A task deleted permanently."""
 
     object: Literal["agent.task"] = "agent.task"
     id: str
     deleted: Literal[True] = True
-    permanent: bool
 
 
 class AgentManagerTask(BaseModel):
@@ -6486,14 +6485,6 @@ class AgentTaskWorkerList(BaseModel):
 
     object: Literal["list"] = "list"
     data: list[AgentTaskWorkerResponse]
-
-
-class AgentTaskWorkerDeletedResponse(BaseModel):
-    """A worker removed from its task; its session keeps running."""
-
-    object: Literal["agent.task.worker"] = "agent.task.worker"
-    id: str
-    deleted: Literal[True] = True
 
 
 _AgentTaskWorkerHost = Annotated[str, Field(max_length=128), AfterValidator(_strip_required_text)]

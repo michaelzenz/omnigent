@@ -107,7 +107,7 @@ def test_update_retitles_only_as_asked(store: SqlAlchemyWorkerStore) -> None:
     assert store.update(worker_id, owner_user_id=BOB, title="Taken") is None
 
 
-def test_untracking_deletes_only_the_owners_worker(store: SqlAlchemyWorkerStore) -> None:
+def test_delete_removes_only_the_owners_worker(store: SqlAlchemyWorkerStore) -> None:
     worker_id = _attach(store)
 
     assert store.delete(worker_id, owner_user_id=BOB) is False

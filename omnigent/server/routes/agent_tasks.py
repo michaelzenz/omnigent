@@ -177,16 +177,6 @@ def create_agent_tasks_router(
         task = await asyncio.to_thread(tasks.move_to_board_end, task_id, owner_user_id=user_id)
         return _task_response(_require_task(task))
 
-    @router.delete("/agent-tasks/{task_id}", response_model=AgentTaskDeletedResponse)
-    async def archive_task(request: Request, task_id: str) -> AgentTaskDeletedResponse:
-        """Archive one of the caller's tasks: it leaves the board but stays readable."""
-        user_id = require_user(request, auth_provider)
-        task = await asyncio.to_thread(
-            tasks.update, task_id, owner_user_id=user_id, state="archived"
-        )
-        _require_task(task)
-        return AgentTaskDeletedResponse(id=task_id, permanent=False)
-
     @router.delete("/agent-tasks/{task_id}/permanent", response_model=AgentTaskDeletedResponse)
     async def delete_task_permanently(request: Request, task_id: str) -> AgentTaskDeletedResponse:
         """Permanently delete one of the caller's tasks, its workers, assets and subscriptions.
@@ -196,7 +186,7 @@ def create_agent_tasks_router(
         user_id = require_user(request, auth_provider)
         if not await asyncio.to_thread(tasks.delete, task_id, owner_user_id=user_id):
             raise OmnigentError("task not found", code=ErrorCode.NOT_FOUND)
-        return AgentTaskDeletedResponse(id=task_id, permanent=True)
+        return AgentTaskDeletedResponse(id=task_id)
 
     return router
 
