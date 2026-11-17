@@ -3090,8 +3090,10 @@ describe("Extension pages own the header", () => {
       expect(document.querySelector("header.chat-header")).toBeNull();
       expect(screen.getByRole("main")).toHaveAttribute("data-shell-header", "hidden");
     } finally {
+      cleanup();
       userAgent.mockRestore();
       vi.unstubAllGlobals();
+      resetDesktopCommandsForTests();
     }
   });
 });

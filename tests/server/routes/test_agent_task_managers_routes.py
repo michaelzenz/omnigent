@@ -189,7 +189,9 @@ async def test_list_shows_portfolios_missing_sessions_and_only_the_callers_manag
     dashboards = await _create_manager(auth_client, "Dashboards")
     live = await _create_task(auth_client, storage, "live")
     archived = await _create_task(auth_client, storage, "archived")
-    await auth_client.delete(f"/v1/agent-tasks/{archived}", headers=ALICE)
+    await auth_client.patch(
+        f"/v1/agent-tasks/{archived}", json={"state": "archived"}, headers=ALICE
+    )
     SqlAlchemyConversationStore(db_uri).update_conversation(
         dashboards["conversation_id"], archived=True
     )

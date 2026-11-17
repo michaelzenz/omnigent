@@ -30,6 +30,7 @@ import {
 } from "./sessionWorkspaceState";
 import {
   PINNED_WORKSPACE_TABS_STORAGE_KEY,
+  defaultWorkspaceTabs,
   readInitialWorkspaceTab,
   readPinnedWorkspaceTabs,
   writeDefaultWorkspaceTab,
@@ -43,7 +44,7 @@ it("round-trips workspace pins and default without restoring stale selections", 
   writeDefaultWorkspaceTab("changes");
   const exported = collectSettings()!;
   applyImportedSettings({ version: 1, settings: {} });
-  expect(readPinnedWorkspaceTabs()).toHaveLength(4);
+  expect(readPinnedWorkspaceTabs()).toEqual([...defaultWorkspaceTabs]);
   expect(readInitialWorkspaceTab()).toBe("files");
 
   writeSessionWorkspaceState("conv", { open: true, rightRailTab: "files" });
