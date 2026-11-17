@@ -72,7 +72,10 @@ export interface BoardSearchMatch {
   /** How many distinct query words the card holds. */
   hits: number;
   asset_ids: string[];
+  /** Workers whose label holds a query word, or whose session's recent turns are near the query. */
   worker_ids: string[];
+  /** Whether the task's own title and overview are near the query in meaning. */
+  title_match?: boolean;
 }
 
 /** A live task with the workers and assets its card shows; busy workers come first. */

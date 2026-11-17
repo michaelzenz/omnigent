@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from omnigent.agent_tasks.board_search import query_words, search_board
+from omnigent.agent_tasks.board_search import query_words, rank_with_vectors, search_board
 from omnigent.entities import Task, TaskAsset, Worker
+from omnigent.stores.task_embedding_store import TaskVectorScores, WorkerScore
 
 
 def _task(task_id: str, title: str, **fields: Any) -> Task:
@@ -97,3 +98,52 @@ def test_assets_and_workers_count_and_name_their_matches() -> None:
     )
 
     assert (match.hits, match.asset_ids, match.worker_ids) == (2, ("a1",), ("w1",))
+
+
+def test_vectors_and_words_share_one_ranking_that_marks_what_matched() -> None:
+    both_words = _task("t1", "Fix the S3 redeployment")
+    near_session = _task("t2", "Roll out the storage gateway again")
+    one_word = _task("t3", "S3 bucket cleanup")
+    near_miss = _task("t4", "Fix flaky tests")
+    shared_routed_early = _task("t5", "Shared session, routed early")
+    shared_routed_late = _task("t6", "Shared session, routed late")
+    tasks = [
+        both_words,
+        near_session,
+        one_word,
+        near_miss,
+        shared_routed_early,
+        shared_routed_late,
+    ]
+    words = query_words("s3 redeployment")
+
+    def scores(task_id: str, title: float | None, *workers: WorkerScore) -> TaskVectorScores:
+        return TaskVectorScores(task_id=task_id, title_score=title, workers=workers)
+
+    ranked = rank_with_vectors(
+        tasks,
+        search_board(tasks, words, **NOTHING_ELSE),
+        words,
+        scores={
+            "t1": scores("t1", 0.4),
+            "t2": scores("t2", 0.55, WorkerScore("w2", "s-w2", 0.8)),
+            "t3": scores("t3", 0.2),
+            "t4": scores("t4", 0.45, WorkerScore("w-hidden", "s-hidden", 0.99)),
+            "t5": scores("t5", None, WorkerScore("w5", "s-shared", 0.6)),
+            "t6": scores("t6", None, WorkerScore("w6", "s-shared", 0.6)),
+        },
+        min_score=0.5,
+        shown_worker_ids={"w2", "w5", "w6"},
+        last_active={task.id: 100 for task in tasks},
+        routed_at={("s-shared", "t5"): 10, ("s-shared", "t6"): 50},
+    )
+
+    assert [
+        (match.task.id, match.hits, match.title_match, match.worker_ids) for match in ranked
+    ] == [
+        ("t2", 0, True, ("w2",)),
+        ("t1", 2, False, ()),
+        ("t6", 0, False, ("w6",)),
+        ("t5", 0, False, ("w5",)),
+        ("t3", 1, False, ()),
+    ]

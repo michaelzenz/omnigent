@@ -38,7 +38,9 @@ NOW = 1_800_000_000
 class _Harness:
     """A dispatcher over real stores, with a settable clock and fake sends and orphan checks."""
 
-    def __init__(self, db_uri: str, packagers: Sequence[Packager] = ()) -> None:
+    def __init__(
+        self, db_uri: str, packagers: Sequence[Packager] = (), search_index: Any = None
+    ) -> None:
         conversations = SqlAlchemyConversationStore(db_uri)
         agents = SqlAlchemyAgentStore(db_uri)
         self.agents = agents
@@ -71,6 +73,7 @@ class _Harness:
             packagers=packagers,
             send=self._send,
             settle_orphans=self._settle_orphans,
+            search_index=search_index,
             clock=lambda: self.now,
         )
 
@@ -234,6 +237,28 @@ async def test_packagers_run_every_five_seconds(db_uri: str) -> None:
         await harness.run()
 
     assert runs == [NOW, NOW + 5]
+
+
+async def test_the_search_vectors_refresh_in_the_background_every_half_minute(
+    db_uri: str,
+) -> None:
+    refreshes: list[int] = []
+    never = asyncio.Event()
+
+    class _Index:
+        async def refresh(self) -> int:
+            refreshes.append(harness.now)
+            await never.wait()
+            return 0
+
+    harness = _Harness(db_uri, search_index=_Index())
+    for offset, started in ((0, 1), (29, 1), (30, 2)):
+        harness.now = NOW + offset
+        await harness.run()
+        await _until(lambda count=started: len(refreshes) == count)
+    await harness.dispatcher.stop()
+
+    assert refreshes == [NOW, NOW + 30]
 
 
 async def test_once_an_hour_tasks_with_no_change_for_a_week_turn_idle(

@@ -4,12 +4,23 @@ from __future__ import annotations
 
 import itertools
 import uuid
+from collections.abc import Sequence
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
+from fastapi import FastAPI
 
+from omnigent.agent_tasks.board_stores import open_board_stores
+from omnigent.agent_tasks.embeddings import EMBEDDING_DIMENSIONS, unit_vector
+from omnigent.agent_tasks.task_search_index import TaskSearchIndex
+from omnigent.agent_tasks.worker_turns import ConversationSessions
+from omnigent.entities.conversation import MessageData, NewConversationItem
+from omnigent.server.agent_task_delivery import SessionSendDeps
+from omnigent.server.auth import UnifiedAuthProvider
 from omnigent.server.routes import sessions
+from omnigent.server.routes.agent_task_board import create_agent_task_board_router
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store import sqlalchemy_store as conversation_tables
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -50,13 +61,17 @@ def _session(db_uri: str, title: str) -> str:
     return conversations.create_conversation(agent_id=agent_id, title=title).id
 
 
-def _worker(db_uri: str, task_id: str, session_id: str, title: str | None = None) -> None:
-    SqlAlchemyWorkerStore(db_uri).create(
-        uuid.uuid4().hex,
-        owner_user_id=ALICE_ID,
-        task_id=task_id,
-        session_id=session_id,
-        title=title,
+def _worker(db_uri: str, task_id: str, session_id: str, title: str | None = None) -> str:
+    return (
+        SqlAlchemyWorkerStore(db_uri)
+        .create(
+            uuid.uuid4().hex,
+            owner_user_id=ALICE_ID,
+            task_id=task_id,
+            session_id=session_id,
+            title=title,
+        )
+        .id
     )
 
 
@@ -180,6 +195,110 @@ async def test_a_search_returns_the_cards_that_hold_the_most_words_first_a_page_
     # The manager's name is not searched.
     assert by_manager_name["data"] == []
     assert {card["match"] is None for card in plain["data"]} == {True}
+
+
+class _DirectionEmbedder:
+    """Embeds each known text as its given direction; any other text fails the test."""
+
+    model = "test-embedder"
+
+    def __init__(self, directions: dict[str, tuple[float, float]]) -> None:
+        self._directions = directions
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        return [
+            unit_vector([*self._directions[text], *[0.0] * (EMBEDDING_DIMENSIONS - 2)])
+            for text in texts
+        ]
+
+
+async def test_a_search_with_vectors_ranks_words_and_meaning_together_and_marks_the_match(
+    db_uri: str,
+) -> None:
+    both_words = _task(db_uri, "Flaky upload retries")
+    by_its_session = _task(db_uri, "S3 writes time out")
+    one_word = _task(db_uri, "Upload the docs")
+    _task(db_uri, "Rotate the keys")
+    _task(db_uri, "Archived uploads", state="archived")
+    bobs = _task(db_uri, "S3 writes for Bob", owner=BOB_ID)
+    session_id = _session(db_uri, "https://example.com/flag")
+    conversations = SqlAlchemyConversationStore(db_uri)
+    conversations.append(
+        session_id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn",
+                data=MessageData(
+                    role="user", content=[{"type": "input_text", "text": "babysit the S3 writes"}]
+                ),
+            )
+        ],
+    )
+    worker_id = _worker(db_uri, by_its_session, session_id)
+    board = open_board_stores(conversations)
+    assert board is not None
+    index = TaskSearchIndex(
+        board.embeddings,
+        _DirectionEmbedder(
+            {
+                "flaky upload": (1.0, 0.0),
+                "Flaky upload retries": (0.6, 0.8),
+                "S3 writes time out": (0.3, 0.95),
+                "User: babysit the S3 writes": (0.8, 0.6),
+                "Upload the docs": (0.0, 1.0),
+                "Rotate the keys": (0.2, 0.98),
+                "S3 writes for Bob": (1.0, 0.0),
+            }
+        ),
+        ConversationSessions(conversations),
+        min_score=0.5,
+    )
+    await index.refresh()
+    app = FastAPI()
+    app.include_router(
+        create_agent_task_board_router(
+            board,
+            conversations,
+            SessionSendDeps(
+                conversation_store=conversations,
+                agent_store=SqlAlchemyAgentStore(db_uri),
+                app_state=SimpleNamespace(),
+            ),
+            UnifiedAuthProvider(source="header"),
+            search_index=index,
+        ),
+        prefix="/v1",
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        found = await _board(client, q="flaky upload")
+        first = await _board(client, q="flaky upload", limit=2)
+        rest = await _board(client, q="flaky upload", limit=2, after=first["next_cursor"])
+        bobs_found = await _board(client, headers=BOB, q="flaky upload")
+
+    assert [
+        (
+            card["id"],
+            card["match"]["hits"],
+            card["match"]["title_match"],
+            card["match"]["worker_ids"],
+        )
+        for card in found["data"]
+    ] == [
+        (both_words, 2, True, []),
+        (by_its_session, 0, False, [worker_id]),
+        (one_word, 1, False, []),
+    ]
+    assert [card["id"] for card in [*first["data"], *rest["data"]]] == [
+        both_words,
+        by_its_session,
+        one_word,
+    ]
+    assert (first["has_more"], rest["has_more"]) == (True, False)
+    assert [card["id"] for card in bobs_found["data"]] == [bobs]
 
 
 async def test_a_card_lists_its_workers_busy_first_then_most_recent_and_its_assets(

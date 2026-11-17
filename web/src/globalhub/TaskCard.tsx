@@ -23,7 +23,7 @@ import { relativeTime } from "@/lib/relativeTime";
 import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ChatButton } from "./GlobalHubChat";
-import { TaskCardRail } from "./TaskCardRail";
+import { SEARCH_MATCH_CLASSES, TaskCardRail } from "./TaskCardRail";
 
 // A tinted outline per state: a hue-matched border, a light fill and darker text.
 const STATE_BADGE_CLASSES: Record<AgentTask["state"], string> = {
@@ -96,7 +96,14 @@ export const TaskCard = memo(function TaskCard({
       <header className="space-y-2 border-b border-border px-4 py-3">
         <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <h2 className="min-w-0 text-lg leading-tight font-semibold" data-board-search-text>
+            <h2
+              className={cn(
+                "min-w-0 text-lg leading-tight font-semibold",
+                task.match?.title_match && cn("rounded-md px-1", SEARCH_MATCH_CLASSES),
+              )}
+              data-board-search-text
+              data-testid={`task-card-title-${task.id}`}
+            >
               {task.title}
             </h2>
             <Badge

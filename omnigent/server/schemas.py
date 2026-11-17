@@ -6812,13 +6812,17 @@ class AgentTaskBoardWorker(AgentTaskWorkerResponse):
 class AgentTaskBoardMatch(BaseModel):
     """How a card matched a board search.
 
-    ``hits`` counts the distinct query words the card holds; ``asset_ids`` and
-    ``worker_ids`` name the assets and workers whose text holds one.
+    ``hits`` counts the distinct query words the card holds; ``asset_ids`` names
+    the assets whose text holds one. ``worker_ids`` names the workers whose
+    label holds one, or whose session's recent turns are near the query in
+    meaning. ``title_match`` is true when the task's own title and overview
+    are near the query in meaning.
     """
 
     hits: int
     asset_ids: list[str]
     worker_ids: list[str]
+    title_match: bool = False
 
 
 class AgentTaskBoardCard(BaseModel):

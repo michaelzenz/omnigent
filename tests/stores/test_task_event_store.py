@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from omnigent.entities import EventTag
+from omnigent.stores.task_event_store import sqlalchemy_store as event_tables
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 
 ALICE = "alice@example.com"
@@ -89,6 +90,37 @@ def test_a_repeated_report_from_a_source_is_found(store: SqlAlchemyTaskEventStor
     assert found(ALICE, "github.pr.comment", None) == without_offset
     assert found(ALICE, "github.pr.review", "comment-1") is None
     assert found(BOB, "github.pr.comment", "comment-1") is None
+
+
+def test_the_latest_route_of_each_source_key_to_each_task_is_found(
+    store: SqlAlchemyTaskEventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session, quiet_session = f"{200:032x}", f"{201:032x}"
+    task, other_task = f"{300:032x}", f"{301:032x}"
+    clock = {"now": 1_000}
+    monkeypatch.setattr(event_tables, "now_epoch", lambda: clock["now"])
+    for now, owner, source, source_key, task_id in [
+        (1_000, ALICE, "session", session, task),
+        (1_005, ALICE, "session", session, task),
+        (1_002, ALICE, "session", session, other_task),
+        (1_009, ALICE, "session", quiet_session, None),
+        (1_011, ALICE, "github", session, task),
+        (1_020, BOB, "session", session, task),
+    ]:
+        clock["now"] = now
+        _record(
+            store,
+            owner=owner,
+            source=source,
+            source_key=source_key,
+            task_id=task_id,
+            manager_id=MANAGER,
+        )
+
+    routes = store.latest_routes("session", [session, quiet_session], owner_user_id=ALICE)
+
+    assert routes == {(session, task): 1_005, (session, other_task): 1_002}
+    assert store.latest_routes("session", [], owner_user_id=ALICE) == {}
 
 
 def test_routing_to_a_manager_is_all_or_nothing(store: SqlAlchemyTaskEventStore) -> None:

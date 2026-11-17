@@ -15,8 +15,8 @@ import { ChatButton } from "./GlobalHubChat";
 import { OpenSessionLink } from "./OpenSessionLink";
 import { useWorkersWithUpdates } from "./useWorkerUpdates";
 
-// Outlines an asset or worker whose text holds a board search word.
-const SEARCH_MATCH_CLASSES =
+// Outlines an asset, worker or title that matches a board search.
+export const SEARCH_MATCH_CLASSES =
   "border-amber-400/70 bg-amber-50/70 ring-1 ring-amber-400/50 dark:bg-amber-400/10";
 
 /**

@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 SESSION_TITLE_INSTRUCTIONS_KEY = "session_title_instructions"
+GLOBALHUB_KEY = "globalhub"
 #: Agent names the New Chat picker should offer, e.g. ``["polly"]``. Empty or
 #: absent offers the full roster.
 RESTRICT_TO_AGENT_NAMES_KEY = "restrict_to_agent_names"

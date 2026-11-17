@@ -1532,6 +1532,58 @@ class SqlTaskSubscription(OmnigentBase):
     )
 
 
+class SqlTaskEmbedding(OmnigentBase):
+    """
+    SQLAlchemy model for the ``task_embeddings`` table: the vectors of the GlobalHub board search.
+
+    A task has a vector of its own title and overview, and each session that
+    works on a live task has a vector of its recent turns. A session that works
+    on several tasks has one vector, which counts for each of those tasks.
+    Ownership is stamped on the row, and every search filters on the owner;
+    there are no foreign keys (Rule R032). On Postgres with pgvector, the
+    migration also adds an ``embedding vector(1024)`` column, which the store
+    reads and writes with SQL; it is not mapped here.
+
+    :param source_id: The task or the session that the vector is of (a Uuid16,
+        bare 32-char hex in Python).
+    :param source: ``"task"`` for a task's title and overview, or
+        ``"session"`` for a session's recent turns.
+    :param owner_user_id: The owner of the task or the session, or ``None`` in
+        single-user mode.
+    :param model: The embedding model, e.g. ``"databricks-gte-large-en"``.
+    :param content_sha256: The SHA-256 hex digest of the embedded text.
+    :param embedding_bytes: The unit vector as little-endian float32 values;
+        empty for a source with no text, which no search finds.
+    :param source_changed_at: The change time of the source when the server
+        last read its text: the task's ``updated_at`` (else its ``created_at``),
+        or the session's ``updated_at``. When the source changes again, the two
+        times differ and the server reads it again.
+    :param read_at: When the server last read the text, in Unix epoch seconds.
+        A read in the same second as the source's change is repeated once that
+        second ends, because a later change in that second has the same time.
+    """
+
+    __tablename__ = "task_embeddings"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    source_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    embedding_bytes: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    source_changed_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    read_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (Index("ix_task_embeddings_owner", "workspace_id", "owner_user_id"),)
+
+
 class SqlAgentTextComment(OmnigentBase):
     """
     SQLAlchemy model for the ``agent_text_comments`` table: users' unsent comments on agent text.

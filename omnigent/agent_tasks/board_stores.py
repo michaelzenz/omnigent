@@ -16,6 +16,8 @@ from omnigent.stores.system_notice_store import SystemNoticeStore
 from omnigent.stores.system_notice_store.sqlalchemy_store import SqlAlchemySystemNoticeStore
 from omnigent.stores.task_asset_store import TaskAssetStore
 from omnigent.stores.task_asset_store.sqlalchemy_store import SqlAlchemyTaskAssetStore
+from omnigent.stores.task_embedding_store import TaskEmbeddingStore
+from omnigent.stores.task_embedding_store.sqlalchemy_store import SqlAlchemyTaskEmbeddingStore
 from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store import TaskStore
@@ -49,6 +51,7 @@ class BoardStores:
     :param watchers: The watchers that report changes in the things they watch.
     :param watch_items: What each watcher tracks, with what it saw last.
     :param subscriptions: The keys that the tasks follow, which route events.
+    :param embeddings: The search vectors of the tasks.
     """
 
     tasks: TaskStore
@@ -63,6 +66,7 @@ class BoardStores:
     watchers: WatcherStore
     watch_items: WatchItemStore
     subscriptions: TaskSubscriptionStore
+    embeddings: TaskEmbeddingStore
 
 
 def open_board_stores(conversation_store: object) -> BoardStores | None:
@@ -88,4 +92,5 @@ def open_board_stores(conversation_store: object) -> BoardStores | None:
         watchers=SqlAlchemyWatcherStore(location),
         watch_items=SqlAlchemyWatchItemStore(location),
         subscriptions=SqlAlchemyTaskSubscriptionStore(location),
+        embeddings=SqlAlchemyTaskEmbeddingStore(location),
     )

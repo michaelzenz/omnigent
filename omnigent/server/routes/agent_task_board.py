@@ -8,15 +8,23 @@ from __future__ import annotations
 
 import asyncio
 import heapq
+import logging
 from collections import defaultdict
 from collections.abc import Sequence
 from typing import cast
 
 from fastapi import APIRouter, Query, Request
 
-from omnigent.agent_tasks.board_search import BoardMatch, query_words, search_board
+from omnigent.agent_tasks.board_search import (
+    BoardMatch,
+    last_active_by_task,
+    query_words,
+    rank_with_vectors,
+    search_board,
+)
 from omnigent.agent_tasks.board_stores import BoardStores
-from omnigent.entities import LIVE_TASK_STATES, Task, TaskAsset, Worker
+from omnigent.agent_tasks.task_search_index import TaskSearchIndex
+from omnigent.entities import LIVE_TASK_STATES, SESSION_EVENT_SOURCE, Task, TaskAsset, Worker
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.agent_task_delivery import SessionSendDeps
 from omnigent.server.agent_task_session_states import read_session_states
@@ -36,6 +44,8 @@ from omnigent.stores import ConversationStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.util.uuid import InvalidUuidError, uuid_to_bytes
 
+_logger = logging.getLogger(__name__)
+
 #: The most cards one board page returns.
 MAX_BOARD_PAGE = 100
 #: The ranks a board cursor may hold: the range of the 64-bit rank column.
@@ -51,6 +61,7 @@ def create_agent_task_board_router(
     conversation_store: ConversationStore,
     session_deps: SessionSendDeps,
     auth_provider: AuthProvider | None = None,
+    search_index: TaskSearchIndex | None = None,
 ) -> APIRouter:
     """Build the router for the caller's board cards.
 
@@ -59,6 +70,8 @@ def create_agent_task_board_router(
     :param session_deps: Reads runner liveness, so a worker's turn whose runner
         is gone settles before its card shows it.
     :param auth_provider: Identifies the caller; ``None`` is single-user mode.
+    :param search_index: Finds the tasks related to a query, or ``None`` for a
+        search by keywords only.
     :returns: A configured :class:`APIRouter`.
     """
     router = APIRouter()
@@ -94,9 +107,10 @@ def create_agent_task_board_router(
         the top of the board. A read past either end of the board returns the
         page at that end. With a query ``q``, the pages hold the live tasks
         whose cards hold any of its words instead, best match first, as
-        ``board_search`` ranks them. A worker whose session no longer exists is
-        left off its card. The count of tasks without a manager covers the
-        whole board.
+        ``board_search`` ranks them. With vector search, they also hold the
+        tasks near the query in meaning, all in one ranking. A worker whose
+        session no longer exists is left off its card. The count of tasks
+        without a manager covers the whole board.
         """
         user_id = require_user(request, auth_provider)
         if after is not None and before is not None:
@@ -104,6 +118,12 @@ def create_agent_task_board_router(
         words = query_words(q)
         matches: dict[str, BoardMatch] = {}
         if words:
+            after_offset, before_offset = _search_offset(after), _search_offset(before)
+            query_vector = (
+                await search_index.query_vector(q, owner_user_id=user_id)
+                if search_index is not None
+                else None
+            )
             found, next_cursor, prev_cursor = await asyncio.to_thread(
                 _search,
                 board,
@@ -111,8 +131,10 @@ def create_agent_task_board_router(
                 user_id,
                 words,
                 limit,
-                _search_offset(after),
-                _search_offset(before),
+                after_offset,
+                before_offset,
+                search_index,
+                query_vector,
             )
             tasks = [match.task for match in found]
             matches = {match.task.id: match for match in found}
@@ -168,8 +190,16 @@ def _search(
     limit: int,
     after: int | None,
     before: int | None,
+    search_index: TaskSearchIndex | None = None,
+    query_vector: list[float] | None = None,
 ) -> tuple[list[BoardMatch], str | None, str | None]:
-    """Return a page of the live tasks whose cards hold a query word, and its two cursors."""
+    """
+    Return a page of the live tasks that match a query, and its two cursors.
+
+    With a query vector, the keyword matches and the tasks near the query in
+    meaning share one ranking. When the vectors cannot be read, the search
+    keeps the keyword matches in their own order.
+    """
     tasks = board.tasks.list(owner_user_id=owner_user_id, states=LIVE_TASK_STATES)
     task_ids = [task.id for task in tasks]
     workers = board.workers.list_for_tasks(task_ids, owner_user_id=owner_user_id)
@@ -178,6 +208,7 @@ def _search(
     )
     # As on the card: a worker whose session no longer exists is not shown.
     shown = [worker for worker in workers if worker.session_id in sessions]
+    worker_activity = {worker.id: sessions[worker.session_id].updated_at for worker in shown}
     found = search_board(
         tasks,
         words,
@@ -186,8 +217,20 @@ def _search(
         worker_labels={
             worker.id: worker.title or sessions[worker.session_id].title or "" for worker in shown
         },
-        worker_activity={worker.id: sessions[worker.session_id].updated_at for worker in shown},
+        worker_activity=worker_activity,
     )
+    if search_index is not None and query_vector is not None:
+        found = _rank_with_vectors(
+            board,
+            search_index,
+            owner_user_id,
+            query_vector,
+            words,
+            tasks,
+            found,
+            shown,
+            worker_activity,
+        )
     if before is None:
         start = after or 0
         if start >= len(found):
@@ -198,6 +241,46 @@ def _search(
         start = max(end - limit, 0)
     next_cursor = str(end) if len(found) > end else None
     return found[start:end], next_cursor, str(start) if start > 0 else None
+
+
+def _rank_with_vectors(
+    board: BoardStores,
+    search_index: TaskSearchIndex,
+    owner_user_id: str | None,
+    query_vector: list[float],
+    words: Sequence[str],
+    tasks: Sequence[Task],
+    keyword_matches: list[BoardMatch],
+    shown: Sequence[Worker],
+    worker_activity: dict[str, int],
+) -> list[BoardMatch]:
+    """Rank keyword matches and tasks near the query together, or keep the keyword order."""
+    try:
+        scores = search_index.task_scores(owner_user_id=owner_user_id, vector=query_vector)
+        routed_at = board.events.latest_routes(
+            SESSION_EVENT_SOURCE,
+            {
+                worker.session_id
+                for task_scores in scores.values()
+                for worker in task_scores.workers
+            },
+            owner_user_id=owner_user_id,
+        )
+    except Exception:
+        _logger.exception("The board search could not read its vectors")
+        return keyword_matches
+    if not scores:
+        return keyword_matches
+    return rank_with_vectors(
+        tasks,
+        keyword_matches,
+        words,
+        scores=scores,
+        min_score=search_index.min_score,
+        shown_worker_ids={worker.id for worker in shown},
+        last_active=last_active_by_task(tasks, shown, worker_activity),
+        routed_at=routed_at,
+    )
 
 
 def _live_tasks(
@@ -312,6 +395,7 @@ def _card(
                 hits=match.hits,
                 asset_ids=list(match.asset_ids),
                 worker_ids=list(match.worker_ids),
+                title_match=match.title_match,
             )
             if match is not None
             else None

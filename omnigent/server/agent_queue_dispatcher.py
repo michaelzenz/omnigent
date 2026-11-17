@@ -8,7 +8,8 @@ a session idle for a minute after the send counts too. A turn whose runner died
 in a crash ends the next time the dispatcher reads the session, which settles
 the turn the way main's session list does. The loop runs outside a request, so
 it reads every workspace and acts on each item inside that item's workspace.
-Once an hour it also turns idle the tasks with no change for a week.
+Once an hour it also turns idle the tasks with no change for a week. Every half
+minute it also embeds the tasks whose text changed, for the board search.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from typing import Any, Protocol
 
 from omnigent.agent_tasks.board_stores import BoardStores
 from omnigent.agent_tasks.role_sessions import RoleSessionStores, is_role_session_current
+from omnigent.agent_tasks.task_search_index import TaskSearchIndex
 from omnigent.db.db_models import workspace_scope
 from omnigent.entities import AgentQueueItem
 from omnigent.server.agent_task_delivery import (
@@ -47,6 +49,7 @@ BUSY_RECHECK_S = 5
 TASK_IDLE_AFTER_S = 7 * 24 * 60 * 60
 _IDLE_SWEEP_INTERVAL_S = 60 * 60
 _STALE_SWEEP_INTERVAL_S = 60
+SEARCH_REFRESH_INTERVAL_S = 30
 _BASE_RETRY_DELAY_S = 30
 _MAX_RETRY_DELAY_S = 5 * 60
 
@@ -82,6 +85,7 @@ class AgentQueueDispatcher:
         packagers: Sequence[Packager] = (),
         send: Sender = send_to_session,
         settle_orphans: OrphanSettler = settle_orphaned_turns,
+        search_index: TaskSearchIndex | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         """
@@ -94,6 +98,8 @@ class AgentQueueDispatcher:
         :param send: Sends one message into a session.
         :param settle_orphans: Settles the sent items' sessions whose turn lost
             its runner.
+        :param search_index: Embeds the changed tasks for the board search, every
+            :data:`SEARCH_REFRESH_INTERVAL_S` seconds, or ``None`` without vector search.
         :param clock: Returns Unix epoch seconds.
         """
         self._queue = board.queue
@@ -106,8 +112,10 @@ class AgentQueueDispatcher:
         self._packagers = tuple(packagers)
         self._send = send
         self._settle_orphans = settle_orphans
+        self._search_index = search_index
         self._clock = clock
         self._last_package: int | None = None
+        self._last_search_refresh: int | None = None
         self._loop: asyncio.Task[None] | None = None
         self._tasks: set[asyncio.Task[Any]] = set()
         # Sessions with a sent item, refreshed from the queue on every pass.
@@ -180,6 +188,14 @@ class AgentQueueDispatcher:
                     await packager.package(now)
                 except Exception:
                     _logger.exception("GlobalHub packager %r failed", packager)
+        if self._search_index is not None and (
+            self._last_search_refresh is None
+            or now - self._last_search_refresh >= SEARCH_REFRESH_INTERVAL_S
+        ):
+            self._last_search_refresh = now
+            self._track(
+                asyncio.create_task(self._search_index.refresh(), name="globalhub-search-refresh")
+            )
         await self._settle_sent(now)
         claimed = await asyncio.to_thread(self._queue.claim_due_all_workspaces, now=now)
         return [

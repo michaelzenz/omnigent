@@ -76,6 +76,19 @@ class TaskEventStore(ABC):
         """Return the owner's first event for the same report from a source, or ``None``."""
 
     @abstractmethod
+    def latest_routes(
+        self, source: str, source_keys: Collection[str], *, owner_user_id: str | None
+    ) -> dict[tuple[str, str], int]:
+        """
+        Return when the owner's events from each source key last went to each task.
+
+        :param source: The system that reported the events, e.g. ``"session"``.
+        :param source_keys: What the source reported on, e.g. session ids.
+        :returns: The time of the latest event that went to a task, by
+            ``(source_key, task_id)``.
+        """
+
+    @abstractmethod
     def list(
         self,
         *,

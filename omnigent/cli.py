@@ -4822,6 +4822,7 @@ def server(
     from omnigent.server.app import _ensure_default_agents, create_app
     from omnigent.server.auth import create_auth_provider
     from omnigent.server.server_config import (
+        GLOBALHUB_KEY,
         SESSION_TITLE_INSTRUCTIONS_KEY,
         config_str_list,
     )
@@ -4848,15 +4849,14 @@ def server(
                 "Invalid shared_preferences_authority_id: expected a nonempty string "
                 "of at most 128 characters without surrounding whitespace."
             ) from None
-    title_server_config = cfg
+    app_server_config = cfg
     if config_path is None:
         global_cfg = _load_global_config()
-        title_instructions = global_cfg.get(SESSION_TITLE_INSTRUCTIONS_KEY)
-        title_server_config = (
-            {SESSION_TITLE_INSTRUCTIONS_KEY: title_instructions}
-            if title_instructions is not None
-            else {}
-        )
+        app_server_config = {
+            key: global_cfg[key]
+            for key in (SESSION_TITLE_INSTRUCTIONS_KEY, GLOBALHUB_KEY)
+            if global_cfg.get(key) is not None
+        }
 
     # Let the server-config reader (branding) see the same ``-c`` file.
     if config_path:
@@ -5123,7 +5123,7 @@ def server(
         mcp_registry=mcp_registry,
         databricks_config=databricks_config,
         databricks_store=databricks_store,
-        server_config=title_server_config,
+        server_config=app_server_config,
     )
 
     click.echo(f"Starting omnigent server on {host}:{port}")

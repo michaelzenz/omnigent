@@ -34,7 +34,10 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from omnigent._platform import resolve_repo_symlink
 from omnigent.agent_tasks.board_stores import open_board_stores
+from omnigent.agent_tasks.embeddings import DatabricksEmbedder, load_task_embedding_settings
 from omnigent.agent_tasks.role_sessions import RoleSessionStores
+from omnigent.agent_tasks.task_search_index import TaskSearchIndex
+from omnigent.agent_tasks.worker_turns import ConversationSessions
 from omnigent.db.db_models import InvalidUuidError
 from omnigent.debug_logging import (
     add_audit_attrs,
@@ -4260,11 +4263,27 @@ def create_app(
             artifact_store=artifact_store,
             liveness_lookup=_bulk_session_liveness,
         )
+        task_search_index: TaskSearchIndex | None = None
+        embedding_settings = load_task_embedding_settings(resolved_server_config)
+        if embedding_settings is not None and role_session_stores is not None:
+            task_search_index = TaskSearchIndex(
+                board_stores.embeddings,
+                DatabricksEmbedder(
+                    embedding_settings.endpoint,
+                    databricks_profile=embedding_settings.databricks_profile,
+                ),
+                ConversationSessions(conversation_store),
+                min_score=embedding_settings.min_score,
+            )
         # The board, managers, watchers, system notice and subscriptions routers go
         # before the tasks router, whose /agent-tasks/{task_id} matches their paths.
         app.include_router(
             create_agent_task_board_router(
-                board_stores, conversation_store, send_deps, auth_provider
+                board_stores,
+                conversation_store,
+                send_deps,
+                auth_provider,
+                search_index=task_search_index,
             ),
             prefix="/v1",
             tags=["agent-tasks"],
@@ -4380,6 +4399,7 @@ def create_app(
                     ),
                     RoleSchedulePackager(board=board_stores, sessions=role_session_stores),
                 ],
+                search_index=task_search_index,
             )
 
     if preference_store is not None:

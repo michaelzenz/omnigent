@@ -7,7 +7,7 @@ import json
 from collections.abc import Collection, Sequence
 from typing import Any
 
-from sqlalchemy import ColumnElement, and_, asc, or_, select
+from sqlalchemy import ColumnElement, and_, asc, func, or_, select
 from sqlalchemy.orm import Session
 
 from omnigent.db.account_authority import require_active_account
@@ -215,6 +215,27 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         with self._session("select_task_event_by_source") as session:
             row = session.execute(stmt).scalars().first()
             return _to_entity(row) if row is not None else None
+
+    def latest_routes(
+        self, source: str, source_keys: Collection[str], *, owner_user_id: str | None
+    ) -> dict[tuple[str, str], int]:
+        """Return when the owner's events from each source key last went to each task."""
+        if not source_keys:
+            return {}
+        routed_at = func.max(func.coalesce(SqlTaskEvent.routed_at, SqlTaskEvent.created_at))
+        stmt = (
+            select(SqlTaskEvent.source_key, SqlTaskEvent.task_id, routed_at.label("routed_at"))
+            .where(
+                _owned(owner_user_id),
+                SqlTaskEvent.source == source,
+                SqlTaskEvent.source_key.in_(list(source_keys)),
+                SqlTaskEvent.task_id.is_not(None),
+            )
+            .group_by(SqlTaskEvent.source_key, SqlTaskEvent.task_id)
+        )
+        with self._session("find_latest_task_routes_of_sources") as session:
+            rows = session.execute(stmt).all()
+        return {(row.source_key, row.task_id): int(row.routed_at) for row in rows}
 
     def list(
         self,

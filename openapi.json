@@ -1498,7 +1498,7 @@
         "type": "object"
       },
       "AgentTaskBoardMatch": {
-        "description": "How a card matched a board search.\n\n`hits` counts the distinct query words the card holds; `asset_ids` and\n`worker_ids` name the assets and workers whose text holds one.",
+        "description": "How a card matched a board search.\n\n`hits` counts the distinct query words the card holds; `asset_ids` names\nthe assets whose text holds one. `worker_ids` names the workers whose\nlabel holds one, or whose session's recent turns are near the query in\nmeaning. `title_match` is true when the task's own title and overview\nare near the query in meaning.",
         "properties": {
           "asset_ids": {
             "items": {
@@ -1511,6 +1511,11 @@
             "format": "int64",
             "title": "Hits",
             "type": "integer"
+          },
+          "title_match": {
+            "default": false,
+            "title": "Title Match",
+            "type": "boolean"
           },
           "worker_ids": {
             "items": {
@@ -18807,7 +18812,7 @@
     },
     "/v1/agent-tasks/board": {
       "get": {
-        "description": "Read a page of `limit` live tasks on the caller's board as cards, in board order.\n\n`after` is the `next_cursor` of the page above, and `before` the\n`prev_cursor` of the page below; without either, the page starts at\nthe top of the board. A read past either end of the board returns the\npage at that end. With a query `q`, the pages hold the live tasks\nwhose cards hold any of its words instead, best match first, as\n`board_search` ranks them. A worker whose session no longer exists is\nleft off its card. The count of tasks without a manager covers the\nwhole board.",
+        "description": "Read a page of `limit` live tasks on the caller's board as cards, in board order.\n\n`after` is the `next_cursor` of the page above, and `before` the\n`prev_cursor` of the page below; without either, the page starts at\nthe top of the board. A read past either end of the board returns the\npage at that end. With a query `q`, the pages hold the live tasks\nwhose cards hold any of its words instead, best match first, as\n`board_search` ranks them. With vector search, they also hold the\ntasks near the query in meaning, all in one ranking. A worker whose\nsession no longer exists is left off its card. The count of tasks\nwithout a manager covers the whole board.",
         "operationId": "read_board_v1_agent_tasks_board_get",
         "parameters": [
           {

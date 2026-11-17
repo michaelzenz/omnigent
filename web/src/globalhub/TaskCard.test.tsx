@@ -97,6 +97,15 @@ describe("TaskCard", () => {
     );
   });
 
+  it("marks the title when a search finds the task by the meaning of its title", () => {
+    const match = { hits: 0, asset_ids: [], worker_ids: [] };
+    renderCard(agentTask("t1", { match: { ...match, title_match: true } }));
+    renderCard(agentTask("t2", { match }));
+
+    expect(screen.getByTestId("task-card-title-t1")).toHaveClass("ring-amber-400/50");
+    expect(screen.getByTestId("task-card-title-t2")).not.toHaveClass("ring-amber-400/50");
+  });
+
   it("shows a resolved task without a manager, and the last card cannot move down", () => {
     renderCard(agentTask("t1", { state: "agent-resolved" }), { isLast: true });
 
