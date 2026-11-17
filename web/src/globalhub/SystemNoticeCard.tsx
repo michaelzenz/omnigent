@@ -15,6 +15,7 @@ import {
   useDismissSystemNotice,
   useSystemNotice,
 } from "@/hooks/useGlobalHubNotice";
+import { BOARD_COLUMN_CLASS } from "./boardLayout";
 import { HtmlNoticeBody } from "./HtmlNoticeBody";
 
 /** The notice pinned at the top of the board, e.g. the custodian's cleanup proposal. */
@@ -28,7 +29,7 @@ export function SystemNoticeCard() {
 
   if (!notice) return null;
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 pt-4">
+    <div className={`${BOARD_COLUMN_CLASS} px-4 pt-4`}>
       <article
         className="rounded-xl border border-border bg-card shadow-sm"
         data-testid="system-notice-card"

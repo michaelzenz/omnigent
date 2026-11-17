@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { type FyiCluster, useDismissFyiCluster, useFyiClusters } from "@/hooks/useGlobalHubFyi";
+import { BOARD_COLUMN_CLASS } from "./boardLayout";
 import { OpenSessionLink } from "./OpenSessionLink";
 
 /** The FYI clusters waiting for the user, oldest first; hidden when there are none. */
@@ -9,7 +10,7 @@ export function FyiStream() {
   const clusters = useFyiClusters();
   if (clusters.data === undefined) {
     return clusters.isError ? (
-      <p role="alert" className="mx-auto w-full max-w-5xl px-4 pt-4 text-sm text-destructive">
+      <p role="alert" className={`${BOARD_COLUMN_CLASS} px-4 pt-4 text-sm text-destructive`}>
         Could not load the FYI signals: {clusters.error.message}
       </p>
     ) : null;
@@ -18,7 +19,7 @@ export function FyiStream() {
 
   const signals = clusters.data.reduce((count, cluster) => count + cluster.events.length, 0);
   return (
-    <section className="mx-auto w-full max-w-5xl space-y-3 px-4 pt-4" data-testid="globalhub-fyi">
+    <section className={`${BOARD_COLUMN_CLASS} space-y-3 px-4 pt-4`} data-testid="globalhub-fyi">
       <h2 className="text-sm font-semibold">
         FYI <span className="ml-1 font-medium text-muted-foreground">({signalCount(signals)})</span>
       </h2>

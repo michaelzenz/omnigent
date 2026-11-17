@@ -8,6 +8,7 @@ import {
   useAgentManagers,
   useGlobalHubBoard,
 } from "@/hooks/useGlobalHubTasks";
+import { BOARD_COLUMN_CLASS } from "./boardLayout";
 import { TaskCard } from "./TaskCard";
 import { UnmanagedTasksLine } from "./UnmanagedTasksLine";
 import { BOARD_SEARCH_HIGHLIGHT_CSS, useBoardSearchHighlight } from "./useBoardSearchHighlight";
@@ -80,7 +81,7 @@ export function TaskBoard({
   return (
     <div
       ref={listRef}
-      className="mx-auto flex w-full max-w-5xl flex-col gap-4 p-4"
+      className={`${BOARD_COLUMN_CLASS} flex flex-col gap-4 p-4`}
       data-testid="globalhub-tasks"
     >
       {searching && <style>{BOARD_SEARCH_HIGHLIGHT_CSS}</style>}
