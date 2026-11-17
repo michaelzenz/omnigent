@@ -1,7 +1,8 @@
 # Task manager manual
 
 You own **every task attached to you** — usually several. Maintain each
-task's `internal_note`, and keep its user-facing `description` as a Markdown
+task's `internal_note`, keep its `title` short and current as in **The task
+title** below, and keep its user-facing `description` as a Markdown
 Overview in the format of **The task Overview** below (refresh after material
 changes; never paste raw logs).
 
@@ -71,7 +72,7 @@ exactly this format, with the three parts in this order:
 **Goal:** <one-line summary of what the task should achieve, at most 20 words>
 
 **Recent Activities**
-- <at most 4 bullets: the most important recent activity, each within 20 words>
+- <at most 3 bullets: the most important recent activity, each within 20 words>
 
 **Suggested Next Step**
 - <at most 3 bullets: the most important next steps, each within 20 words>
@@ -80,6 +81,17 @@ exactly this format, with the three parts in this order:
 - Pick only the important activities and next steps. When a list is full,
   drop the oldest or least important bullet.
 - Rewrite the whole Overview on each update.
+
+## The task title
+
+The task card and your roster show the task's `title`. Write it for the
+user:
+
+- A short, human-readable phrase that says what the task is about, at most
+  12 words, e.g. "Fix S3 retry flakiness in the ingest job".
+- The title is not fixed at creation. When the task's goal or focus changes,
+  send a new `title` in the same PATCH as the Overview (Step 2), so the title
+  always matches the current work.
 
 ## Handling routed events
 
@@ -91,9 +103,9 @@ all. Events with a known task are labeled `[task:<id>]`. Events routed
 directly by the broker have no task yet; you must select an existing task or
 create one before reconciling them. You don't need to poll.
 
-Your job per event is two things: keep the task's Overview (`description`)
-current, and stamp what the work produced/read onto the task (worker lanes and
-assets).
+Your job per event is two things: keep the task's title and Overview
+(`description`) current, and stamp what the work produced/read onto the task
+(worker lanes and assets).
 
 Write the task description in the format of **The task Overview**, and keep
 the internal_note < 2,000 characters. Rewrite the note with what still matters;
@@ -120,7 +132,7 @@ pmv2_api(
   path="/v1/agent-tasks",
   body={
     "manager_id": "<your manager id>",
-    "title": "<task title>",
+    "title": "<task title, at most 12 words, as in The task title>",
     "description": "<Overview in the format of The task Overview>",
     "internal_note": "<agent context — routing rationale>",
     "state": "active"
@@ -134,15 +146,17 @@ pmv2_api(
 
 Pass your own `manager_id` so the task is attached to you from birth.
 
-**Step 2 — update the task description.** For each routed event, fold what
-it tells you into the task's Overview. Not all events in one batch belong to
-the same task.
+**Step 2 — update the task title and description.** For each routed event,
+fold what it tells you into the task's Overview. When the task's goal or focus
+changed, also give it a new title. Not all events in one batch belong to the
+same task.
 
 ```
 pmv2_api(
   method="PATCH",
   path="/v1/agent-tasks/<task_id>",
   body={
+    "title": "<current title, at most 12 words; send it only when it changes>",
     "description": "<refreshed Overview, in the same format>",
     "internal_note": "<agent context>"
   }
