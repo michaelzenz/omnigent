@@ -3840,6 +3840,7 @@ class HostProcess:
         """
         from pathlib import Path
 
+        from omnigent.host.memory_ops import MEMORY_READ_OPS
         from omnigent.host.skill_ops import SKILL_READ_OPS
         from omnigent.runtime.filesystem_registry import detect_git_root
         from omnigent.workspace_fs import (
@@ -3848,8 +3849,8 @@ class HostProcess:
             read_repository_branches,
         )
 
-        if frame.op in SKILL_READ_OPS:
-            return self._handle_skill_op(frame.request_id, frame.op, frame.params or {})
+        if frame.op in SKILL_READ_OPS or frame.op in MEMORY_READ_OPS:
+            return self._handle_home_op(frame.request_id, frame.op, frame.params or {})
         try:
             expanded = os.path.expanduser(frame.workspace)
         except (TypeError, ValueError) as exc:
@@ -4469,20 +4470,28 @@ class HostProcess:
             return r.github_reviewers(session_id, cast("str | None", params.get("pr_url")))
         raise ValueError(f"unknown fs op: {op!r}")
 
-    def _handle_skill_op(
+    def _handle_home_op(
         self, request_id: str, op: str, params: dict[str, Any]
     ) -> HostFsResultFrame:
-        """Run a skill sync operation on this host's home skill folders.
+        """Run a skill sync or memory operation on this host's home directory.
 
         The workspace of the frame does not apply. Errors carry no file text,
-        because a skill's text must not reach the logs.
+        because the text of a skill or of ``AGENTS.md`` must not reach the logs.
 
         :param request_id: The request to answer.
-        :param op: A ``skill.*`` operation, e.g. ``"skill.inventory"``.
+        :param op: A ``skill.*`` or ``memory.*`` operation, e.g. ``"skill.inventory"``.
         :param params: The operation's arguments.
         :returns: The operation's payload, or an error frame.
         """
+        from omnigent.host.memory_ops import (
+            MEMORY_READ_OPS,
+            MEMORY_WRITE_OPS,
+            handle_memory_fs_op,
+        )
         from omnigent.host.skill_ops import handle_skill_fs_op
+
+        kind = "memory" if op in MEMORY_READ_OPS or op in MEMORY_WRITE_OPS else "skill"
+        handler = handle_memory_fs_op if kind == "memory" else handle_skill_fs_op
 
         def failed(status: int, code: str, message: str) -> HostFsResultFrame:
             return HostFsResultFrame(
@@ -4494,7 +4503,7 @@ class HostProcess:
             )
 
         try:
-            payload = handle_skill_fs_op(op, params)
+            payload = handler(op, params)
         except FileNotFoundError as exc:
             return failed(404, "not_found", str(exc))
         except FileExistsError as exc:
@@ -4502,9 +4511,9 @@ class HostProcess:
         except ValueError as exc:
             return failed(400, "invalid_request", str(exc))
         except Exception as exc:  # noqa: BLE001 — host boundary: a failed op answers the server
-            _logger.warning("host skill op %r failed: %s", op, type(exc).__name__)
+            _logger.warning("host %s op %r failed: %s", kind, op, type(exc).__name__)
             return failed(
-                500, "skill_operation_failed", "skill operation failed; see the host log"
+                500, f"{kind}_operation_failed", f"{kind} operation failed; see the host log"
             )
         return HostFsResultFrame(request_id=request_id, status="ok", payload=payload)
 
@@ -4521,10 +4530,11 @@ class HostProcess:
         :param frame: The write frame (op + workspace + params).
         :returns: A result frame with the refreshed payload, or an error frame.
         """
+        from omnigent.host.memory_ops import MEMORY_WRITE_OPS
         from omnigent.host.skill_ops import SKILL_WRITE_OPS
 
-        if frame.op in SKILL_WRITE_OPS:
-            return self._handle_skill_op(frame.request_id, frame.op, frame.params or {})
+        if frame.op in SKILL_WRITE_OPS or frame.op in MEMORY_WRITE_OPS:
+            return self._handle_home_op(frame.request_id, frame.op, frame.params or {})
         try:
             expanded = os.path.expanduser(frame.workspace)
         except (TypeError, ValueError) as exc:

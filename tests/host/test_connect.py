@@ -11373,6 +11373,52 @@ def test_skill_ops_use_the_home_skill_folders_and_each_frame_runs_its_own(
     assert not skill.exists()
 
 
+def test_memory_ops_use_the_home_agents_md_and_each_frame_runs_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Memory ops ignore the workspace; a read frame cannot write ``AGENTS.md``."""
+    from omnigent.host.frames import HostFsResultFrame, HostFsWriteFrame
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    create = {"content": "rules\n", "expected_sha256": None}
+
+    def read(op: str, params: dict[str, object]) -> HostFsResultFrame:
+        return host._handle_fs_request(
+            HostFsRequestFrame(
+                request_id=op, op=op, workspace=str(tmp_path), session_id="", params=params
+            )
+        )
+
+    def write(op: str, params: dict[str, object]) -> HostFsResultFrame:
+        return host._handle_fs_write(
+            HostFsWriteFrame(
+                request_id=op, op=op, workspace="/no/such/dir", session_id="", params=params
+            )
+        )
+
+    host = _make_host_process()
+    try:
+        read_write = read("memory.write", create)
+        kept_missing = not (home / "AGENTS.md").exists()
+        created = write("memory.write", create)
+        conflict = write("memory.write", {**create, "content": "other\n"})
+        current = read("memory.read", {})
+    finally:
+        _cleanup_host(host)
+
+    assert (read_write.status, kept_missing) == ("error", True)
+    assert created.status == "ok"
+    assert (conflict.status, conflict.error_status, conflict.error_code) == (
+        "error",
+        409,
+        "conflict",
+    )
+    assert current.payload is not None
+    assert current.payload["content"] == "rules\n"
+
+
 @pytest.mark.parametrize("action", ["attach", "remove"])
 async def test_github_pr_update_reports_lock_contention_on_host(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str

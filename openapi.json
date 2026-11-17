@@ -7771,6 +7771,251 @@
         "title": "McpToolsResponse",
         "type": "object"
       },
+      "MemoryHost": {
+        "description": "One host's `~/AGENTS.md`; `error` says why its file is unknown.",
+        "properties": {
+          "content_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Sha256"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "host_name": {
+            "title": "Host Name",
+            "type": "string"
+          },
+          "online": {
+            "title": "Online",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "present",
+              "missing",
+              "offline",
+              "needs_update",
+              "error"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host_id",
+          "host_name",
+          "online",
+          "state",
+          "content_sha256",
+          "error"
+        ],
+        "title": "MemoryHost",
+        "type": "object"
+      },
+      "MemorySyncState": {
+        "description": "`~/AGENTS.md` across the caller's hosts, the most common variant first.",
+        "properties": {
+          "file": {
+            "title": "File",
+            "type": "string"
+          },
+          "hosts": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryHost"
+            },
+            "title": "Hosts",
+            "type": "array"
+          },
+          "object": {
+            "const": "memory_sync.state",
+            "default": "memory_sync.state",
+            "title": "Object",
+            "type": "string"
+          },
+          "variants": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryVariant"
+            },
+            "title": "Variants",
+            "type": "array"
+          }
+        },
+        "required": [
+          "file",
+          "variants",
+          "hosts"
+        ],
+        "title": "MemorySyncState",
+        "type": "object"
+      },
+      "MemoryVariant": {
+        "description": "The hosts whose `~/AGENTS.md` has the same content.",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "content_sha256": {
+            "title": "Content Sha256",
+            "type": "string"
+          },
+          "host_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Host Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "content_sha256",
+          "content",
+          "host_ids"
+        ],
+        "title": "MemoryVariant",
+        "type": "object"
+      },
+      "MemoryWriteHostResult": {
+        "description": "The outcome on one host; `conflict` means its file changed after the caller read it.",
+        "properties": {
+          "content_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Sha256"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "done",
+              "conflict",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host_id",
+          "status"
+        ],
+        "title": "MemoryWriteHostResult",
+        "type": "object"
+      },
+      "MemoryWriteRequest": {
+        "additionalProperties": false,
+        "description": "New `~/AGENTS.md` text and the hosts to write it to.",
+        "properties": {
+          "content": {
+            "maxLength": 1000000,
+            "title": "Content",
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryWriteTarget"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "content",
+          "targets"
+        ],
+        "title": "MemoryWriteRequest",
+        "type": "object"
+      },
+      "MemoryWriteResult": {
+        "description": "The outcome of a write on each target host.",
+        "properties": {
+          "object": {
+            "const": "memory_sync.write_result",
+            "default": "memory_sync.write_result",
+            "title": "Object",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryWriteHostResult"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "MemoryWriteResult",
+        "type": "object"
+      },
+      "MemoryWriteTarget": {
+        "additionalProperties": false,
+        "description": "A host to write; `expected_sha256` is the hash the caller read, null for no file.",
+        "properties": {
+          "expected_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Sha256"
+          },
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host_id",
+          "expected_sha256"
+        ],
+        "title": "MemoryWriteTarget",
+        "type": "object"
+      },
       "MessageData": {
         "description": "Data for a message item (user or assistant).\n\n**Parameters**\n\n- `agent` \u2014 Agent name (required for assistant messages, absent for user). Serialized as `\"model\"` in JSON.",
         "properties": {
@@ -22714,6 +22959,70 @@
         "summary": "Me",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/v1/memory-sync": {
+      "get": {
+        "description": "Read `~/AGENTS.md` from each of the caller's online hosts, grouped by content.",
+        "operationId": "get_memory_v1_memory_sync_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemorySyncState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Memory",
+        "tags": [
+          "memory"
+        ]
+      }
+    },
+    "/v1/memory-sync/write": {
+      "post": {
+        "description": "Write new `~/AGENTS.md` text to the target hosts.\n\nA host takes the text only while its file still has `expected_sha256`;\notherwise its result is `conflict` and its file stays as it is.",
+        "operationId": "write_memory_v1_memory_sync_write_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryWriteResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Write Memory",
+        "tags": [
+          "memory"
         ]
       }
     },

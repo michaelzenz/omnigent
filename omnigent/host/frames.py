@@ -86,6 +86,7 @@ CAP_PLUGINS = "plugins"
 CAP_SKILL_CONTENT = "skill_content"
 # The host runs the ``skill.*`` sync operations of its file requests and writes:
 CAP_SKILL_SYNC = "skill_sync"
+CAP_MEMORY_SYNC = "memory_sync"
 CAP_MCP_TOOLS = "mcp_tools"
 CAP_MCP_SERVER_ENABLED = "mcp_server_enabled"
 CAP_REFRESH_HARNESSES = "refresh_harnesses"
@@ -104,6 +105,7 @@ HOST_CAPABILITIES: list[str] = [
     CAP_PLUGINS,
     CAP_SKILL_CONTENT,
     CAP_SKILL_SYNC,
+    CAP_MEMORY_SYNC,
     CAP_MCP_TOOLS,
     CAP_MCP_SERVER_ENABLED,
     CAP_MCP_REGISTRY,
