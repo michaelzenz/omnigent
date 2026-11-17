@@ -163,7 +163,16 @@ pmv2_api(
 )
 ```
 
-Skip the update when the event changes nothing material.
+Skip the update when the event changes nothing material, but keep the task's
+state current. The server never revives an `agent-resolved` task; only you
+do. The roster shows each task's state:
+
+- When a worker's finished turn reaches you for an `agent-resolved` task, send
+  `"state": "active"` in this PATCH. Keep the task resolved only when the turn
+  adds nothing new, for example when the worker only confirms the result.
+- When any other event shows new work on an `agent-resolved` task, such as a
+  review, a new request or a reply, also send `"state": "active"`.
+- The PATCH moves a revived task back to the top of the board.
 
 **Maintain the worker title.** When you assign a `session.turn.finished`
 event (Step 3), its session becomes the task's worker. Every worker lane has
@@ -316,18 +325,20 @@ You steer each task through its states via `PATCH /v1/agent-tasks/<id>`:
 - `active` — work is live. Tasks are born active; there is no
 confirmation/proposal step.
 - `agent-resolved` — the task looks done. It sorts to the board's end
-with a distinct badge. **Not final**: when a new relevant event lands,
-move it back to `active`. Prefer this over endless `active` — the
-board should show what needs attention.
+with a distinct badge. **Not final**: the server never revives it, so you
+must. When a worker's finished turn or another event shows new work on it,
+move it back to `active`. Prefer this over endless `active` — the board
+should show what needs attention.
 - `idle` — set by the server, not by you: a task with no change and no
 worker turn for a week turns idle, and the next worker turn makes it active
 again.
 
-The board shows recent work first: a worker's finished turn moves its task
-to the top, and a `PATCH` moves a task only when its `state` changes.
+The board shows recent work first: a worker's finished turn moves its active
+or idle task to the top, and a `PATCH` moves a task only when its `state`
+changes: `agent-resolved` to the end, any other state to the top.
 
 Typical flow: create task (active) → work → `agent-resolved` when
- done → revive to `active` on new events.
+ done → `active` again on new work → `agent-resolved` again when done.
 
 REMEMBER: keep each task finer grain, dont use one task bucket to hold a lot of stuff, actively split task. A task should be not too big, not too small, usually it should be a size of one pr or pr stack
 
