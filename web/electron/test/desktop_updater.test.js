@@ -135,11 +135,11 @@ function plain(value) {
 describe("desktop_updater — pure helpers", () => {
   it("normalizes unknown/missing config to safe defaults", () => {
     assert.deepEqual(normalizeUpdateConfig({}), {
-      mode: "default",
+      mode: "manual",
       autoInstall: true,
       skippedVersion: null,
     });
-    assert.deepEqual(normalizeUpdateConfig({ update_mode: "bogus" }).mode, "default");
+    assert.deepEqual(normalizeUpdateConfig({ update_mode: "bogus" }).mode, "manual");
     assert.deepEqual(
       normalizeUpdateConfig({
         update_mode: "manual",

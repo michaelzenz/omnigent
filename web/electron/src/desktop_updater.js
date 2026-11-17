@@ -32,14 +32,14 @@ const PERIODIC_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /**
  * Normalize the raw settings object into the update config the renderer sees.
- * Unknown/missing values fall back to the safe defaults (auto-checking on,
+ * Unknown/missing values fall back to the safe defaults (manual checks only,
  * auto-install on, nothing skipped).
  *
  * @param {Record<string, unknown>} settings
  * @returns {{ mode: string, autoInstall: boolean, skippedVersion: string | null }}
  */
 function normalizeUpdateConfig(settings) {
-  const mode = UPDATE_MODES.has(settings.update_mode) ? settings.update_mode : "default";
+  const mode = UPDATE_MODES.has(settings.update_mode) ? settings.update_mode : "manual";
   return {
     mode,
     autoInstall:
