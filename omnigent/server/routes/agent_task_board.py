@@ -1,7 +1,8 @@
 """The caller's GlobalHub board as task cards (``/v1/agent-tasks/board``).
 
-``/agent-tasks/{task_id}`` also matches ``/agent-tasks/board``, so this router
-must be included before the tasks router.
+The router also lists the sessions of the board's workers
+(``/v1/agent-tasks/worker-sessions``). ``/agent-tasks/{task_id}`` also matches
+both paths, so this router must be included before the tasks router.
 """
 
 from __future__ import annotations
@@ -38,6 +39,8 @@ from omnigent.server.schemas import (
     AgentTaskBoardMatch,
     AgentTaskBoardSession,
     AgentTaskBoardWorker,
+    AgentTaskBoardWorkerSession,
+    AgentTaskBoardWorkerSessions,
     AgentTaskState,
 )
 from omnigent.stores import ConversationStore
@@ -177,6 +180,29 @@ def create_agent_task_board_router(
             next_cursor=next_cursor,
             prev_cursor=prev_cursor,
             unmanaged_count=unmanaged_count,
+        )
+
+    @router.get("/agent-tasks/worker-sessions", response_model=AgentTaskBoardWorkerSessions)
+    async def read_worker_sessions(request: Request) -> AgentTaskBoardWorkerSessions:
+        """Read the session of each worker on the caller's live tasks, each session once.
+
+        The Global Hub link reads them to show a dot while one of them has a
+        finished turn that the caller has not seen. A worker whose session no
+        longer exists is left out.
+        """
+        user_id = require_user(request, auth_provider)
+        tasks = await asyncio.to_thread(
+            board.tasks.list, owner_user_id=user_id, states=LIVE_TASK_STATES
+        )
+        workers = await asyncio.to_thread(
+            board.workers.list_for_tasks, [task.id for task in tasks], owner_user_id=user_id
+        )
+        sessions = await read_sessions(workers, user_id)
+        return AgentTaskBoardWorkerSessions(
+            data=[
+                AgentTaskBoardWorkerSession(session_id=session_id, session=session)
+                for session_id, session in sessions.items()
+            ]
         )
 
     return router

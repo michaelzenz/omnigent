@@ -53,6 +53,12 @@ export interface AgentTaskWorker {
   session: BoardSession;
 }
 
+/** The session of a worker on one of the user's live tasks. */
+export interface BoardWorkerSession {
+  session_id: string;
+  session: BoardSession;
+}
+
 /** A link a task carries, such as a design doc or a pull request. */
 export interface AgentTaskAsset {
   id: string;
@@ -194,6 +200,21 @@ export function useAgentManagers() {
     queryKey: GLOBALHUB_MANAGERS_QUERY_KEY,
     queryFn: () => fetchManagers(),
     refetchInterval: BOARD_REFRESH_MS,
+  });
+}
+
+/** The sessions of the workers on the user's live tasks, each once, for the Global Hub link's dot. */
+export function useBoardWorkerSessions() {
+  return useQuery({
+    queryKey: [...GLOBALHUB_TASKS_QUERY_KEY, "worker-sessions"],
+    queryFn: async () =>
+      (
+        await readJson<{ data: BoardWorkerSession[] }>(
+          await authenticatedFetch("/v1/agent-tasks/worker-sessions"),
+        )
+      ).data,
+    refetchInterval: BOARD_REFRESH_MS,
+    retry: false,
   });
 }
 

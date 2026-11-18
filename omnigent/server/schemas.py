@@ -6866,6 +6866,20 @@ class AgentTaskBoard(BaseModel):
     unmanaged_count: int
 
 
+class AgentTaskBoardWorkerSession(BaseModel):
+    """The session of a worker on one of the caller's live tasks."""
+
+    session_id: str
+    session: AgentTaskBoardSession
+
+
+class AgentTaskBoardWorkerSessions(BaseModel):
+    """The sessions of the workers on the caller's live tasks, each session once."""
+
+    object: Literal["agent.task.board.worker_sessions"] = "agent.task.board.worker_sessions"
+    data: list[AgentTaskBoardWorkerSession]
+
+
 class AgentTaskBoardRole(BaseModel):
     """A role that runs the caller's board, with its session and what waits for it.
 

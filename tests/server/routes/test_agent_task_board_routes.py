@@ -1,4 +1,7 @@
-"""Tests for the GlobalHub board cards (``GET /v1/agent-tasks/board``)."""
+"""Tests for the GlobalHub board cards and their workers' sessions.
+
+The routes are ``GET /v1/agent-tasks/board`` and ``GET /v1/agent-tasks/worker-sessions``.
+"""
 
 from __future__ import annotations
 
@@ -61,12 +64,19 @@ def _session(db_uri: str, title: str) -> str:
     return conversations.create_conversation(agent_id=agent_id, title=title).id
 
 
-def _worker(db_uri: str, task_id: str, session_id: str, title: str | None = None) -> str:
+def _worker(
+    db_uri: str,
+    task_id: str,
+    session_id: str,
+    title: str | None = None,
+    *,
+    owner: str = ALICE_ID,
+) -> str:
     return (
         SqlAlchemyWorkerStore(db_uri)
         .create(
             uuid.uuid4().hex,
-            owner_user_id=ALICE_ID,
+            owner_user_id=owner,
             task_id=task_id,
             session_id=session_id,
             title=title,
@@ -372,3 +382,36 @@ async def test_a_worker_whose_turn_lost_its_runner_reads_idle(
     stored = conversations.get_conversation(session_id)
     assert stored is not None
     assert (card["workers"][0]["session"]["status"], stored.live_status) == ("idle", "idle")
+
+
+async def test_the_worker_sessions_hold_each_session_on_the_callers_live_tasks_once(
+    auth_client: httpx.AsyncClient, db_uri: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    active = _task(db_uri, "S3 retries")
+    resolved = _task(db_uri, "Docs", state="agent-resolved")
+    archived = _task(db_uri, "Old work", state="archived")
+    bobs_task = _task(db_uri, "Bob's task", owner=BOB_ID)
+    shared, docs, old, bobs_session = [
+        _session(db_uri, title)
+        for title in ("Fixing retries", "Wrote docs", "Old fix", "Bob's fix")
+    ]
+    for task_id, session_id in [
+        (active, shared),
+        (resolved, shared),
+        (resolved, docs),
+        (active, uuid.uuid4().hex),
+        (archived, old),
+    ]:
+        _worker(db_uri, task_id, session_id)
+    _worker(db_uri, bobs_task, bobs_session, owner=BOB_ID)
+    monkeypatch.setitem(sessions._read_last_seen, ALICE_ID, {shared: 1_500})
+
+    alices = await auth_client.get("/v1/agent-tasks/worker-sessions", headers=ALICE)
+    bobs = await auth_client.get("/v1/agent-tasks/worker-sessions", headers=BOB)
+
+    assert (alices.status_code, bobs.status_code) == (200, 200)
+    assert sorted(
+        (entry["session_id"], entry["session"]["title"], entry["session"]["viewer_last_seen"])
+        for entry in alices.json()["data"]
+    ) == sorted([(shared, "Fixing retries", 1_500), (docs, "Wrote docs", None)])
+    assert [entry["session_id"] for entry in bobs.json()["data"]] == [bobs_session]

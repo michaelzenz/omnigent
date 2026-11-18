@@ -236,6 +236,15 @@ export function isExplicitlyUnread(conversationId: string): boolean {
   return explicitlyUnread.has(conversationId);
 }
 
+/**
+ * True after the first read-state seed. A seed from outside the session list
+ * waits for it, so that it cannot open the mark-seen gate before the server's
+ * read state is known.
+ */
+export function isReadStateHydrated(): boolean {
+  return hydrated;
+}
+
 // `atSeconds` lets callers anchor the baseline to a server timestamp
 // (e.g. a PATCH response's `updated_at`) instead of the client's wall
 // clock — used to dismiss self-initiated `updated_at` bumps like a

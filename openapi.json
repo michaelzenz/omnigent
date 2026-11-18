@@ -1808,6 +1808,47 @@
         "title": "AgentTaskBoardWorker",
         "type": "object"
       },
+      "AgentTaskBoardWorkerSession": {
+        "description": "The session of a worker on one of the caller's live tasks.",
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/AgentTaskBoardSession"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "session"
+        ],
+        "title": "AgentTaskBoardWorkerSession",
+        "type": "object"
+      },
+      "AgentTaskBoardWorkerSessions": {
+        "description": "The sessions of the workers on the caller's live tasks, each session once.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTaskBoardWorkerSession"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "object": {
+            "const": "agent.task.board.worker_sessions",
+            "default": "agent.task.board.worker_sessions",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "AgentTaskBoardWorkerSessions",
+        "type": "object"
+      },
       "AgentTaskDeletedResponse": {
         "description": "A task deleted permanently.",
         "properties": {
@@ -20169,6 +20210,28 @@
           }
         },
         "summary": "Ensure Caller Watcher Session",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/worker-sessions": {
+      "get": {
+        "description": "Read the session of each worker on the caller's live tasks, each session once.\n\nThe Global Hub link reads them to show a dot while one of them has a\nfinished turn that the caller has not seen. A worker whose session no\nlonger exists is left out.",
+        "operationId": "read_worker_sessions_v1_agent_tasks_worker_sessions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskBoardWorkerSessions"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Read Worker Sessions",
         "tags": [
           "agent-tasks"
         ]
