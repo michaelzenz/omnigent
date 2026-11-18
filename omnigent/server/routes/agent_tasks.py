@@ -13,7 +13,8 @@ from typing import cast
 from fastapi import APIRouter, Query, Request
 
 from omnigent.agent_tasks.board_stores import BoardStores
-from omnigent.entities import Task
+from omnigent.agent_tasks.worker_subscriptions import follow_workers, unfollow_workers
+from omnigent.entities import LIVE_TASK_STATES, Task
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
@@ -36,7 +37,7 @@ def create_agent_tasks_router(
 ) -> APIRouter:
     """Build the router for the caller's GlobalHub board tasks.
 
-    :param stores: The board's tasks and managers.
+    :param stores: The board's tasks, managers, workers and subscriptions.
     :param auth_provider: Identifies the caller; ``None`` is single-user mode.
     :returns: A configured :class:`APIRouter`.
     """
@@ -139,7 +140,9 @@ def create_agent_tasks_router(
 
         A change of ``state`` also moves the task on the board: ``agent-resolved``
         to the end, any other state to the top so revived work surfaces. A
-        ``state`` equal to the task's current state moves nothing.
+        ``state`` equal to the task's current state moves nothing. The manager
+        of a live task follows its workers' sessions, so a new manager, an
+        archived task or a revived one changes which manager follows them.
         """
         user_id = require_user(request, auth_provider)
         reassigns = "manager_id" in body.model_fields_set
@@ -158,6 +161,8 @@ def create_agent_tasks_router(
                 state=body.state,
                 priority=body.priority,
             )
+            if task is not None and before is not None:
+                _move_worker_subscriptions(stores, before, task, user_id)
             if task is None or before is None or task.state == before.state:
                 return task
             if task.state == "agent-resolved":
@@ -179,16 +184,40 @@ def create_agent_tasks_router(
 
     @router.delete("/agent-tasks/{task_id}/permanent", response_model=AgentTaskDeletedResponse)
     async def delete_task_permanently(request: Request, task_id: str) -> AgentTaskDeletedResponse:
-        """Permanently delete one of the caller's tasks, its workers, assets and subscriptions.
+        """Permanently delete one of the caller's tasks, its workers and its assets.
 
-        The manager's and workers' sessions keep running as ordinary sessions.
+        The manager stops following the workers' sessions, unless they work on
+        another of its live tasks. The manager's and workers' sessions keep
+        running as ordinary sessions.
         """
         user_id = require_user(request, auth_provider)
-        if not await asyncio.to_thread(tasks.delete, task_id, owner_user_id=user_id):
+
+        def delete() -> bool:
+            task = tasks.get(task_id, owner_user_id=user_id)
+            if task is None:
+                return False
+            unfollow_workers(stores, task, owner_user_id=user_id, manager_id=task.manager_id)
+            return tasks.delete(task_id, owner_user_id=user_id)
+
+        if not await asyncio.to_thread(delete):
             raise OmnigentError("task not found", code=ErrorCode.NOT_FOUND)
         return AgentTaskDeletedResponse(id=task_id)
 
     return router
+
+
+def _move_worker_subscriptions(
+    board: BoardStores, before: Task, after: Task, owner_user_id: str | None
+) -> None:
+    """Make the manager of a live task follow its workers after a change of manager or state."""
+    was_live = before.state in LIVE_TASK_STATES
+    is_live = after.state in LIVE_TASK_STATES
+    if before.manager_id == after.manager_id and was_live == is_live:
+        return
+    if was_live:
+        unfollow_workers(board, before, owner_user_id=owner_user_id, manager_id=before.manager_id)
+    if is_live:
+        follow_workers(board, after, owner_user_id=owner_user_id)
 
 
 def _is_uuid(value: str) -> bool:

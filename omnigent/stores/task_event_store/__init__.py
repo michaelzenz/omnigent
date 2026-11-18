@@ -39,23 +39,23 @@ class TaskEventStore(ABC):
         source_session_id: str | None = None,
         tags: Sequence[EventTag] = (),
         task_id: str | None = None,
-        manager_id: str | None = None,
+        target_session_id: str | None = None,
     ) -> TaskEvent:
         """
-        Record an event: routed when ``manager_id`` is given, else unrouted.
+        Record an event: routed when ``target_session_id`` is given, else unrouted.
 
         :param event_id: Pre-generated id (bare 32-char hex).
         :param owner_user_id: The owner, or ``None`` in single-user mode.
         :param event_type: What happened, e.g. ``"session.turn.finished"``.
-        :param title: One-line summary for the broker and the manager.
+        :param title: One-line summary for the broker and the session that gets it.
         :param payload: Details of the event.
-        :param source: The system that reported it, e.g. ``"github"``.
+        :param source: The source type, e.g. ``"github.pull_request"``.
         :param source_key: What the source reported on, e.g. a pull request URL.
         :param source_offset: Which report this is, e.g. a comment id.
         :param source_session_id: The session the event came from.
         :param tags: Routing hints.
         :param task_id: The task the event concerns.
-        :param manager_id: The manager the event is routed to.
+        :param target_session_id: The session the event is routed to.
         :returns: The new event.
         """
 
@@ -94,7 +94,7 @@ class TaskEventStore(ABC):
         *,
         owner_user_id: str | None,
         states: Collection[str] | None = None,
-        manager_id: str | None = None,
+        target_session_id: str | None = None,
         fyi_cluster_ids: Collection[str] | None = None,
         queue_item_ids: Collection[str] | None = None,
         event_type: str | None = None,
@@ -106,7 +106,7 @@ class TaskEventStore(ABC):
 
         :param owner_user_id: The owner whose events to read.
         :param states: Only events in these states, or every state when ``None``.
-        :param manager_id: Only events routed to this manager.
+        :param target_session_id: Only events routed to this session.
         :param fyi_cluster_ids: Only events filed into these FYI clusters.
         :param queue_item_ids: Only events these queue items carry.
         :param event_type: Only events of this type, e.g. ``"session.turn.finished"``.
@@ -129,19 +129,19 @@ class TaskEventStore(ABC):
         """
 
     @abstractmethod
-    def route_to_manager(
-        self, event_ids: Collection[str], *, owner_user_id: str | None, manager_id: str
+    def route_to_session(
+        self, event_ids: Collection[str], *, owner_user_id: str | None, session_id: str
     ) -> builtins.list[TaskEvent] | None:
         """
-        Route the owner's events to one manager, all or none.
+        Route the owner's events to one session, e.g. a manager's, all or none.
 
-        Events already routed to that manager stay as they are. A newly
-        routed event leaves its queue item, so the manager's item can carry
+        Events already routed to that session stay as they are. A newly
+        routed event leaves its queue item, so the session's item can carry
         it, and its delivery count starts again.
 
         :returns: The events in request order, or ``None``, changing nothing,
             when one is missing, someone else's, or neither unrouted nor
-            routed to this manager.
+            routed to this session.
         """
 
     @abstractmethod

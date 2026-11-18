@@ -183,6 +183,7 @@ guardrails:
         "sys_list_models",
         "ui_open_file",
         "ui_stamp_folders",
+        "event_subscriptions",
     ],
 )
 def test_validate_rejects_local_tool_colliding_with_builtin(

@@ -111,6 +111,10 @@ vi.mock("@/hooks/useComposerGitStatus", () => ({
   },
 }));
 vi.mock("@/hooks/useOpenFolders", () => ({ useOpenFolders: () => [] }));
+vi.mock("@/hooks/useSessionSubscriptions", () => ({
+  useSessionSubscriptions: () => ({ data: [] }),
+  useUnsubscribeSession: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 vi.mock("@/shell/FileViewerContext", async (importOriginal) => ({
   ...(await importOriginal<typeof FileViewerContextModule>()),
   useOpenGithubTab: () => openGithubTabMock,

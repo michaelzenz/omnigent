@@ -19,6 +19,13 @@ export interface Watcher {
   session_id: string | null;
   created_at: number;
   updated_at: number;
+  /** Whether it is the built-in fallback watcher, which cannot be deleted. */
+  builtin: boolean;
+  /**
+   * The source types the custodian assigned to the watcher; for the fallback
+   * watcher, the followed types that no other watcher covers.
+   */
+  source_types: string[];
 }
 
 /** A watcher with the manual sent on every turn, and the template that a reset restores. */

@@ -12,7 +12,11 @@ from omnigent.runner.watch_items import execute_watch_items
 SOURCE_ID = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
 ROUTE = "/v1/agent-tasks/watchers/self/items"
 EMPTY = {"object": "list", "data": [], "total": 0}
-ITEM = {"source": "github", "source_key": "https://example.com/pr/1", "offsets": {"state": "open"}}
+ITEM = {
+    "source": "github.pull_request",
+    "source_key": "https://example.com/pr/1",
+    "offsets": {"state": "open"},
+}
 
 
 def _client(requests: list[httpx.Request]) -> httpx.AsyncClient:
@@ -29,12 +33,20 @@ async def test_each_action_calls_its_route_as_the_calling_session() -> None:
 
     outputs = [
         await execute_watch_items(
-            {"action": "list", "status": "all", "source": "github", "after": "abc", "items": None},
+            {
+                "action": "list",
+                "status": "all",
+                "source": "github.pull_request",
+                "after": "abc",
+                "items": None,
+            },
             client,
             SOURCE_ID,
         ),
         await execute_watch_items({"action": "observe", "items": [ITEM]}, client, SOURCE_ID),
-        await execute_watch_items({"action": "done", "items": [ITEM]}, client, SOURCE_ID),
+        await execute_watch_items(
+            {"action": "done", "items": [ITEM, {**ITEM, "summary": "Merged"}]}, client, SOURCE_ID
+        ),
     ]
 
     assert [json.loads(output) for output in outputs] == [EMPTY] * 3
@@ -43,12 +55,14 @@ async def test_each_action_calls_its_route_as_the_calling_session() -> None:
         ("POST", f"{ROUTE}/observe"),
         ("POST", f"{ROUTE}/done"),
     ]
-    assert dict(requests[0].url.params) == {"status": "all", "source": "github", "after": "abc"}
-    assert json.loads(requests[1].content) == {"items": [ITEM]}
-    # Only an item's key counts for done.
-    assert json.loads(requests[2].content) == {
-        "items": [{"source": "github", "source_key": "https://example.com/pr/1"}]
+    assert dict(requests[0].url.params) == {
+        "status": "all",
+        "source": "github.pull_request",
+        "after": "abc",
     }
+    assert json.loads(requests[1].content) == {"items": [ITEM]}
+    key = {"source": "github.pull_request", "source_key": "https://example.com/pr/1"}
+    assert json.loads(requests[2].content) == {"items": [key, {**key, "summary": "Merged"}]}
     assert {request.headers[ORCHESTRATION_SOURCE_HEADER] for request in requests} == {SOURCE_ID}
 
 

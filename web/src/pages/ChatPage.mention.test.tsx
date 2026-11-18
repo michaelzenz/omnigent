@@ -103,6 +103,10 @@ vi.mock("@/hooks/useComposerGitStatus", () => ({
   useComposerGitStatus: () => ({ branchState: "unknown", prCount: 0 }),
 }));
 vi.mock("@/hooks/useOpenFolders", () => ({ useOpenFolders: () => [] }));
+vi.mock("@/hooks/useSessionSubscriptions", () => ({
+  useSessionSubscriptions: () => ({ data: [] }),
+  useUnsubscribeSession: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 vi.mock("@/hooks/useSkills", () => ({
   useSkills: () => ({ skills: [], skillsStatus: "ready", refetch: vi.fn() }),
 }));

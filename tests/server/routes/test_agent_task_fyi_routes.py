@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 
+from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 
 ALICE_ID = "alice@example.com"
@@ -40,10 +41,13 @@ async def test_a_manager_files_events_into_a_cluster_on_the_board(
     auth_client: httpx.AsyncClient, db_uri: str
 ) -> None:
     manager_id = uuid.uuid4().hex
-    SqlAlchemyManagerStore(db_uri).create(manager_id, owner_user_id=ALICE_ID, title="Storage")
+    manager_session = SqlAlchemyConversationStore(db_uri).create_conversation(title="Storage")
+    SqlAlchemyManagerStore(db_uri).create(
+        manager_id, owner_user_id=ALICE_ID, title="Storage", conversation_id=manager_session.id
+    )
     waiting = await _event(auth_client, "Channel chatter")
     routed = await _event(auth_client, "Release thread")
-    await auth_client.post(
+    routing = await auth_client.post(
         "/v1/task-events/batch-route-manager",
         json={"event_ids": [routed], "manager_id": manager_id},
         headers=ALICE,
@@ -55,6 +59,7 @@ async def test_a_manager_files_events_into_a_cluster_on_the_board(
     extended = await _file(auth_client, [later, waiting], "Release chatter", cluster_id=cluster_id)
     board = (await auth_client.get(BOARD, headers=ALICE)).json()
 
+    assert routing.json()["data"][0]["state"] == "routed"
     assert {event["id"]: event["state"] for event in created.json()["events"]} == {
         waiting: "fyi",
         routed: "fyi",

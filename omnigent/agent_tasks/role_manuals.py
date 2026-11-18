@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from omnigent.agent_tasks.board_stores import BoardStores, open_board_stores
+from omnigent.agent_tasks.default_watchers import packaged_watcher_manual
 from omnigent.agent_tasks.roles import (
     MANAGER_ROLE_KEY,
     WATCHER_ROLE,
@@ -45,7 +46,8 @@ def role_turn_instructions(
     :returns: The owner's manual for the role (their override, else the
         packaged default), then a manager's own ids, then any request
         instructions. A watcher's manual is its own, else the packaged watcher
-        template, followed by its name and id.
+        template (the fallback manual for the fallback watcher), followed by
+        its name and id.
     """
     parts = _owner_parts(role, session_id, conversation_store)
     if isinstance(request_instructions, str) and request_instructions.strip():
@@ -156,6 +158,6 @@ def _watcher_parts(session_id: str, board: BoardStores, owner: str | None) -> li
         # The session of a deleted watcher is an ordinary session.
         return [WATCHER_ROLE.default_manual()]
     return [
-        watcher.manual or WATCHER_ROLE.default_manual(),
+        watcher.manual or packaged_watcher_manual(watcher),
         _WATCHER_IDS.format(name=watcher.name, watcher_id=watcher.id),
     ]

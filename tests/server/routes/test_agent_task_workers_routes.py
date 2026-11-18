@@ -13,6 +13,7 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 
+from omnigent.entities import SESSION_EVENT_SOURCE
 from omnigent.runner.identity import (
     ORCHESTRATION_SOURCE_HEADER,
     RUNNER_TUNNEL_TOKEN_HEADER,
@@ -40,6 +41,7 @@ from omnigent.stores.host_store import HostStore
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
+from omnigent.stores.subscription_store.sqlalchemy_store import SqlAlchemySubscriptionStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 
@@ -80,6 +82,16 @@ def _task(db_uri: str, title: str, owner: str = ALICE_ID, **fields: Any) -> str:
     task_id = uuid.uuid4().hex
     SqlAlchemyTaskStore(db_uri).create(task_id, owner_user_id=owner, title=title, **fields)
     return task_id
+
+
+def _manager(db_uri: str, session_id: str) -> str:
+    return (
+        SqlAlchemyManagerStore(db_uri)
+        .create(
+            uuid.uuid4().hex, owner_user_id=ALICE_ID, title="Reviews", conversation_id=session_id
+        )
+        .id
+    )
 
 
 def _session(db_uri: str, owner: str = ALICE_ID) -> str:
@@ -181,7 +193,9 @@ async def _message(
 async def test_a_session_has_one_worker_per_task_and_adopting_again_retitles_it(
     auth_client: httpx.AsyncClient, db_uri: str
 ) -> None:
-    task_id, other_task_id = _task(db_uri, "S3 retries"), _task(db_uri, "Dashboards")
+    manager_session = uuid.uuid4().hex
+    task_id = _task(db_uri, "S3 retries", manager_id=_manager(db_uri, manager_session))
+    other_task_id = _task(db_uri, "Dashboards")
     session_id = _session(db_uri)
 
     first = (await _adopt(auth_client, session_id, task_id, title="Reading logs")).json()
@@ -204,6 +218,13 @@ async def test_a_session_has_one_worker_per_task_and_adopting_again_retitles_it(
         (worker["id"], worker["task_id"], worker["session_id"], worker["title"])
         for worker in roster.json()["data"]
     ] == [(first["worker_id"], task_id, session_id, "Fixing retries")]
+    followed = SqlAlchemySubscriptionStore(db_uri).list_for_session(
+        manager_session, owner_user_id=ALICE_ID
+    )
+    assert [
+        (subscription.source_type, subscription.source_key, subscription.note)
+        for subscription in followed
+    ] == [(SESSION_EVENT_SOURCE, session_id, "Worker on the task S3 retries")]
 
 
 async def test_adoption_and_rosters_need_the_callers_own_task_and_session(
@@ -304,12 +325,8 @@ async def test_a_session_started_in_a_worktree_reports_a_first_message_that_fail
         )
 
     monkeypatch.setattr(agent_task_worker_sessions, "_create_session_worktree", create_worktree)
-    manager_id = (
-        SqlAlchemyManagerStore(db_uri)
-        .create(uuid.uuid4().hex, owner_user_id=ALICE_ID, title="Reviews")
-        .id
-    )
-    task_id = _task(db_uri, "PR 12", manager_id=manager_id)
+    manager_session = uuid.uuid4().hex
+    task_id = _task(db_uri, "PR 12", manager_id=_manager(db_uri, manager_session))
 
     started = await _start(
         hub_client, task_id, git={"branch_name": "review-12", "existing_branch": True}
@@ -333,7 +350,7 @@ async def test_a_session_started_in_a_worktree_reports_a_first_message_that_fail
     [failed] = SqlAlchemyTaskEventStore(db_uri).list(
         owner_user_id=ALICE_ID, event_type="session.start.failed"
     )
-    assert (failed.manager_id, failed.source_session_id) == (manager_id, session.id)
+    assert (failed.target_session_id, failed.source_session_id) == (manager_session, session.id)
     assert failed.payload is not None
     assert failed.payload["error"] == "no runner can be reached or woken"
 

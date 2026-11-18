@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 
+from omnigent.entities import SESSION_EVENT_SOURCE
 from omnigent.runner.identity import (
     ORCHESTRATION_SOURCE_HEADER,
     RUNNER_TUNNEL_TOKEN_HEADER,
@@ -14,7 +15,7 @@ from omnigent.runner.identity import (
 )
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
-from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+from omnigent.stores.subscription_store.sqlalchemy_store import SqlAlchemySubscriptionStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
 
@@ -24,8 +25,10 @@ BOB = {"X-Forwarded-Email": "bob@example.com"}
 HOST_ID = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
 WATCHERS = "/v1/agent-tasks/watchers"
 OWN_ITEMS = f"{WATCHERS}/self/items"
+PULL_REQUEST = "github.pull_request"
 PR = "https://github.com/example-org/repo/pull/12"
 OTHER_PR = "https://github.com/example-org/repo/pull/13"
+THIRD_PR = "https://github.com/example-org/repo/pull/14"
 
 
 async def _watcher_session(client: httpx.AsyncClient, db_uri: str) -> tuple[str, dict[str, str]]:
@@ -52,8 +55,22 @@ async def _watcher_session(client: httpx.AsyncClient, db_uri: str) -> tuple[str,
     }
 
 
+def _follow(db_uri: str, session_id: str, source_key: str) -> None:
+    SqlAlchemySubscriptionStore(db_uri).subscribe(
+        owner_user_id=ALICE_ID,
+        session_id=session_id,
+        source_type=PULL_REQUEST,
+        source_key=source_key,
+    )
+
+
 def _item(source_key: str = PR, **fields: Any) -> dict[str, Any]:
-    return {"source": "github", "source_key": source_key, "offsets": {"state": "open"}, **fields}
+    return {
+        "source": PULL_REQUEST,
+        "source_key": source_key,
+        "offsets": {"state": "open"},
+        **fields,
+    }
 
 
 async def test_only_the_watchers_own_session_uses_its_tracker(
@@ -61,7 +78,7 @@ async def test_only_the_watchers_own_session_uses_its_tracker(
 ) -> None:
     _, own_runner = await _watcher_session(auth_client, db_uri)
     body = {"items": [_item()]}
-    keys = {"items": [{"source": "github", "source_key": PR}]}
+    keys = {"items": [{"source": PULL_REQUEST, "source_key": PR}]}
 
     refused = [
         await auth_client.get(OWN_ITEMS, headers=ALICE),
@@ -87,29 +104,18 @@ async def test_only_the_watchers_own_session_uses_its_tracker(
     }
 
 
-async def test_observe_reports_changes_to_the_broker_or_the_following_tasks_manager(
+async def test_observe_reports_changes_to_the_sessions_that_follow_an_item_else_the_broker(
     auth_client: httpx.AsyncClient, db_uri: str
 ) -> None:
     watcher_id, own_runner = await _watcher_session(auth_client, db_uri)
-    manager = SqlAlchemyManagerStore(db_uri).create(
-        uuid.uuid4().hex, owner_user_id=ALICE_ID, title="Storage"
-    )
-    task = await auth_client.post(
-        "/v1/agent-tasks",
-        json={"manager_id": manager.id, "title": "S3 retries"},
-        headers=ALICE,
-    )
-    task_id = task.json()["id"]
-    # The manager subscribes the task to the pull request.
-    await auth_client.post(
-        f"/v1/agent-tasks/{task_id}/subscriptions",
-        json={"source_key": OTHER_PR, "source": "github"},
-        headers=ALICE,
-    )
+    watcher_session = own_runner[ORCHESTRATION_SOURCE_HEADER]
+    follower = uuid.uuid4().hex
+    _follow(db_uri, follower, OTHER_PR)
+    _follow(db_uri, watcher_session, THIRD_PR)
 
     first = await auth_client.post(
         f"{OWN_ITEMS}/observe",
-        json={"items": [_item(title="repo#12"), _item(OTHER_PR)]},
+        json={"items": [_item(title="repo#12"), _item(f"{OTHER_PR}/"), _item(THIRD_PR)]},
         headers=own_runner,
     )
     second = await auth_client.post(
@@ -118,37 +124,43 @@ async def test_observe_reports_changes_to_the_broker_or_the_following_tasks_mana
             "items": [
                 _item(offsets={"state": "merged"}, summary="Merged"),
                 _item(OTHER_PR, offsets={"state": "closed"}),
+                _item(THIRD_PR, offsets={"state": "closed"}),
             ]
         },
         headers=own_runner,
     )
 
-    assert [(row["outcome"], row["event_ids"]) for row in first.json()["data"]] == [
-        ("new", []),
-        ("new", []),
+    assert [
+        (row["source"], row["source_key"], row["outcome"], row["event_ids"])
+        for row in first.json()["data"]
+    ] == [
+        (PULL_REQUEST, PR, "new", []),
+        (PULL_REQUEST, OTHER_PR, "new", []),
+        (PULL_REQUEST, THIRD_PR, "new", []),
     ]
-    merged, closed = second.json()["data"]
+    merged, closed, own = second.json()["data"]
     assert (merged["outcome"], merged["changes"]) == (
         "changed",
         [{"offset": "state", "before": "open", "after": "merged"}],
     )
+    assert (own["outcome"], own["event_ids"]) == ("changed", [])
     events = SqlAlchemyTaskEventStore(db_uri)
     (broker_event_id,) = merged["event_ids"]
-    (manager_event_id,) = closed["event_ids"]
+    (follower_event_id,) = closed["event_ids"]
     to_broker = events.get(broker_event_id, owner_user_id=ALICE_ID)
-    to_manager = events.get(manager_event_id, owner_user_id=ALICE_ID)
-    assert to_broker is not None and to_manager is not None
+    to_follower = events.get(follower_event_id, owner_user_id=ALICE_ID)
+    assert to_broker is not None and to_follower is not None
     assert (to_broker.state, to_broker.title, to_broker.payload["watcher"]["id"]) == (
         "unrouted",
         "Merged",
         watcher_id,
     )
-    assert (to_manager.state, to_manager.manager_id, to_manager.task_id) == (
+    assert (to_follower.state, to_follower.target_session_id, to_follower.source) == (
         "routed",
-        manager.id,
-        task_id,
+        follower,
+        PULL_REQUEST,
     )
-    assert to_broker.source_session_id == own_runner[ORCHESTRATION_SOURCE_HEADER]
+    assert to_broker.source_session_id == watcher_session
 
 
 async def test_observe_refuses_a_bad_call_and_saves_nothing(
@@ -169,13 +181,18 @@ async def test_observe_refuses_a_bad_call_and_saves_nothing(
             headers=own_runner,
         ),
         await auth_client.post(path, json={"items": []}, headers=own_runner),
-        # The server keeps the session source for its session events.
         await auth_client.post(
-            path, json={"items": [_item(), _item(source="session")]}, headers=own_runner
+            path,
+            json={"items": [_item(), _item(source=SESSION_EVENT_SOURCE)]},
+            headers=own_runner,
+        ),
+        await auth_client.post(path, json={"items": [_item(source="github")]}, headers=own_runner),
+        await auth_client.post(
+            path, json={"items": [_item(), _item(f"{PR}/")]}, headers=own_runner
         ),
     ]
 
-    assert [response.status_code for response in responses] == [422, 422, 422, 422, 400]
+    assert [response.status_code for response in responses] == [422, 422, 422, 422, 400, 400, 400]
     assert (await auth_client.get(OWN_ITEMS, headers=own_runner)).json()["total"] == 0
 
 
@@ -221,15 +238,19 @@ async def test_done_items_leave_the_active_list_and_the_card_shows_them_all(
     await auth_client.post(
         f"{OWN_ITEMS}/observe", json={"items": [_item(), _item(OTHER_PR)]}, headers=own_runner
     )
-    gone = {"source": "github", "source_key": "https://example.com/x"}
+    gone = {"source": PULL_REQUEST, "source_key": "https://example.com/x"}
 
-    # The API takes only an item's key for done; the runner drops the rest.
     with_offsets = await auth_client.post(
         f"{OWN_ITEMS}/done", json={"items": [_item()]}, headers=own_runner
     )
+    twice = await auth_client.post(
+        f"{OWN_ITEMS}/done",
+        json={"items": [{"source": PULL_REQUEST, "source_key": PR}] * 2},
+        headers=own_runner,
+    )
     done = await auth_client.post(
         f"{OWN_ITEMS}/done",
-        json={"items": [{"source": "github", "source_key": PR}, gone]},
+        json={"items": [{"source": PULL_REQUEST, "source_key": PR}, gone]},
         headers=own_runner,
     )
     active = (await auth_client.get(OWN_ITEMS, headers=own_runner)).json()
@@ -238,8 +259,55 @@ async def test_done_items_leave_the_active_list_and_the_card_shows_them_all(
     )
     for_bob = await auth_client.get(f"{WATCHERS}/{watcher_id}/items", headers=BOB)
 
-    assert with_offsets.status_code == 422
+    assert (with_offsets.status_code, twice.status_code) == (422, 400)
     assert done.json() == {"done": 1, "missing": [gone]}
     assert ([row["source_key"] for row in active["data"]], active["total"]) == ([OTHER_PR], 1)
     assert everything.json()["total"] == 2
     assert for_bob.status_code == 404
+
+
+async def test_a_done_item_tells_the_sessions_that_follow_it_and_reopens_when_it_changes(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    _, own_runner = await _watcher_session(auth_client, db_uri)
+    follower = uuid.uuid4().hex
+    _follow(db_uri, follower, PR)
+    observe = f"{OWN_ITEMS}/observe"
+    await auth_client.post(observe, json={"items": [_item(title="repo#12")]}, headers=own_runner)
+
+    done = await auth_client.post(
+        f"{OWN_ITEMS}/done",
+        json={"items": [{"source": PULL_REQUEST, "source_key": f"{PR}/", "summary": " Merged "}]},
+        headers=own_runner,
+    )
+    done_again = await auth_client.post(
+        f"{OWN_ITEMS}/done",
+        json={"items": [{"source": PULL_REQUEST, "source_key": PR, "summary": "Merged"}]},
+        headers=own_runner,
+    )
+    unchanged = await auth_client.post(observe, json={"items": [_item()]}, headers=own_runner)
+    active_while_done = (await auth_client.get(OWN_ITEMS, headers=own_runner)).json()["total"]
+    reopened = await auth_client.post(
+        observe,
+        json={"items": [_item(offsets={"checks": "failing"}, summary="CI failed: unit-tests")]},
+        headers=own_runner,
+    )
+    active = (await auth_client.get(OWN_ITEMS, headers=own_runner)).json()
+
+    events = SqlAlchemyTaskEventStore(db_uri)
+    [done_event] = events.list(owner_user_id=ALICE_ID, event_type="watch.done")
+    [reopen_event] = events.list(owner_user_id=ALICE_ID, event_type="watch.reopened")
+    assert done.json() == done_again.json() == {"done": 1, "missing": []}
+    assert (done_event.title, done_event.target_session_id, done_event.state) == (
+        "Done: repo#12: Merged",
+        follower,
+        "routed",
+    )
+    assert (unchanged.json()["data"][0]["outcome"], active_while_done) == ("unchanged", 0)
+    [result] = reopened.json()["data"]
+    assert (result["outcome"], result["event_ids"]) == ("reopened", [reopen_event.id])
+    assert (reopen_event.title, reopen_event.target_session_id) == (
+        "CI failed: unit-tests",
+        follower,
+    )
+    assert [row["source_key"] for row in active["data"]] == [PR]

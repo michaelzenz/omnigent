@@ -5,11 +5,17 @@ from __future__ import annotations
 import builtins
 from typing import Any
 
-from sqlalchemy import ColumnElement, and_, asc, select, update
+from sqlalchemy import ColumnElement, and_, asc, delete, select, update
 from sqlalchemy.orm import Session
 
 from omnigent.db.account_authority import require_active_account
-from omnigent.db.db_models import SqlManager, SqlTask, SqlTaskEvent, current_workspace_id
+from omnigent.db.db_models import (
+    SqlManager,
+    SqlSubscription,
+    SqlTask,
+    SqlTaskEvent,
+    current_workspace_id,
+)
 from omnigent.db.enum_codecs import encode_task_event_state
 from omnigent.db.utils import (
     get_or_create_engine,
@@ -176,7 +182,8 @@ class SqlAlchemyManagerStore(ManagerStore):
     def delete(self, manager_id: str, *, owner_user_id: str | None) -> bool:
         """Delete the owner's manager; return whether it existed.
 
-        Its tasks are unassigned, and its unhandled events wait for the broker again.
+        Its tasks are unassigned, its session follows no source any more, and the
+        unhandled events routed to its session wait for the broker again.
         """
         now = now_epoch()
 
@@ -193,22 +200,29 @@ class SqlAlchemyManagerStore(ManagerStore):
                 )
                 .values(manager_id=None)
             )
-            session.execute(
-                update(SqlTaskEvent)
-                .where(
-                    SqlTaskEvent.workspace_id == current_workspace_id(),
-                    SqlTaskEvent.manager_id == manager_id,
-                    SqlTaskEvent.state == encode_task_event_state("routed"),
+            if row.conversation_id is not None:
+                session.execute(
+                    update(SqlTaskEvent)
+                    .where(
+                        SqlTaskEvent.workspace_id == current_workspace_id(),
+                        SqlTaskEvent.target_session_id == row.conversation_id,
+                        SqlTaskEvent.state == encode_task_event_state("routed"),
+                    )
+                    .values(
+                        state=encode_task_event_state("unrouted"),
+                        target_session_id=None,
+                        queue_item_id=None,
+                        delivery_count=0,
+                        routed_at=None,
+                        updated_at=now,
+                    )
                 )
-                .values(
-                    state=encode_task_event_state("unrouted"),
-                    manager_id=None,
-                    queue_item_id=None,
-                    delivery_count=0,
-                    routed_at=None,
-                    updated_at=now,
+                session.execute(
+                    delete(SqlSubscription).where(
+                        SqlSubscription.workspace_id == current_workspace_id(),
+                        SqlSubscription.session_id == row.conversation_id,
+                    )
                 )
-            )
             session.delete(row)
             return True
 

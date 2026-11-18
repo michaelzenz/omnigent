@@ -9,8 +9,11 @@ import httpx
 
 from omnigent.entities.task import MAX_TASK_INTERNAL_NOTE_CHARS
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+from omnigent.stores.subscription_store.sqlalchemy_store import SqlAlchemySubscriptionStore
+from omnigent.stores.worker_store.sqlalchemy_store import SqlAlchemyWorkerStore
 
-ALICE = {"X-Forwarded-Email": "alice@example.com"}
+ALICE_ID = "alice@example.com"
+ALICE = {"X-Forwarded-Email": ALICE_ID}
 BOB = {"X-Forwarded-Email": "bob@example.com"}
 ROUTE = "/v1/agent-tasks"
 
@@ -170,3 +173,45 @@ async def test_move_to_end_and_permanent_delete(
     deleted = await auth_client.delete(f"{ROUTE}/{two}/permanent", headers=ALICE)
     assert deleted.json() == {"object": "agent.task", "id": two, "deleted": True}
     assert (await auth_client.get(f"{ROUTE}/{two}", headers=ALICE)).status_code == 404
+
+
+async def test_the_manager_of_a_live_task_follows_the_sessions_of_its_workers(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    storage, storage_session = _manager(db_uri)
+    docs, docs_session = _manager(db_uri)
+    task = await _create(auth_client, storage, "S3 retries")
+    other_task = await _create(auth_client, storage, "Dashboards")
+    solo_worker, shared_worker = uuid.uuid4().hex, uuid.uuid4().hex
+    workers = SqlAlchemyWorkerStore(db_uri)
+    for task_id, session_id in (
+        (task, solo_worker),
+        (task, shared_worker),
+        (other_task, shared_worker),
+    ):
+        workers.create(
+            uuid.uuid4().hex, owner_user_id=ALICE_ID, task_id=task_id, session_id=session_id
+        )
+    subscriptions = SqlAlchemySubscriptionStore(db_uri)
+
+    def followed_by(manager_session: str) -> set[str]:
+        return {
+            subscription.source_key
+            for subscription in subscriptions.list_for_session(
+                manager_session, owner_user_id=ALICE_ID
+            )
+        }
+
+    await auth_client.patch(f"{ROUTE}/{task}", json={"state": "archived"}, headers=ALICE)
+    while_archived = followed_by(storage_session)
+    await auth_client.patch(f"{ROUTE}/{task}", json={"state": "active"}, headers=ALICE)
+    revived = followed_by(storage_session)
+    await auth_client.patch(f"{ROUTE}/{task}", json={"manager_id": docs}, headers=ALICE)
+    reassigned = (followed_by(storage_session), followed_by(docs_session))
+    await auth_client.delete(f"{ROUTE}/{task}/permanent", headers=ALICE)
+    deleted = followed_by(docs_session)
+
+    assert while_archived == set()
+    assert revived == {solo_worker, shared_worker}
+    assert reassigned == ({shared_worker}, {solo_worker, shared_worker})
+    assert deleted == set()

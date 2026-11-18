@@ -19,6 +19,7 @@ tools:
   builtins:
     - pmv2_read
     - search_conversations
+    - source_watchers
     - sys_session_delete
     - system_notice
 
@@ -33,6 +34,7 @@ allowed_builtin_tools:
   - mcp
   - pmv2_read
   - search_conversations
+  - source_watchers
   - sys_session_list
   - sys_session_get_info
   - sys_session_get_history

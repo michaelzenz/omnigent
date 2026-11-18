@@ -1876,7 +1876,7 @@
         "type": "object"
       },
       "AgentTaskEventAssignment": {
-        "description": "An event assigned to a task, and what the task follows now.\n\n`worker_id` is the session's worker on the task, for a session event.\n`subscription_id` is the task's subscription to the event's key, for\nanother event. Both are null for an event without a key, or for a session\nthat is gone.",
+        "description": "An event assigned to a task.\n\n`worker_id` is the session's worker on the task, for a session event; it\nis null for other events, or for a session that is gone.",
         "properties": {
           "event": {
             "$ref": "#/components/schemas/AgentTaskEventResponse"
@@ -1886,17 +1886,6 @@
             "default": "agent.task.event_assignment",
             "title": "Object",
             "type": "string"
-          },
-          "subscription_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Subscription Id"
           },
           "worker_id": {
             "anyOf": [
@@ -1912,8 +1901,7 @@
         },
         "required": [
           "event",
-          "worker_id",
-          "subscription_id"
+          "worker_id"
         ],
         "title": "AgentTaskEventAssignment",
         "type": "object"
@@ -1942,7 +1930,7 @@
         "type": "object"
       },
       "AgentTaskEventResponse": {
-        "description": "A signal on the caller's GlobalHub board.\n\nThe broker routes an `unrouted` event to a manager. The manager handles a\n`routed` event and dismisses it, or files it into an FYI cluster.",
+        "description": "A signal on the caller's GlobalHub board.\n\nAn event about a source that sessions follow is `routed` to each of them;\n`target_session_id` is the session it went to. The broker routes an\n`unrouted` event to a manager's session. A manager handles a `routed`\nevent and dismisses it, or files it into an FYI cluster; another session\ngets its event once. `task_id` is the task a manager assigned it to.",
         "properties": {
           "created_at": {
             "format": "int64",
@@ -1967,17 +1955,6 @@
           "id": {
             "title": "Id",
             "type": "string"
-          },
-          "manager_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Manager Id"
           },
           "object": {
             "const": "agent.task.event",
@@ -2075,6 +2052,17 @@
             "title": "Tags",
             "type": "array"
           },
+          "target_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Session Id"
+          },
           "task_id": {
             "anyOf": [
               {
@@ -2115,7 +2103,7 @@
           "source_session_id",
           "tags",
           "task_id",
-          "manager_id",
+          "target_session_id",
           "fyi_cluster_id",
           "created_at",
           "updated_at",
@@ -2386,108 +2374,6 @@
         "title": "AgentTaskSpawnManagersRequested",
         "type": "object"
       },
-      "AgentTaskSubscriptionDeletedResponse": {
-        "description": "A key that one of the caller's tasks no longer follows.",
-        "properties": {
-          "deleted": {
-            "const": true,
-            "default": true,
-            "title": "Deleted",
-            "type": "boolean"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "object": {
-            "const": "agent.task.subscription",
-            "default": "agent.task.subscription",
-            "title": "Object",
-            "type": "string"
-          },
-          "task_id": {
-            "title": "Task Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "task_id"
-        ],
-        "title": "AgentTaskSubscriptionDeletedResponse",
-        "type": "object"
-      },
-      "AgentTaskSubscriptionList": {
-        "description": "Keys that the caller's tasks follow, oldest first.",
-        "properties": {
-          "data": {
-            "items": {
-              "$ref": "#/components/schemas/AgentTaskSubscriptionResponse"
-            },
-            "title": "Data",
-            "type": "array"
-          },
-          "object": {
-            "const": "list",
-            "default": "list",
-            "title": "Object",
-            "type": "string"
-          }
-        },
-        "required": [
-          "data"
-        ],
-        "title": "AgentTaskSubscriptionList",
-        "type": "object"
-      },
-      "AgentTaskSubscriptionResponse": {
-        "description": "A key that one of the caller's tasks follows; the task's manager subscribed it.",
-        "properties": {
-          "created_at": {
-            "format": "int64",
-            "title": "Created At",
-            "type": "integer"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "object": {
-            "const": "agent.task.subscription",
-            "default": "agent.task.subscription",
-            "title": "Object",
-            "type": "string"
-          },
-          "source": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source"
-          },
-          "source_key": {
-            "title": "Source Key",
-            "type": "string"
-          },
-          "task_id": {
-            "title": "Task Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "task_id",
-          "source_key",
-          "source",
-          "created_at"
-        ],
-        "title": "AgentTaskSubscriptionResponse",
-        "type": "object"
-      },
       "AgentTaskWorkerList": {
         "description": "The workers on one of the caller's tasks, in the order they were attached.",
         "properties": {
@@ -2717,7 +2603,7 @@
       },
       "AssignAgentTaskEventRequest": {
         "additionalProperties": false,
-        "description": "Assign one of the caller's events to one of their tasks, and mark the event handled.\n\nThe task then follows the event's key, so later events with the key go to\nthe task's manager. A session event makes the session the task's worker,\nwith `title` as the worker's title; another event with a source key\nsubscribes the task to that key.",
+        "description": "Assign one of the caller's events to one of their tasks, and mark the event handled.\n\nA session event also makes the session the task's worker, with `title`\nas the worker's title; the task's manager then follows the session.",
         "properties": {
           "task_id": {
             "maxLength": 64,
@@ -2742,6 +2628,23 @@
           "task_id"
         ],
         "title": "AssignAgentTaskEventRequest",
+        "type": "object"
+      },
+      "AssignSourceTypeRequest": {
+        "additionalProperties": false,
+        "description": "Assign a source type to the watcher whose manual covers it.",
+        "properties": {
+          "watcher_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Watcher Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "watcher_id"
+        ],
+        "title": "AssignSourceTypeRequest",
         "type": "object"
       },
       "AutomaticSessionRenameRequest": {
@@ -4156,7 +4059,7 @@
       },
       "CreateAgentTaskEventRequest": {
         "additionalProperties": false,
-        "description": "Record an event on the caller's board.\n\nEach live task that follows `source_key` (an exact match) gets the event\nthrough its manager; without such a task, the broker routes it. A report\nthat names its `source` and `source_key` is recorded once: sending it\nagain returns the first event. `session.*` event types and the\n`session` source come only from the server's session hooks.",
+        "description": "Record an event on the caller's board.\n\n`source` is the source type, e.g. `github.pull_request`. Each session\nthat follows `source_key` (an exact match after the server normalizes it)\ngets the event; when no session follows it, the broker routes it. A report\nthat names its `source` and `source_key` is recorded once: sending it\nagain returns the first event. `session.*` event types and the\n`omnigent.` source types come only from the server.",
         "properties": {
           "event_type": {
             "maxLength": 128,
@@ -4296,35 +4199,6 @@
           "title"
         ],
         "title": "CreateAgentTaskRequest",
-        "type": "object"
-      },
-      "CreateAgentTaskSubscriptionRequest": {
-        "additionalProperties": false,
-        "description": "Make one of the caller's tasks follow a key, e.g. a pull request URL.\n\nWhile the task is live, events with the same key go to the task's manager.\nKeys match exactly, so write the key in its canonical form, e.g.\n`https://github.com/<org>/<repo>/pull/<number>`. Subscribing again\nreturns the subscription the task has.",
-        "properties": {
-          "source": {
-            "anyOf": [
-              {
-                "maxLength": 64,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source"
-          },
-          "source_key": {
-            "maxLength": 512,
-            "title": "Source Key",
-            "type": "string"
-          }
-        },
-        "required": [
-          "source_key"
-        ],
-        "title": "CreateAgentTaskSubscriptionRequest",
         "type": "object"
       },
       "CreateDefaultPolicyRequest": {
@@ -4665,6 +4539,40 @@
           "handler"
         ],
         "title": "CreateSessionPolicyRequest",
+        "type": "object"
+      },
+      "CreateSessionSubscriptionRequest": {
+        "additionalProperties": false,
+        "description": "Make a session follow a source, e.g. a pull request.\n\n`source_type` names the system and the kind of source in lowercase words\njoined by dots, e.g. `github.pull_request`; reuse a type that is in use\nwhen one fits. `source_key` names the source, e.g. its URL; the server\nnormalizes it, so keys match exactly. `note`, at most 300 words, says why\nthe session follows it and, only for a source that is hard to read, how a\nwatcher reads it, e.g. a permission or an account it needs; the watcher\nsees it on each run. Following a source again keeps one subscription and\nreplaces its type and note.",
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 3000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "source_key": {
+            "maxLength": 512,
+            "title": "Source Key",
+            "type": "string"
+          },
+          "source_type": {
+            "maxLength": 64,
+            "title": "Source Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_type",
+          "source_key"
+        ],
+        "title": "CreateSessionSubscriptionRequest",
         "type": "object"
       },
       "CreatedEvent": {
@@ -5823,13 +5731,47 @@
         "title": "FilesystemAttachmentsInfo",
         "type": "object"
       },
+      "FinishWatchItem": {
+        "additionalProperties": false,
+        "description": "One item the calling watcher marks done; `summary` says why, e.g. `\"Merged\"`.",
+        "properties": {
+          "source": {
+            "maxLength": 64,
+            "title": "Source",
+            "type": "string"
+          },
+          "source_key": {
+            "maxLength": 512,
+            "title": "Source Key",
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          }
+        },
+        "required": [
+          "source",
+          "source_key"
+        ],
+        "title": "FinishWatchItem",
+        "type": "object"
+      },
       "FinishWatchItemsRequest": {
         "additionalProperties": false,
-        "description": "Items the calling watcher stops checking, e.g. merged pull requests.",
+        "description": "Items the calling watcher marks done, e.g. merged pull requests.\n\nEach session that follows a newly done item gets a `watch.done` event.",
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/WatchItemKey"
+              "$ref": "#/components/schemas/FinishWatchItem"
             },
             "maxItems": 100,
             "minItems": 1,
@@ -6326,8 +6268,12 @@
         "type": "object"
       },
       "GlobalHubWatcher": {
-        "description": "One of the caller's GlobalHub watchers, without its manual.\n\nA watcher is a role session that runs on its schedule and reports what\nchanged in the things its manual names. `model` is null while its session\nuses the watcher agent's own model. `customized` is `[\"manual\"]` when\nthe caller replaced the packaged template. `schedule` is null when the\nwatcher has none and so never runs. `session_id` is its current session,\nnull before its first run.",
+        "description": "One of the caller's GlobalHub watchers, without its manual.\n\nA watcher is a role session that runs on its schedule and reports what\nchanged in the things its manual names. `model` is null while its session\nuses the watcher agent's own model. `customized` is `[\"manual\"]` when\nthe caller replaced the packaged template. `schedule` is null when the\nwatcher has none and so never runs. `session_id` is its current session,\nnull before its first run. `builtin` marks the fallback watcher, which\ncannot be deleted. `source_types` are the source types the custodian\nassigned to the watcher; for the fallback watcher, the types that sessions\nfollow and no other watcher covers.",
         "properties": {
+          "builtin": {
+            "title": "Builtin",
+            "type": "boolean"
+          },
           "created_at": {
             "format": "int64",
             "title": "Created At",
@@ -6391,6 +6337,13 @@
             ],
             "title": "Session Id"
           },
+          "source_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Types",
+            "type": "array"
+          },
           "updated_at": {
             "format": "int64",
             "title": "Updated At",
@@ -6406,7 +6359,9 @@
           "schedule",
           "session_id",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "builtin",
+          "source_types"
         ],
         "title": "GlobalHubWatcher",
         "type": "object"
@@ -6475,8 +6430,12 @@
         "type": "object"
       },
       "GlobalHubWatcherDetail": {
-        "description": "A watcher with the manual attached to every turn of its session.\n\n`default_manual` is the packaged watcher template, which a reset restores.",
+        "description": "A watcher with the manual attached to every turn of its session.\n\n`default_manual` is the packaged manual, which a reset restores: the\nwatcher template, or the fallback manual for the fallback watcher.",
         "properties": {
+          "builtin": {
+            "title": "Builtin",
+            "type": "boolean"
+          },
           "created_at": {
             "format": "int64",
             "title": "Created At",
@@ -6548,6 +6507,13 @@
             ],
             "title": "Session Id"
           },
+          "source_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Types",
+            "type": "array"
+          },
           "updated_at": {
             "format": "int64",
             "title": "Updated At",
@@ -6564,6 +6530,8 @@
           "session_id",
           "created_at",
           "updated_at",
+          "builtin",
+          "source_types",
           "manual",
           "default_manual"
         ],
@@ -9390,6 +9358,22 @@
         "title": "ReconnectLiveMCPServerRequest",
         "type": "object"
       },
+      "RemoveSessionSubscriptionRequest": {
+        "additionalProperties": false,
+        "description": "Stop a session from following a source.",
+        "properties": {
+          "source_key": {
+            "maxLength": 512,
+            "title": "Source Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_key"
+        ],
+        "title": "RemoveSessionSubscriptionRequest",
+        "type": "object"
+      },
       "ResetSessionModelOverrideRequest": {
         "additionalProperties": false,
         "description": "Reset a launch-time model selection only while that selection is current.",
@@ -9740,7 +9724,7 @@
       },
       "RouteAgentTaskEventsRequest": {
         "additionalProperties": false,
-        "description": "Route events that wait for the broker to one of the caller's managers.",
+        "description": "Route events that wait for the broker to one of the caller's managers.\n\nThe events go to the manager's session; the manager does not follow their\nsources.",
         "properties": {
           "event_ids": {
             "items": {
@@ -14942,6 +14926,112 @@
         "title": "SessionStatusEvent",
         "type": "object"
       },
+      "SessionSubscriptionList": {
+        "description": "The sources that a session follows, in the order it started to follow them.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SessionSubscriptionResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "object": {
+            "const": "list",
+            "default": "list",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SessionSubscriptionList",
+        "type": "object"
+      },
+      "SessionSubscriptionRemoved": {
+        "description": "A source that a session no longer follows; `removed` is false when it was not followed.",
+        "properties": {
+          "object": {
+            "const": "session.subscription",
+            "default": "session.subscription",
+            "title": "Object",
+            "type": "string"
+          },
+          "removed": {
+            "title": "Removed",
+            "type": "boolean"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "source_key": {
+            "title": "Source Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "source_key",
+          "removed"
+        ],
+        "title": "SessionSubscriptionRemoved",
+        "type": "object"
+      },
+      "SessionSubscriptionResponse": {
+        "description": "A source that a session follows: each event about it goes to the session.",
+        "properties": {
+          "created_at": {
+            "format": "int64",
+            "title": "Created At",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "object": {
+            "const": "session.subscription",
+            "default": "session.subscription",
+            "title": "Object",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "source_key": {
+            "title": "Source Key",
+            "type": "string"
+          },
+          "source_type": {
+            "title": "Source Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "session_id",
+          "source_type",
+          "source_key",
+          "note",
+          "created_at"
+        ],
+        "title": "SessionSubscriptionResponse",
+        "type": "object"
+      },
       "SessionSupersededEvent": {
         "description": "This conversation was superseded by another and clients should\nfollow to it.\n\nEmitted by `_publish_session_superseded` in\n`omnigent/server/routes/sessions.py` when the claude-native\nforwarder rotates a session away on a Claude `/clear` (the old\nconversation keeps its history but the live terminal moves to a\nfresh conversation \u2014 see `_post_clear_supersession` in\n`omnigent/claude_native_forwarder.py`). A client actively viewing\nthe superseded conversation auto-redirects to `target_conversation_id`.\n\nCategory: **transient** (SSE-only), live-only by design. There is no\nSSE replay: a client that connects after the rotation does not get\nthis event. The durable counterpart is the persisted notice message\nappended to the old conversation (a `message` item linking to the\nnew conversation), which a reloading client renders instead of being\nforce-redirected.\n\nThe wire shape is FLAT (not enveloped):\n`{\"type\": \"session.superseded\", \"conversation_id\": <old>, \"target_conversation_id\": <new>, \"reason\": \"clear\"}`.",
         "properties": {
@@ -16502,6 +16592,79 @@
           "oss"
         ],
         "title": "SmartRoutingSourcesInfo",
+        "type": "object"
+      },
+      "SourceTypeList": {
+        "description": "The source types in use, by name.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SourceTypeResponse"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "object": {
+            "const": "list",
+            "default": "list",
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "SourceTypeList",
+        "type": "object"
+      },
+      "SourceTypeResponse": {
+        "description": "A source type in use, with the watcher that checks it.\n\n`watcher_id` and `watcher_name` are null when no watcher is assigned;\nthe fallback watcher then checks the type. `subscriptions` counts the\nsubscriptions of the type.",
+        "properties": {
+          "object": {
+            "const": "source_type",
+            "default": "source_type",
+            "title": "Object",
+            "type": "string"
+          },
+          "source_type": {
+            "title": "Source Type",
+            "type": "string"
+          },
+          "subscriptions": {
+            "format": "int64",
+            "title": "Subscriptions",
+            "type": "integer"
+          },
+          "watcher_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watcher Id"
+          },
+          "watcher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watcher Name"
+          }
+        },
+        "required": [
+          "source_type",
+          "watcher_id",
+          "watcher_name",
+          "subscriptions"
+        ],
+        "title": "SourceTypeResponse",
         "type": "object"
       },
       "StampFoldersRequest": {
@@ -18365,7 +18528,7 @@
       },
       "WatchItemObservation": {
         "additionalProperties": false,
-        "description": "What the calling watcher sees now for one item, e.g. a pull request.\n\n`source` names the system and `source_key` the item; together they\nidentify it. The server keeps the `session` source for its session\nevents. Task subscriptions match `source_key` exactly, so it is the\nitem's canonical form, e.g. `https://github.com/<org>/<repo>/pull/<number>`.\n`offsets` maps a name to the value to compare with the last run, and null\nremoves the name; names left out keep their value. A null `title` keeps\nthe saved one. `summary` and `details` explain a change in its events.\n`announce` records events for a new item.",
+        "description": "What the calling watcher sees now for one item, e.g. a pull request.\n\n`source` is the source type, e.g. `github.pull_request`, and\n`source_key` the item; together they identify it. The server keeps the\n`omnigent.` types for its own events. Subscriptions match `source_key`\nexactly after the server normalizes it, so send the item's canonical form,\ne.g. `https://github.com/<org>/<repo>/pull/<number>`. `offsets` maps a\nname to the value to compare with the last run, and null removes the name;\nnames left out keep their value. A null `title` keeps the saved one.\n`summary` and `details` explain a change in its events. `announce`\nrecords events for a new item.",
         "properties": {
           "announce": {
             "default": false,
@@ -18441,7 +18604,7 @@
         "type": "object"
       },
       "WatchItemObservationResult": {
-        "description": "What an observation found for one item.\n\n`outcome` is `\"new\"` for an item the watcher had not tracked,\n`\"changed\"` when an offset changed, else `\"unchanged\"`. `event_ids`\nare the task events recorded for the change, or for an announced new item:\none for each live task that follows the item, else one for the broker.",
+        "description": "What an observation found for one item.\n\n`outcome` is `\"new\"` for an item the watcher had not tracked,\n`\"changed\"` when an offset changed, `\"reopened\"` when an offset of a\ndone item changed, else `\"unchanged\"`. `event_ids` are the task events\nrecorded for the change, or for an announced new item: one for each session\nthat follows the item, else one for the broker.",
         "properties": {
           "changes": {
             "items": {
@@ -18461,6 +18624,7 @@
             "enum": [
               "new",
               "changed",
+              "reopened",
               "unchanged"
             ],
             "title": "Outcome",
@@ -19324,7 +19488,7 @@
     },
     "/v1/agent-tasks/roles/{role}/dismiss-waiting": {
       "post": {
-        "description": "Clear the waiting work of the caller's broker or custodian.\n\nFor the broker, it dismisses the unrouted events and drops the queued\nrequests for managers; for the custodian, it drops the queued clicks\nand the queued session cleanup. A message the role is already handling\ngoes on.",
+        "description": "Clear the waiting work of the caller's broker or custodian.\n\nFor the broker, it dismisses the unrouted events and drops the queued\nrequests for managers; for the custodian, it drops the queued clicks,\nthe queued session cleanup and the queued requests to assign source\ntypes. A message the role is already handling goes on.",
         "operationId": "dismiss_role_waiting_v1_agent_tasks_roles__role__dismiss_waiting_post",
         "parameters": [
           {
@@ -19504,7 +19668,7 @@
     },
     "/v1/agent-tasks/sessions/{session_id}/adopt": {
       "post": {
-        "description": "Attach one of the caller's sessions to one of their tasks.\n\nA session has one worker per task: adopting it again only retitles that\nworker.",
+        "description": "Attach one of the caller's sessions to one of their tasks.\n\nA session has one worker per task: adopting it again only retitles that\nworker. The task's manager follows the session.",
         "operationId": "adopt_session_v1_agent_tasks_sessions__session_id__adopt_post",
         "parameters": [
           {
@@ -19555,6 +19719,122 @@
         ]
       }
     },
+    "/v1/agent-tasks/source-types": {
+      "get": {
+        "description": "List the caller's source types in use, by name, each with its watcher.",
+        "operationId": "list_source_types_v1_agent_tasks_source_types_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceTypeList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Source Types",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/source-types/{source_type}/watcher": {
+      "delete": {
+        "description": "Leave a source type to the fallback watcher.\n\nOnly the caller or their current custodian session may unassign.",
+        "operationId": "unassign_source_type_v1_agent_tasks_source_types__source_type__watcher_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_type",
+            "required": true,
+            "schema": {
+              "title": "Source Type",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceTypeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unassign Source Type",
+        "tags": [
+          "agent-tasks"
+        ]
+      },
+      "post": {
+        "description": "Assign a source type to one of the caller's watchers, in place of any it had.\n\nOnly the caller or their current custodian session may assign. The\nfallback watcher takes no assignment: it checks the types that have none,\nand it stops tracking the items of a type once the type has a watcher.",
+        "operationId": "assign_source_type_v1_agent_tasks_source_types__source_type__watcher_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_type",
+            "required": true,
+            "schema": {
+              "title": "Source Type",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignSourceTypeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceTypeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Assign Source Type",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
     "/v1/agent-tasks/spawn-managers": {
       "post": {
         "description": "Ask the caller's broker to give a manager to each live task that has none.\n\nThe request waits in the queue until the broker is between turns. Its\nmessage lists the tasks that still have no manager at that time.",
@@ -19572,28 +19852,6 @@
           }
         },
         "summary": "Request Managers",
-        "tags": [
-          "agent-tasks"
-        ]
-      }
-    },
-    "/v1/agent-tasks/subscriptions": {
-      "get": {
-        "description": "List the keys that the caller's live tasks follow, oldest first.\n\nA watcher reads it to find what to check, e.g. the pull requests that\nlive tasks follow.",
-        "operationId": "list_followed_keys_v1_agent_tasks_subscriptions_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentTaskSubscriptionList"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "List Followed Keys",
         "tags": [
           "agent-tasks"
         ]
@@ -19738,7 +19996,7 @@
     },
     "/v1/agent-tasks/watchers": {
       "get": {
-        "description": "List the caller's watchers in creation order, each with its schedule.",
+        "description": "List the caller's watchers in creation order, each with its schedule.\n\nThe built-in fallback watcher is created when the caller has none.",
         "operationId": "list_watchers_v1_agent_tasks_watchers_get",
         "responses": {
           "200": {
@@ -19758,7 +20016,7 @@
         ]
       },
       "post": {
-        "description": "Create a watcher and its schedule; its session starts with its first run.\n\nThe model and the schedule are checked before anything is saved.",
+        "description": "Create a watcher and its schedule; its session starts with its first run.\n\nThe model and the schedule are checked before anything is saved. The\ncustodian then hears of the new watcher, so it can assign source types\nto it.",
         "operationId": "create_watcher_v1_agent_tasks_watchers_post",
         "requestBody": {
           "content": {
@@ -19915,7 +20173,7 @@
     },
     "/v1/agent-tasks/watchers/self/items/done": {
       "post": {
-        "description": "Mark the calling watcher's items done, so its runs stop checking them.\n\nA done item becomes active again when the watcher observes it, and is\ndeleted 30 days after it was marked done.",
+        "description": "Mark the calling watcher's items done, and tell the sessions that follow them.\n\nEach session that follows a newly done item gets a `watch.done` event.\nA done item is reopened when an observation changes its offsets, and is\ndeleted 30 days after it was marked done.",
         "operationId": "finish_own_items_v1_agent_tasks_watchers_self_items_done_post",
         "requestBody": {
           "content": {
@@ -19957,7 +20215,7 @@
     },
     "/v1/agent-tasks/watchers/self/items/observe": {
       "post": {
-        "description": "Save what the calling watcher sees now; each change records task events.\n\nA new item is a silent baseline unless `announce` is set. Each live\ntask that follows the item's key gets an event through its manager;\nwithout such a task, the broker gets one. Every item is checked before\nanything is saved, so a refused call changes nothing.",
+        "description": "Save what the calling watcher sees now; each change records task events.\n\nA new item is a silent baseline unless `announce` is set. Each session\nthat follows the item's key gets an event; when no session follows it,\nthe broker gets one. A done item whose offsets change is reopened. Every\nitem is checked before anything is saved, so a refused call changes\nnothing.",
         "operationId": "observe_own_items_v1_agent_tasks_watchers_self_items_observe_post",
         "requestBody": {
           "content": {
@@ -19999,7 +20257,7 @@
     },
     "/v1/agent-tasks/watchers/{watcher_id}": {
       "delete": {
-        "description": "Delete one of the caller's watchers and its schedule.\n\nThe watcher's session is left as an ordinary session, and a run already\nqueued for it is dropped when its turn would start.",
+        "description": "Delete one of the caller's watchers, its schedule and its source types.\n\nThe built-in fallback watcher cannot be deleted. The watcher's session is\nleft as an ordinary session, and a run already queued for it is dropped\nwhen its turn would start. The custodian then hears of it, so it can\nassign the watcher's source types again.",
         "operationId": "delete_watcher_v1_agent_tasks_watchers__watcher_id__delete",
         "parameters": [
           {
@@ -20326,7 +20584,7 @@
         ]
       },
       "patch": {
-        "description": "Change fields of one of the caller's tasks.\n\nA change of `state` also moves the task on the board: `agent-resolved`\nto the end, any other state to the top so revived work surfaces. A\n`state` equal to the task's current state moves nothing.",
+        "description": "Change fields of one of the caller's tasks.\n\nA change of `state` also moves the task on the board: `agent-resolved`\nto the end, any other state to the top so revived work surfaces. A\n`state` equal to the task's current state moves nothing. The manager\nof a live task follows its workers' sessions, so a new manager, an\narchived task or a revived one changes which manager follows them.",
         "operationId": "update_task_v1_agent_tasks__task_id__patch",
         "parameters": [
           {
@@ -20527,7 +20785,7 @@
     },
     "/v1/agent-tasks/{task_id}/permanent": {
       "delete": {
-        "description": "Permanently delete one of the caller's tasks, its workers, assets and subscriptions.\n\nThe manager's and workers' sessions keep running as ordinary sessions.",
+        "description": "Permanently delete one of the caller's tasks, its workers and its assets.\n\nThe manager stops following the workers' sessions, unless they work on\nanother of its live tasks. The manager's and workers' sessions keep\nrunning as ordinary sessions.",
         "operationId": "delete_task_permanently_v1_agent_tasks__task_id__permanent_delete",
         "parameters": [
           {
@@ -20563,152 +20821,6 @@
           }
         },
         "summary": "Delete Task Permanently",
-        "tags": [
-          "agent-tasks"
-        ]
-      }
-    },
-    "/v1/agent-tasks/{task_id}/subscriptions": {
-      "get": {
-        "description": "List the keys that one of the caller's tasks follows, oldest first.\n\nThe task's worker sessions are not listed here; the worker roster lists them.",
-        "operationId": "list_task_subscriptions_v1_agent_tasks__task_id__subscriptions_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "task_id",
-            "required": true,
-            "schema": {
-              "title": "Task Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentTaskSubscriptionList"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Task Subscriptions",
-        "tags": [
-          "agent-tasks"
-        ]
-      },
-      "post": {
-        "description": "Make one of the caller's tasks follow a key, or return the subscription it has.",
-        "operationId": "subscribe_task_v1_agent_tasks__task_id__subscriptions_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "task_id",
-            "required": true,
-            "schema": {
-              "title": "Task Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateAgentTaskSubscriptionRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentTaskSubscriptionResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Subscribe Task",
-        "tags": [
-          "agent-tasks"
-        ]
-      }
-    },
-    "/v1/agent-tasks/{task_id}/subscriptions/{subscription_id}": {
-      "delete": {
-        "description": "Stop one of the caller's tasks from following a key.",
-        "operationId": "unsubscribe_task_v1_agent_tasks__task_id__subscriptions__subscription_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "task_id",
-            "required": true,
-            "schema": {
-              "title": "Task Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "subscription_id",
-            "required": true,
-            "schema": {
-              "title": "Subscription Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentTaskSubscriptionDeletedResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Unsubscribe Task",
         "tags": [
           "agent-tasks"
         ]
@@ -30297,6 +30409,153 @@
         ]
       }
     },
+    "/v1/sessions/{session_id}/subscriptions": {
+      "get": {
+        "description": "List the sources that a session follows, in the order it started to follow them.",
+        "operationId": "list_session_subscriptions_v1_sessions__session_id__subscriptions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSubscriptionList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Session Subscriptions",
+        "tags": [
+          "agent-tasks"
+        ]
+      },
+      "post": {
+        "description": "Make a session follow a source; each event about the source then goes to it.\n\nThe server's own `omnigent.` types are refused. A type that no session\nfollowed before wakes the custodian, which assigns it to a watcher.",
+        "operationId": "subscribe_session_v1_sessions__session_id__subscriptions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionSubscriptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSubscriptionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Subscribe Session",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/sessions/{session_id}/subscriptions/remove": {
+      "post": {
+        "description": "Stop a session from following a source.",
+        "operationId": "unsubscribe_session_v1_sessions__session_id__subscriptions_remove_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveSessionSubscriptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSubscriptionRemoved"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unsubscribe Session",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
     "/v1/sessions/{session_id}/ui/open-file": {
       "post": {
         "description": "Ask current viewers to open a workspace-relative file.\n\nRequires session edit access. Requests are transient and never replayed.\nThe subscriber count measures stream delivery, not successful display:\nbackground subscribers may ignore the request, and the viewer retains\nits normal filesystem permissions, error handling and unsaved-edit guard.",
@@ -31239,7 +31498,7 @@
     },
     "/v1/task-events": {
       "post": {
-        "description": "Record an event on the caller's board.\n\nEach live task that follows the event's source key gets a copy through\nits manager, and the response is the first copy; without such a task,\nthe broker routes the event. A report that names its source and source\nkey is recorded once.",
+        "description": "Record an event on the caller's board.\n\nEach session that follows the event's source key gets a copy, except\nthe session the event came from, and the response is the first copy.\nWhen only that session follows the key, the event is recorded as\nhandled. When no session follows the key, the broker routes the event.\nA report that names its source type and source key is recorded once.",
         "operationId": "create_event_v1_task_events_post",
         "requestBody": {
           "content": {
@@ -31281,7 +31540,7 @@
     },
     "/v1/task-events/batch-route-manager": {
       "post": {
-        "description": "Route events that wait for the broker to one of the caller's managers.\n\nEither every event is routed or none is. Events already routed to that\nmanager are left as they are, so a retry is safe.",
+        "description": "Route events that wait for the broker to the session of one of the caller's managers.\n\nEither every event is routed or none is. Events already routed to that\nmanager are left as they are, so a retry is safe. A manager whose\nsession is gone or archived takes no events. The manager does not\nfollow the events' sources: a later event about a source that no\nsession follows comes to the broker again.",
         "operationId": "route_events_to_manager_v1_task_events_batch_route_manager_post",
         "requestBody": {
           "content": {
@@ -31365,7 +31624,7 @@
     },
     "/v1/task-events/{event_id}/assign": {
       "post": {
-        "description": "Assign one of the caller's events to one of their tasks, and mark it handled.\n\nThe task then follows the event's key, so later events with the key go\nto the task's manager. A session event makes the session the task's\nworker (`title` names the worker); another event with a source key\nsubscribes the task to it. Assigning again changes only the worker's\ntitle. An event filed into an FYI cluster cannot be assigned.",
+        "description": "Assign one of the caller's events to one of their tasks, and mark it handled.\n\nThe assignment is a record on the event. A session event also makes the\nsession the task's worker (`title` names the worker), which the task's\nmanager then follows. Assigning again changes only the worker's title.\nAn event filed into an FYI cluster cannot be assigned.",
         "operationId": "assign_event_v1_task_events__event_id__assign_post",
         "parameters": [
           {

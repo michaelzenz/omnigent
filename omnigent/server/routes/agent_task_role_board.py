@@ -1,7 +1,8 @@
 """The roles that run the caller's GlobalHub board, and the work waiting for them.
 
 The broker waits on unrouted events and on queued requests for managers, each
-manager on the events routed to it, and the custodian on queued notice clicks.
+manager on the events routed to its session, and the custodian on queued notice
+clicks, scheduled runs and requests to assign source types.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from omnigent.agent_tasks.roles import (
     BuiltinRole,
     builtin_role,
 )
+from omnigent.agent_tasks.source_assignment import SOURCE_TYPES_KIND
 from omnigent.entities import LIVE_TASK_STATES, Conversation, Manager, TaskEvent
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.agent_task_delivery import SessionSendDeps
@@ -61,7 +63,11 @@ def create_agent_task_role_board_router(
     def waiting_events(user_id: str | None, manager: Manager | None) -> list[TaskEvent]:
         if manager is None:
             return board.events.list(owner_user_id=user_id, states=["unrouted"])
-        return board.events.list(owner_user_id=user_id, states=["routed"], manager_id=manager.id)
+        if manager.conversation_id is None:
+            return []
+        return board.events.list(
+            owner_user_id=user_id, states=["routed"], target_session_id=manager.conversation_id
+        )
 
     def queued_items(user_id: str | None, session: Conversation | None, *kinds: str) -> list[str]:
         if session is None:
@@ -74,7 +80,9 @@ def create_agent_task_role_board_router(
     def custodian_waiting(
         user_id: str | None, custodian_session: Conversation | None
     ) -> list[str]:
-        return queued_items(user_id, custodian_session, "notice_click", "scheduled_run")
+        return queued_items(
+            user_id, custodian_session, "notice_click", "scheduled_run", SOURCE_TYPES_KIND
+        )
 
     def broker_waiting(user_id: str | None, broker_session: Conversation | None) -> int:
         requests = queued_items(user_id, broker_session, "spawn_managers")
@@ -139,9 +147,9 @@ def create_agent_task_role_board_router(
         """Clear the waiting work of the caller's broker or custodian.
 
         For the broker, it dismisses the unrouted events and drops the queued
-        requests for managers; for the custodian, it drops the queued clicks
-        and the queued session cleanup. A message the role is already handling
-        goes on.
+        requests for managers; for the custodian, it drops the queued clicks,
+        the queued session cleanup and the queued requests to assign source
+        types. A message the role is already handling goes on.
         """
         user_id = require_user(request, auth_provider)
         if role not in (BROKER_ROLE_KEY, CUSTODIAN_ROLE_KEY):

@@ -472,6 +472,7 @@ async def test_terminal_launch_with_bridge_inject_advertises_comment_tools(
         "sys_project_update",
         "ui_open_file",
         "ui_stamp_folders",
+        "event_subscriptions",
         "sys_agent_list",
         "sys_agent_get",
         "sys_agent_download",

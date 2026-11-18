@@ -2,8 +2,9 @@
 
 The session is created the way main's scheduled tasks create one on a connected
 host: main's session-create checks run first, then an optional git worktree,
-the session row and the owner's grant. The session becomes the task's worker
-before its first message, so each finished turn reports to the task's manager.
+the session row and the owner's grant. The session becomes the task's worker,
+followed by the task's manager, before its first message, so the manager hears
+of each finished turn.
 The first message goes out in the background, because a runner can take longer
 to start than a tool call waits. A message that cannot be sent becomes an event.
 """
@@ -20,6 +21,7 @@ from fastapi import Request
 from omnigent.agent_tasks.board_stores import BoardStores
 from omnigent.agent_tasks.role_sessions import RoleSessionStores, ensure_named_project
 from omnigent.agent_tasks.roles import BUILTIN_ROLES, WATCHER_ROLE
+from omnigent.agent_tasks.worker_subscriptions import follow_workers
 from omnigent.entities import Conversation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.host.git_worktree import WorktreeError, validate_branch_name
@@ -308,6 +310,9 @@ class WorkerSessionStarter:
             session_id=session_id,
             title=title,
         )
+        task = self._board.tasks.get(task_id, owner_user_id=user_id)
+        if task is not None:
+            follow_workers(self._board, task, owner_user_id=user_id, session_ids=[session_id])
         return worker.id
 
     def _send_first_message(self, session_id: str, message: str, user_id: str | None) -> None:

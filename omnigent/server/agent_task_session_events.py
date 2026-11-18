@@ -1,14 +1,16 @@
 """Report the finished turns, deletions and failed starts of GlobalHub users' sessions as events.
 
-Each live task that follows a session (the tasks it works on, and tasks
-subscribed to its id) gets a report with the task's label, through its manager.
-A session that no live task follows reports its turns to the broker, whose
-chosen manager may assign it to a task, and its deletion to whoever holds its
-waiting turn report. Role sessions, sub-agents and side chats do not report,
-and a user without a GlobalHub host gets no turn reports. A worker's finished
-turn also counts as work on its tasks, which moves an active or idle task to
-the top of the board. A session started for a task reports when its first
-message could not be sent.
+A session is an ``omnigent.session`` source whose key is its id. Each session
+that follows it, e.g. the manager of each task it works on, gets a report. A
+session that no session follows reports its turns to the broker, whose chosen
+manager follows it once the manager makes it a worker: always for a worker,
+e.g. of a task without a manager, and for other sessions only when the owner
+turned on reports of new sessions. Its deletion goes to whoever holds its waiting turn report. Role
+sessions, sub-agents and side chats do not report, and a user without a
+GlobalHub host gets no turn reports. A worker's finished turn also counts as
+work on its tasks, which moves an active or idle task to the top of the board.
+A session started for a task reports when its first message could not be sent.
+A deleted session's subscriptions, and the subscriptions to it, go with it.
 """
 
 from __future__ import annotations
@@ -31,12 +33,12 @@ from omnigent.server.agent_queue_packagers import (
 
 _logger = logging.getLogger(__name__)
 
-# A report waits until the broker or a manager handles it.
+# A report waits until the broker or the session it went to handles it.
 _WAITING_STATES = ("unrouted", "routed")
 _START_ERROR_MAX_CHARS = 1000
-# Where a report goes: a task and its manager. The broker gets one with neither.
-_Target = tuple[str | None, str | None]
-_BROKER: _Target = (None, None)
+# Where a report goes: the session that follows the source. The broker gets one with none.
+_Target = str | None
+_BROKER: _Target = None
 
 
 def reports_to_globalhub(conv: Conversation) -> bool:
@@ -53,7 +55,7 @@ class SessionEventReporter:
 
     def __init__(self, *, board: BoardStores, sessions: RoleSessionStores) -> None:
         """
-        :param board: Holds the events, workers, tasks and managers.
+        :param board: Holds the events, workers, tasks and subscriptions.
         :param sessions: Holds the sessions, their owners' GlobalHub hosts and projects.
         """
         self._board = board
@@ -83,7 +85,8 @@ class SessionEventReporter:
         if conv is None or not reports_to_globalhub(conv):
             return
         owner = conversations.get_session_owner(session_id, owner_only=True)
-        for worker in self._board.workers.list_for_session(session_id, owner_user_id=owner):
+        workers = self._board.workers.list_for_session(session_id, owner_user_id=owner)
+        for worker in workers:
             self._board.tasks.record_work(worker.task_id, owner_user_id=owner)
         settings = self._sessions.user_settings_store
         if settings.get_globalhub_placement(user_id=owner) is None:
@@ -91,9 +94,9 @@ class SessionEventReporter:
         waiting = self._waiting(SESSION_TURN_FINISHED_EVENT_TYPE, session_id, owner)
         followers = self._followers(session_id, owner)
         if followers:
-            told = {(event.task_id, event.manager_id) for event in waiting}
-            targets = [target for target in followers if target not in told]
-        elif not settings.get_globalhub_report_new_sessions(user_id=owner):
+            told = {event.target_session_id for event in waiting}
+            targets: list[_Target] = [target for target in followers if target not in told]
+        elif not workers and not settings.get_globalhub_report_new_sessions(user_id=owner):
             return
         else:
             # A report that still waits covers this turn too.
@@ -113,17 +116,18 @@ class SessionEventReporter:
         for item in self._board.queue.list(owner_user_id=owner, target_session_id=conv.id):
             # A role session's messages go nowhere now; their events wait again.
             self._board.queue.delete(item.id, owner_user_id=owner)
+        self._board.subscriptions.delete_for_session(conv.id, owner_user_id=owner)
         if not reports_to_globalhub(conv):
             return
-        holders = self._followers(conv.id, owner)
+        holders: list[_Target] = list(self._followers(conv.id, owner))
         for worker in self._board.workers.list_for_session(conv.id, owner_user_id=owner):
             self._board.workers.delete(worker.id, owner_user_id=owner)
         if not holders:
-            # A session that no live task follows tells whoever holds its waiting turn report.
+            # A session that no session follows tells whoever holds its waiting turn report.
             turns = self._waiting(SESSION_TURN_FINISHED_EVENT_TYPE, conv.id, owner)
-            holders = list(dict.fromkeys((event.task_id, event.manager_id) for event in turns))
+            holders = list(dict.fromkeys(event.target_session_id for event in turns))
         deleted = self._waiting(SESSION_DELETED_EVENT_TYPE, conv.id, owner)
-        told = {(event.task_id, event.manager_id) for event in deleted}
+        told = {event.target_session_id for event in deleted}
         self._report(
             conv,
             owner,
@@ -131,11 +135,12 @@ class SessionEventReporter:
             summary="Session deleted",
             targets=[holder for holder in holders if holder not in told],
         )
+        self._board.subscriptions.delete_for_keys([conv.id], owner_user_id=owner)
 
     def report_start_failed(self, session_id: str, error: str) -> None:
         """Record that a started session did not get its first message. Blocking.
 
-        The live tasks that follow the session hear of it; without one, the broker does.
+        The sessions that follow it hear of it; without one, the broker does.
         """
         conversations = self._sessions.conversation_store
         conv = conversations.get_conversation(session_id)
@@ -147,12 +152,12 @@ class SessionEventReporter:
             owner,
             event_type=SESSION_START_FAILED_EVENT_TYPE,
             summary="Session did not start",
-            targets=self._followers(session_id, owner) or [_BROKER],
+            targets=list(self._followers(session_id, owner)) or [_BROKER],
             details={"error": error[:_START_ERROR_MAX_CHARS]},
         )
 
     def _waiting(self, event_type: str, session_id: str, owner: str | None) -> list[TaskEvent]:
-        """The session's reports of ``event_type`` that the broker or a manager has not handled."""
+        """The session's reports of ``event_type`` that no one has handled yet."""
         return self._board.events.list(
             owner_user_id=owner,
             states=_WAITING_STATES,
@@ -170,7 +175,7 @@ class SessionEventReporter:
         targets: Sequence[_Target],
         details: dict[str, str] | None = None,
     ) -> None:
-        """Record one event for each target: a task and its manager, or the broker."""
+        """Record one event for each target: a session that follows the source, or the broker."""
         title = conv.title or conv.id
         payload = {
             "session_id": conv.id,
@@ -178,7 +183,7 @@ class SessionEventReporter:
             "project_name": self._project_name(conv, owner),
             **(details or {}),
         }
-        for task_id, manager_id in targets:
+        for target in targets:
             self._board.events.create(
                 uuid.uuid4().hex,
                 owner_user_id=owner,
@@ -188,18 +193,18 @@ class SessionEventReporter:
                 source=SESSION_EVENT_SOURCE,
                 source_key=conv.id,
                 source_session_id=conv.id,
-                tags=_host_tags(conv) if manager_id is None else (),
-                task_id=task_id,
-                manager_id=manager_id,
+                tags=_host_tags(conv) if target is None else (),
+                target_session_id=target,
             )
 
-    def _followers(self, session_id: str, owner: str | None) -> list[_Target]:
-        """Return the live tasks that follow the session, with their managers."""
+    def _followers(self, session_id: str, owner: str | None) -> list[str]:
+        """Return the sessions that follow the session, other than itself."""
         return [
-            (follower.task_id, follower.manager_id)
-            for follower in self._board.subscriptions.followers(
-                owner_user_id=owner, source=SESSION_EVENT_SOURCE, source_key=session_id
+            follower
+            for follower in self._board.subscriptions.subscribers(
+                owner_user_id=owner, source_key=session_id
             )
+            if follower != session_id
         ]
 
     def _project_name(self, conv: Conversation, owner: str | None) -> str | None:

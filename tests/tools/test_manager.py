@@ -71,6 +71,7 @@ _ALWAYS_PRESENT_TOOLS: frozenset[str] = frozenset(
         "sys_session_message",
         "ui_open_file",
         "ui_stamp_folders",
+        "event_subscriptions",
         # Read-only agent discovery tools are likewise always available
         # (global, permission-bounded reads of any accessible session's
         # agent / bundle).
@@ -147,6 +148,7 @@ def test_session_tools_are_registered_for_every_agent(
         "sys_session_list",
         "sys_session_get_info",
         "sys_session_get_history",
+        "event_subscriptions",
     } <= names
     assert ("sys_session_send" in names) is spawn
     assert ("sys_session_close" in names) is spawn
@@ -1798,7 +1800,15 @@ def test_allowed_builtin_tools_drops_unnamed_builtins_but_not_client_tools(
 
 
 @pytest.mark.parametrize(
-    "tool_name", ["sys_session_delete", "pmv2_api", "pmv2_read", "system_notice", "watch_items"]
+    "tool_name",
+    [
+        "sys_session_delete",
+        "pmv2_api",
+        "pmv2_read",
+        "system_notice",
+        "watch_items",
+        "source_watchers",
+    ],
 )
 def test_opt_in_builtins_register_only_when_declared(tool_name: str) -> None:
     """Deleting sessions and changing the GlobalHub board need an explicit declaration."""

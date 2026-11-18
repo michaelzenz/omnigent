@@ -92,7 +92,8 @@ class ManagerStore(ABC):
     def delete(self, manager_id: str, *, owner_user_id: str | None) -> bool:
         """Delete the owner's manager; return whether it existed.
 
-        Its tasks are unassigned, and its routed events that it did not handle
-        leave their queue item and wait for the broker again, with their
-        delivery count started again.
+        Its tasks are unassigned and its session follows no source any more. The
+        events routed to its session that it did not handle leave their queue
+        item and wait for the broker again, with their delivery count started
+        again.
         """

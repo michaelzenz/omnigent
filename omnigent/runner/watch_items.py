@@ -44,13 +44,15 @@ async def execute_watch_items(
         path = f"{_ROUTE}/observe"
     else:
         path = f"{_ROUTE}/done"
-        # Only an item's key counts for 'done'; drop any offsets sent with it.
-        items = [
-            {"source": item.get("source"), "source_key": item.get("source_key")}
-            if isinstance(item, dict)
-            else item
-            for item in items
-        ]
+        # Only an item's key and summary count for 'done'; drop any offsets sent with it.
+        items = [_done_item(item) if isinstance(item, dict) else item for item in items]
     return await send_board_request(
         client, "POST", path, source_id, tool_name="watch_items", json_body={"items": items}
     )
+
+
+def _done_item(item: dict[str, Any]) -> dict[str, Any]:
+    done = {"source": item.get("source"), "source_key": item.get("source_key")}
+    if item.get("summary") is not None:
+        done["summary"] = item["summary"]
+    return done

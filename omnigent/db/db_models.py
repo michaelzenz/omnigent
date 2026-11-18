@@ -1009,8 +1009,9 @@ class SqlTaskEvent(OmnigentBase):
     """
     SQLAlchemy model for the ``task_events`` table: signals on a GlobalHub board.
 
-    The broker routes an unrouted event to one of the owner's managers, which
-    handles and dismisses it or files it into an FYI cluster. Ownership is
+    An event about a source that sessions follow is routed to one of them; the
+    broker routes an unrouted event to a manager's session. A manager handles
+    and dismisses its event or files it into an FYI cluster. Ownership is
     stamped on the row; there are no foreign keys (Rule R032).
 
     :param id: Uuid16 primary key (bare 32-char hex in Python).
@@ -1018,14 +1019,14 @@ class SqlTaskEvent(OmnigentBase):
     :param event_type: What happened, e.g. ``"session.turn.finished"``.
     :param title: One-line summary for the broker and the manager.
     :param payload: JSON details of the event, or ``None``.
-    :param source: The system that reported it, e.g. ``"github"``.
+    :param source: The source type, e.g. ``"github.pull_request"``.
     :param source_key: What the source reported on, e.g. a pull request URL.
     :param source_offset: Which report this is, e.g. a comment id.
     :param source_session_id: The session the event came from.
     :param tags: JSON list of ``{"tag_type": ..., "tag": ...}`` routing hints.
     :param state: A ``TASK_EVENT_STATE`` code.
-    :param task_id: The task the event concerns, or ``None``.
-    :param manager_id: The manager it was routed to, or ``None``.
+    :param task_id: The task a manager assigned it to, or ``None``.
+    :param target_session_id: The session it was routed to, or ``None``.
     :param fyi_cluster_id: The FYI cluster it was filed into, or ``None``.
     :param queue_item_id: The queue item that carries it to its role session,
         or ``None`` before it is packaged.
@@ -1033,7 +1034,7 @@ class SqlTaskEvent(OmnigentBase):
         passed to another role.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last change, or ``None``.
-    :param routed_at: When it was routed to a manager, or ``None``.
+    :param routed_at: When it was routed to its session, or ``None``.
     :param processed_at: When it was dismissed or filed, or ``None``.
     """
 
@@ -1060,7 +1061,7 @@ class SqlTaskEvent(OmnigentBase):
     tags: Mapped[str] = mapped_column(Text, nullable=False)
     state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="4")
     task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
-    manager_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    target_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     fyi_cluster_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     queue_item_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     delivery_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
@@ -1080,11 +1081,11 @@ class SqlTaskEvent(OmnigentBase):
             "created_at",
             "id",
         ),
-        # A manager's events in a state, oldest first.
+        # A session's events in a state, oldest first, e.g. a manager's inbox.
         Index(
-            "ix_task_events_manager_state",
+            "ix_task_events_target_state",
             "workspace_id",
-            "manager_id",
+            "target_session_id",
             "state",
             "created_at",
             "id",
@@ -1299,7 +1300,7 @@ class SqlAgentQueueItem(OmnigentBase):
     done_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
-        CheckConstraint("kind IN (1, 2, 3, 4)", name="ck_agent_queue_items_kind"),
+        CheckConstraint("kind IN (1, 2, 3, 4, 5, 6)", name="ck_agent_queue_items_kind"),
         CheckConstraint("state IN (1, 2, 3, 4)", name="ck_agent_queue_items_state"),
         # Items in a state in arrival order across every workspace, e.g. the dispatcher's scan.
         Index("ix_agent_queue_items_state_seq", "state", "seq", "workspace_id"),
@@ -1379,6 +1380,8 @@ class SqlWatcher(OmnigentBase):
     :param description: What the watcher watches; may be empty.
     :param manual: The user's manual, or ``None`` for the packaged template.
     :param model: Model for the watcher's session, or ``None`` for the agent's own.
+    :param builtin: Whether it is the built-in fallback watcher, which the user
+        cannot delete.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last change.
     """
@@ -1400,6 +1403,7 @@ class SqlWatcher(OmnigentBase):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     manual: Mapped[str | None] = mapped_column(Text, nullable=True)
     model: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    builtin: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
 
@@ -1488,26 +1492,27 @@ class SqlWatchItem(OmnigentBase):
     )
 
 
-class SqlTaskSubscription(OmnigentBase):
+class SqlSubscription(OmnigentBase):
     """
-    SQLAlchemy model for the ``task_subscriptions`` table: keys that GlobalHub tasks follow.
+    SQLAlchemy model for the ``subscriptions`` table: the sources that sessions follow.
 
-    An event whose source key a live task follows goes to that task's manager.
-    The task's manager subscribes the task; a task follows a key once.
-    Ownership is stamped on the row; there are no foreign keys (Rule R032).
+    Each event about a source key goes to every session that follows the key.
+    A session follows a key once. Ownership is stamped on the row; there are no
+    foreign keys (Rule R032).
 
     :param id: Uuid16 primary key (bare 32-char hex in Python).
-    :param owner_user_id: Owning user (the task's owner), or ``None`` in
+    :param owner_user_id: Owning user (the session's owner), or ``None`` in
         single-user mode.
-    :param task_id: The task that follows the key.
-    :param source_key: The key, e.g. a pull request URL, matched exactly.
-    :param source: The system of the key, e.g. ``"github"``, or ``None``.
+    :param session_id: The session that follows the source.
+    :param source_type: What kind of source it is, e.g. ``"github.pull_request"``.
+    :param source_key: The source, e.g. a pull request URL, matched exactly.
+    :param note: Why the session follows it and, for a source that is hard to
+        read, how a watcher reads it; or ``None``.
     :param created_at: Unix epoch seconds at row creation.
     """
 
-    __tablename__ = "task_subscriptions"
+    __tablename__ = "subscriptions"
 
-    # Tenant partition key: Databricks workspace id owning this row (0 = default). Part of the PK.
     workspace_id: Mapped[int] = mapped_column(
         BigInteger,
         primary_key=True,
@@ -1517,18 +1522,58 @@ class SqlTaskSubscription(OmnigentBase):
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    session_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False)
     source_key: Mapped[str] = mapped_column(String(512), nullable=False)
-    source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(3000), nullable=True)
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
 
     __table_args__ = (
-        # A task follows a key once; also serves a task's subscriptions.
         Index(
-            "ix_task_subscriptions_task_key", "workspace_id", "task_id", "source_key", unique=True
+            "ix_subscriptions_session_key",
+            "workspace_id",
+            "session_id",
+            "source_key",
+            unique=True,
         ),
-        # The owner's tasks that follow a key, for routing an event.
-        Index("ix_task_subscriptions_key", "workspace_id", "owner_user_id", "source_key"),
+        Index("ix_subscriptions_key", "workspace_id", "owner_user_id", "source_key"),
+        Index("ix_subscriptions_type", "workspace_id", "owner_user_id", "source_type"),
+    )
+
+
+class SqlSourceWatcher(OmnigentBase):
+    """
+    SQLAlchemy model for the ``source_watchers`` table: the watcher of each source type.
+
+    The custodian assigns a source type to the watcher whose manual covers it;
+    the fallback watcher checks the types with no row. Ownership is stamped on
+    the row; there are no foreign keys (Rule R032).
+
+    :param id: Uuid16 primary key (bare 32-char hex in Python).
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param source_type: The source type, e.g. ``"github.pull_request"``.
+    :param watcher_id: The assigned watcher.
+    :param assigned_at: Unix epoch seconds of the assignment.
+    """
+
+    __tablename__ = "source_watchers"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    watcher_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    assigned_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        Index("ix_source_watchers_type", "workspace_id", "owner_user_id", "source_type"),
+        Index("ix_source_watchers_watcher", "workspace_id", "watcher_id"),
     )
 
 

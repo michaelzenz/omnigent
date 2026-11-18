@@ -28,18 +28,21 @@ from omnigent.entities import (
     WatchItem,
 )
 from omnigent.errors import StaleCursorError
+from omnigent.stores.subscription_store.sqlalchemy_store import subscriber_session_ids
 from omnigent.stores.task_event_store.sqlalchemy_store import new_task_event_row
-from omnigent.stores.task_subscription_store.sqlalchemy_store import live_followers
 from omnigent.stores.watch_item_store import (
     WATCH_CHANGED_EVENT_TYPE,
+    WATCH_DONE_EVENT_TYPE,
     WATCH_NEW_EVENT_TYPE,
+    WATCH_REOPENED_EVENT_TYPE,
     WatchChange,
+    WatchFinish,
     WatchItemLimitError,
     WatchItemStore,
     WatchObservation,
     WatchObservationResult,
 )
-from omnigent.util.uuid import InvalidUuidError, uuid_to_bytes
+from omnigent.util.uuid import InvalidUuidError, normalize_uuid, uuid_to_bytes
 
 _ACTIVE = encode_watch_item_status("active")
 _DONE = encode_watch_item_status("done")
@@ -110,6 +113,13 @@ def _event_title(
             for change in changes
         )
         title = f"{label}: {changed}"
+    return title[:_EVENT_TITLE_MAX_CHARS]
+
+
+def _done_title(row: SqlWatchItem, summary: str | None) -> str:
+    label = row.title or row.source_key
+    reason = (summary or "").strip()
+    title = f"Done: {label}: {reason}" if reason else f"Done: {label}"
     return title[:_EVENT_TITLE_MAX_CHARS]
 
 
@@ -241,7 +251,17 @@ class SqlAlchemyWatchItemStore(WatchItemStore):
                     session.add(row)
                     rows[key] = row
                     event_ids = (
-                        _record(session, watcher, row, observation, (), session_id, now)
+                        _record(
+                            session,
+                            watcher,
+                            row,
+                            event_type=WATCH_NEW_EVENT_TYPE,
+                            title=_event_title(row, observation, ()),
+                            source_offset="new",
+                            details=observation.details,
+                            session_id=session_id,
+                            now=now,
+                        )
                         if observation.announce
                         else ()
                     )
@@ -256,28 +276,73 @@ class SqlAlchemyWatchItemStore(WatchItemStore):
 
     def finish(
         self,
-        watcher_id: str,
-        keys: Sequence[tuple[str, str]],
+        watcher: Watcher,
+        items: Sequence[WatchFinish],
         *,
-        owner_user_id: str | None,
+        session_id: str | None,
         now: int,
     ) -> builtins.list[tuple[str, str]]:
-        """Mark a watcher's items done; return the keys of the items it does not track."""
+        """Mark a watcher's items done, and tell the sessions that follow them."""
+        owner = watcher.owner_user_id
+        keys = [(item.source, item.source_key) for item in items]
 
         def write(session: Session) -> builtins.list[tuple[str, str]]:
-            require_active_account(session, owner_user_id)
-            rows = _rows_by_key(session, watcher_id, owner_user_id, keys)
+            require_active_account(session, owner)
+            rows = _rows_by_key(session, watcher.id, owner, keys)
             missing: builtins.list[tuple[str, str]] = []
-            for key in keys:
-                row = rows.get(key)
+            for item in items:
+                row = rows.get((item.source, item.source_key))
                 if row is None:
-                    missing.append(key)
-                elif row.status != _DONE:
-                    row.status = _DONE
-                    row.done_at = now
+                    missing.append((item.source, item.source_key))
+                    continue
+                if row.status == _DONE:
+                    continue
+                row.status = _DONE
+                row.done_at = now
+                _record(
+                    session,
+                    watcher,
+                    row,
+                    event_type=WATCH_DONE_EVENT_TYPE,
+                    title=_done_title(row, item.summary),
+                    source_offset=f"done-v{row.version}",
+                    session_id=session_id,
+                    now=now,
+                    to_broker=False,
+                )
             return missing
 
         return run_write_transaction(self._session_immediate, "finish_watch_items", write)
+
+    def find(
+        self,
+        watcher_id: str,
+        keys: Collection[tuple[str, str]],
+        *,
+        owner_user_id: str | None,
+    ) -> builtins.list[WatchItem]:
+        """Return the watcher's items with these ``(source, source_key)`` pairs, in any status."""
+        if not keys:
+            return []
+        with self._session("find_watch_items") as session:
+            rows = _rows_by_key(session, watcher_id, owner_user_id, list(keys))
+            return [_to_entity(row) for row in rows.values()]
+
+    def list_done_before(
+        self, watcher_id: str, *, owner_user_id: str | None, before: int
+    ) -> builtins.list[WatchItem]:
+        """List the watcher's items marked done before ``before``, oldest first."""
+        stmt = (
+            select(SqlWatchItem)
+            .where(
+                _owned(watcher_id, owner_user_id),
+                SqlWatchItem.status == _DONE,
+                SqlWatchItem.done_at < before,
+            )
+            .order_by(asc(SqlWatchItem.done_at), asc(SqlWatchItem.id))
+        )
+        with self._session("list_done_watch_items") as session:
+            return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
 
     def purge_done(self, watcher_id: str, *, owner_user_id: str | None, before: int) -> int:
         """Delete the watcher's items marked done before ``before``; return how many."""
@@ -298,6 +363,24 @@ class SqlAlchemyWatchItemStore(WatchItemStore):
             return result.rowcount
 
         return run_write_transaction(self._session_immediate, "purge_done_watch_items", write)
+
+    def delete_source(self, watcher_id: str, *, owner_user_id: str | None, source: str) -> int:
+        """Delete the watcher's items of one source type, in any status; return how many."""
+
+        def write(session: Session) -> int:
+            result = cast(
+                CursorResult[tuple[object]],
+                session.execute(
+                    delete(SqlWatchItem)
+                    .where(_owned(watcher_id, owner_user_id), SqlWatchItem.source == source)
+                    .execution_options(synchronize_session=False)
+                ),
+            )
+            return result.rowcount
+
+        return run_write_transaction(
+            self._session_immediate, "delete_watch_items_of_source", write
+        )
 
 
 def _rows_by_key(
@@ -348,9 +431,6 @@ def _observe_row(
     now: int,
 ) -> WatchObservationResult:
     """Apply an observation to a tracked item; record events when an offset changed."""
-    if row.status == _DONE:
-        row.status = _ACTIVE
-        row.done_at = None
     if observation.title is not None:
         row.title = observation.title
     row.checked_at = now
@@ -358,12 +438,30 @@ def _observe_row(
     key = (row.source, row.source_key)
     if not changes:
         return WatchObservationResult(*key, outcome="unchanged")
+    reopened = row.status == _DONE
+    if reopened:
+        row.status = _ACTIVE
+        row.done_at = None
     row.offsets = _keep_offsets(merged)
     row.version += 1
     row.changed_at = now
-    event_ids = _record(session, watcher, row, observation, changes, session_id, now)
+    event_ids = _record(
+        session,
+        watcher,
+        row,
+        event_type=WATCH_REOPENED_EVENT_TYPE if reopened else WATCH_CHANGED_EVENT_TYPE,
+        title=_event_title(row, observation, changes),
+        source_offset=f"v{row.version}",
+        changes=changes,
+        details=observation.details,
+        session_id=session_id,
+        now=now,
+    )
     return WatchObservationResult(
-        *key, outcome="changed", changes=tuple(changes), event_ids=event_ids
+        *key,
+        outcome="reopened" if reopened else "changed",
+        changes=tuple(changes),
+        event_ids=event_ids,
     )
 
 
@@ -371,16 +469,22 @@ def _record(
     session: Session,
     watcher: Watcher,
     row: SqlWatchItem,
-    observation: WatchObservation,
-    changes: Sequence[WatchChange],
+    *,
+    event_type: str,
+    title: str,
+    source_offset: str,
+    changes: Sequence[WatchChange] = (),
+    details: Mapping[str, Any] | None = None,
     session_id: str | None,
     now: int,
+    to_broker: bool = True,
 ) -> tuple[str, ...]:
     """
-    Add the events for a change, or for a new item without changes; return their ids.
+    Add the events for an item; return their ids.
 
-    Each live task that follows the item's key gets an event with the task's
-    label, through its manager. Without such a task, one event goes to the broker.
+    Each session that follows the item's key gets an event, except the
+    reporting session. When no session follows it, one event goes to the
+    broker, or none when ``to_broker`` is false.
     """
     payload: dict[str, Any] = {
         "watcher": {"id": watcher.id, "name": watcher.name},
@@ -393,38 +497,42 @@ def _record(
             for change in changes
         ],
     }
-    if observation.details is not None:
-        payload["details"] = dict(observation.details)
-    followers = live_followers(
-        session, owner_user_id=row.owner_user_id, source=row.source, source_key=row.source_key
+    if details is not None:
+        payload["details"] = dict(details)
+    followers = subscriber_session_ids(
+        session, owner_user_id=row.owner_user_id, source_key=row.source_key
     )
-    targets = [(follower.task_id, follower.manager_id) for follower in followers]
+    reporter = normalize_uuid(session_id) or session_id if session_id is not None else None
+    targets: list[str | None] = [follower for follower in followers if follower != reporter]
+    if not targets:
+        if followers or not to_broker:
+            return ()
+        targets = [None]
     event_ids: list[str] = []
-    for task_id, manager_id in targets or [(None, None)]:
+    for target in targets:
         event_id = uuid.uuid4().hex
         session.add(
             new_task_event_row(
                 event_id,
                 owner_user_id=row.owner_user_id,
-                event_type=WATCH_CHANGED_EVENT_TYPE if changes else WATCH_NEW_EVENT_TYPE,
-                title=_event_title(row, observation, changes),
+                event_type=event_type,
+                title=title,
                 now=now,
                 payload=payload,
                 source=row.source,
                 source_key=row.source_key,
-                source_offset=f"v{row.version}" if changes else "new",
+                source_offset=source_offset,
                 source_session_id=session_id,
                 # The broker clusters unrouted events by their tags.
                 tags=(
                     ()
-                    if manager_id is not None
+                    if target is not None
                     else (
                         EventTag(tag_type="source", tag=row.source),
                         EventTag(tag_type="watcher", tag=watcher.name),
                     )
                 ),
-                task_id=task_id,
-                manager_id=manager_id,
+                target_session_id=target,
             )
         )
         event_ids.append(event_id)

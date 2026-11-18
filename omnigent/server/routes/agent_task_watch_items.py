@@ -17,7 +17,7 @@ from fastapi import APIRouter, Query, Request
 from omnigent.agent_tasks.board_stores import BoardStores
 from omnigent.agent_tasks.role_sessions import RoleSessionStores
 from omnigent.db.utils import now_epoch
-from omnigent.entities import SESSION_EVENT_SOURCE, Conversation, Watcher, WatchItem
+from omnigent.entities import Conversation, Watcher, WatchItem
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._agent_task_callers import runner_bound_caller
@@ -35,7 +35,14 @@ from omnigent.server.schemas import (
     WatchItemResponse,
     WatchItemStatusFilter,
 )
+from omnigent.stores.subscription_store import (
+    SourceError,
+    is_reserved_source_type,
+    normalize_source_key,
+    normalize_source_type,
+)
 from omnigent.stores.watch_item_store import (
+    WatchFinish,
     WatchItemLimitError,
     WatchObservation,
     WatchObservationResult,
@@ -139,21 +146,18 @@ def create_agent_task_watch_items_router(
     ) -> ObserveWatchItemsResponse:
         """Save what the calling watcher sees now; each change records task events.
 
-        A new item is a silent baseline unless ``announce`` is set. Each live
-        task that follows the item's key gets an event through its manager;
-        without such a task, the broker gets one. Every item is checked before
-        anything is saved, so a refused call changes nothing.
+        A new item is a silent baseline unless ``announce`` is set. Each session
+        that follows the item's key gets an event; when no session follows it,
+        the broker gets one. A done item whose offsets change is reopened. Every
+        item is checked before anything is saved, so a refused call changes
+        nothing.
         """
         user_id = require_user(request, auth_provider)
-        if any(item.source == SESSION_EVENT_SOURCE for item in body.items):
-            raise OmnigentError(
-                f"the source {SESSION_EVENT_SOURCE!r} is the server's own, for session events",
-                code=ErrorCode.INVALID_INPUT,
-            )
+        observations = [_observation(item) for item in body.items]
+        _each_key_once([(item.source, item.source_key) for item in observations])
 
         def observe() -> list[WatchObservationResult]:
             watcher, session = calling_watcher(request, user_id)
-            observations = [_observation(item) for item in body.items]
             try:
                 return items.observe(watcher, observations, session_id=session.id, now=now_epoch())
             except WatchItemLimitError as exc:
@@ -166,21 +170,30 @@ def create_agent_task_watch_items_router(
     async def finish_own_items(
         request: Request, body: FinishWatchItemsRequest
     ) -> FinishWatchItemsResponse:
-        """Mark the calling watcher's items done, so its runs stop checking them.
+        """Mark the calling watcher's items done, and tell the sessions that follow them.
 
-        A done item becomes active again when the watcher observes it, and is
+        Each session that follows a newly done item gets a ``watch.done`` event.
+        A done item is reopened when an observation changes its offsets, and is
         deleted 30 days after it was marked done.
         """
         user_id = require_user(request, auth_provider)
-        keys = [(item.source, item.source_key) for item in body.items]
+        finished = [
+            WatchFinish(
+                source=_source_type(item.source),
+                source_key=_source_key(item.source_key),
+                summary=item.summary.strip() if item.summary else None,
+            )
+            for item in body.items
+        ]
+        _each_key_once([(item.source, item.source_key) for item in finished])
 
         def finish() -> list[tuple[str, str]]:
-            watcher, _ = calling_watcher(request, user_id)
-            return items.finish(watcher.id, keys, owner_user_id=user_id, now=now_epoch())
+            watcher, session = calling_watcher(request, user_id)
+            return items.finish(watcher, finished, session_id=session.id, now=now_epoch())
 
         missing = await asyncio.to_thread(finish)
         return FinishWatchItemsResponse(
-            done=len(keys) - len(missing),
+            done=len(finished) - len(missing),
             missing=[WatchItemKey(source=source, source_key=key) for source, key in missing],
         )
 
@@ -205,10 +218,36 @@ def create_agent_task_watch_items_router(
     return router
 
 
+def _source_type(value: str) -> str:
+    try:
+        source_type = normalize_source_type(value)
+    except SourceError as exc:
+        raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
+    if is_reserved_source_type(source_type):
+        raise OmnigentError(
+            f"the source type {source_type!r} is the server's own", code=ErrorCode.INVALID_INPUT
+        )
+    return source_type
+
+
+def _source_key(value: str) -> str:
+    try:
+        return normalize_source_key(value)
+    except SourceError as exc:
+        raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
+
+
+def _each_key_once(keys: list[tuple[str, str]]) -> None:
+    if len(set(keys)) != len(keys):
+        raise OmnigentError(
+            "send each source and source_key once per call", code=ErrorCode.INVALID_INPUT
+        )
+
+
 def _observation(item: WatchItemObservation) -> WatchObservation:
     return WatchObservation(
-        source=item.source,
-        source_key=item.source_key,
+        source=_source_type(item.source),
+        source_key=_source_key(item.source_key),
         offsets=item.offsets,
         title=item.title.strip() if item.title is not None else None,
         summary=item.summary,

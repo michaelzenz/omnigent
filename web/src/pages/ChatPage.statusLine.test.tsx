@@ -62,6 +62,10 @@ vi.mock("@/hooks/useComposerGitStatus", () => ({
   useComposerGitStatus: () => useComposerGitStatusMock(),
 }));
 vi.mock("@/hooks/useOpenFolders", () => ({ useOpenFolders: () => [] }));
+vi.mock("@/hooks/useSessionSubscriptions", () => ({
+  useSessionSubscriptions: () => ({ data: [] }),
+  useUnsubscribeSession: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 
 function composerGitStatus(overrides: Record<string, unknown> = {}) {
   return {

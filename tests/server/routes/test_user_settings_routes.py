@@ -220,17 +220,27 @@ async def test_the_first_placement_turns_on_the_custodians_sweep_and_adds_the_de
     )
     first = await client.put(GLOBALHUB_ROUTE, json={**placement, "timezone": "America/New_York"})
     started = (await client.get(CUSTODIAN_PROFILE_ROUTE)).json()["schedule"]
-    default_watchers = (await client.get(WATCHERS_ROUTE)).json()["data"]
+    watchers = (await client.get(WATCHERS_ROUTE)).json()["data"]
+    default_watchers = [watcher for watcher in watchers if not watcher["builtin"]]
     await client.delete(f"{WATCHERS_ROUTE}/{default_watchers[0]['id']}")
     off = {"enabled": False, "rrule": started["rrule"], "timezone": started["timezone"]}
     await client.put(CUSTODIAN_PROFILE_ROUTE, json={"schedule": off})
     await client.put(GLOBALHUB_ROUTE, json=GLOBALHUB_UNSET)
     await client.put(GLOBALHUB_ROUTE, json={**placement, "timezone": "UTC"})
     kept = (await client.get(CUSTODIAN_PROFILE_ROUTE)).json()["schedule"]
-    watchers_after_placing_again = (await client.get(WATCHERS_ROUTE)).json()["data"]
+    watchers_after_placing_again = [
+        watcher
+        for watcher in (await client.get(WATCHERS_ROUTE)).json()["data"]
+        if not watcher["builtin"]
+    ]
 
     assert refused.status_code == 400
     assert first.status_code == 200, first.text
+    assert [
+        (watcher["name"], watcher["schedule"]["next_run_at"])
+        for watcher in watchers
+        if watcher["builtin"]
+    ] == [("Fallback watcher", 1_800_001_800)]
     assert [
         (watcher["name"], watcher["customized"], watcher["schedule"]["rrule"])
         for watcher in default_watchers

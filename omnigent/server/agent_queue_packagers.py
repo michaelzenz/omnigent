@@ -1,7 +1,8 @@
-"""Queue the work waiting for each user's broker, managers and custodian, and write queue messages.
+"""Queue the work waiting for each user's GlobalHub sessions, and write queue messages.
 
-Task events wait for the broker and the managers; a role with a schedule, such
-as the custodian or a watcher, gets its run message when its schedule comes due.
+Task events wait for the broker, or for the sessions that follow their sources,
+e.g. managers; a role with a schedule, such as the custodian or a watcher, gets
+its run message when its schedule comes due.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import json
 import logging
 import uuid
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfoNotFoundError
@@ -21,13 +22,14 @@ from omnigent.agent_tasks.event_batches import (
     broker_batches,
     cluster_by_tags,
     is_session_event,
-    manager_batches,
+    session_batches,
 )
 from omnigent.agent_tasks.role_schedules import next_run_at
 from omnigent.agent_tasks.role_sessions import (
     RoleSessionStores,
     ensure_role_session,
     ensure_watcher_session,
+    is_role_session_current,
 )
 from omnigent.agent_tasks.roles import (
     BROKER_ROLE_KEY,
@@ -37,12 +39,14 @@ from omnigent.agent_tasks.roles import (
     session_role,
 )
 from omnigent.db.db_models import workspace_scope
+from omnigent.db.utils import now_epoch
 from omnigent.entities import (
     LIVE_TASK_STATES,
     WATCHER_ROLE_KEY_PREFIX,
     AgentQueueItem,
     Conversation,
     RoleSchedule,
+    Subscription,
     Task,
     TaskEvent,
     Watcher,
@@ -78,12 +82,19 @@ _CUSTODIAN_RUN_PROMPT = (
 )
 _WATCHER_RUN_PROMPT = (
     "[System: scheduled watcher run]\n"
-    "Follow your manual: check what it says to watch.\n"
+    "Follow your manual: check what it says to watch, and the sources listed below.\n"
     '1. Report the current state of each item with watch_items action "observe". The '
     "server compares it with your last run and reports each change; do not report "
     "changes any other way.\n"
-    '2. Mark finished items with watch_items action "done".\n'
+    '2. Mark finished items with watch_items action "done", with a short summary of why.\n'
     "Do not start sessions or change anything."
+)
+_SOURCE_TYPES_PROMPT = "[System: assign source types to watchers]"
+_SOURCE_TYPES_ADVICE = (
+    "Sessions follow sources of the types below, and no watcher checks them yet. Follow "
+    '"Assigning source types" in the Custodian manual: assign each type to the watcher '
+    "whose manual covers it with source_watchers, and leave a type unassigned when no "
+    "manual covers it."
 )
 # The run message shows the items most in need of a check; the watcher pages
 # through the rest with its tool. About 5,000 tokens at most, so a large
@@ -92,6 +103,9 @@ _RUN_ITEMS_SHOWN = 50
 _RUN_ITEMS_MAX_CHARS = 20_000
 # A done item stays this long, so a watcher that finds it again does not report it as new.
 _DONE_WATCH_ITEMS_KEPT_S = 30 * 24 * 60 * 60
+_SUBSCRIPTIONS_KEPT_AFTER_DONE_S = 7 * 24 * 60 * 60
+_DONE_RECHECK_S = 24 * 60 * 60
+_SOURCE_TYPE_EXAMPLE_CHARS = 200
 # A run message not yet handled covers the next run too.
 _UNHANDLED_STATES = ("queued", "sending", "sent")
 
@@ -189,6 +203,8 @@ class RoleSchedulePackager:
             await asyncio.to_thread(settings.get_globalhub_placement, user_id=owner) is None
         ):
             return
+        if await asyncio.to_thread(self._fallback_without_sources, schedule):
+            return
         session = await self._session_for(schedule, now)
         if session is None:
             return
@@ -229,18 +245,40 @@ class RoleSchedulePackager:
                     self._board.role_schedules.delete, schedule.role_key, owner_user_id=owner
                 )
                 return None
-            await asyncio.to_thread(
-                self._board.watch_items.purge_done,
-                watcher_id,
-                owner_user_id=owner,
-                before=now - _DONE_WATCH_ITEMS_KEPT_S,
-            )
+            await asyncio.to_thread(self._tidy_watcher, watcher_id, owner, now)
             return session
         role = builtin_role(schedule.role_key)
         if role is None or not role.singleton:
             return None
         session, _ = await ensure_role_session(role, user_id=owner, stores=self._sessions)
         return session
+
+    def _fallback_without_sources(self, schedule: RoleSchedule) -> bool:
+        """Whether the schedule is the fallback watcher's and no source waits for it. Blocking."""
+        if not schedule.role_key.startswith(WATCHER_ROLE_KEY_PREFIX):
+            return False
+        owner = schedule.owner_user_id
+        watcher = self._board.watchers.get(
+            schedule.role_key.removeprefix(WATCHER_ROLE_KEY_PREFIX), owner_user_id=owner
+        )
+        return (
+            watcher is not None
+            and watcher.builtin
+            and not self._board.subscriptions.list_unassigned(owner_user_id=owner)
+        )
+
+    def _tidy_watcher(self, watcher_id: str, owner: str | None, now: int) -> None:
+        """End the subscriptions to sources done for a week; delete old done items. Blocking."""
+        done = self._board.watch_items.list_done_before(
+            watcher_id, owner_user_id=owner, before=now - _SUBSCRIPTIONS_KEPT_AFTER_DONE_S
+        )
+        for item in done:
+            self._board.subscriptions.delete_for_keys(
+                [item.source_key], owner_user_id=owner, created_before=item.done_at
+            )
+        self._board.watch_items.purge_done(
+            watcher_id, owner_user_id=owner, before=now - _DONE_WATCH_ITEMS_KEPT_S
+        )
 
 
 def _next_run_or_off(schedule: RoleSchedule, now: int) -> int | None:
@@ -261,64 +299,101 @@ def _next_run_or_off(schedule: RoleSchedule, now: int) -> int | None:
         return None
 
 
-class ManagerPackager:
-    """Queues the events routed to each manager, in v2's batches."""
+class SubscriberPackager:
+    """Queues the events routed to each session, in v2's batches.
+
+    A manager's session gets an event until the manager handles it, up to
+    :data:`MAX_DELIVERIES` notices; while the session is gone or archived, its
+    events wait, and deleting the manager gives them back to the broker. Any
+    other session gets each event once. When such a session is gone, archived,
+    or a role session that no longer serves its role, its events are
+    dismissed and its subscriptions end.
+    """
 
     def __init__(
-        self, *, board: BoardStores, conversations: Any, send_deps: SessionSendDeps
+        self, *, board: BoardStores, sessions: RoleSessionStores, send_deps: SessionSendDeps
     ) -> None:
         """
-        :param board: Holds the events, the managers and the queue.
-        :param conversations: Finds each manager's session.
-        :param send_deps: How a manager's runner is reached, to settle a turn that lost it.
+        :param board: Holds the events, the managers, the subscriptions and the queue.
+        :param sessions: Finds each target session, and whether a role session is current.
+        :param send_deps: How a session's runner is reached, to settle a turn that lost it.
         """
         self._board = board
-        self._conversations = conversations
+        self._sessions = sessions
         self._send_deps = send_deps
 
     async def package(self, now: int) -> None:
-        """Queue the batches due at ``now``, manager by manager in each workspace."""
+        """Queue the batches due at ``now``, session by session in each workspace."""
         waiting = await asyncio.to_thread(
             self._board.events.list_waiting_all_workspaces,
             state="routed",
             max_deliveries=MAX_DELIVERIES,
         )
-        by_manager: defaultdict[tuple[int, str | None, str], list[TaskEvent]] = defaultdict(list)
+        by_target: defaultdict[tuple[int, str | None, str], list[TaskEvent]] = defaultdict(list)
         for event in waiting:
-            if event.manager_id is not None:
-                key = (event.workspace_id, event.owner_user_id, event.manager_id)
-                by_manager[key].append(event)
-        for (workspace_id, owner, manager_id), events in by_manager.items():
+            if event.target_session_id is not None:
+                key = (event.workspace_id, event.owner_user_id, event.target_session_id)
+                by_target[key].append(event)
+        for (workspace_id, owner, target_id), events in by_target.items():
             try:
                 with workspace_scope(workspace_id):
-                    await self._package_for(owner, manager_id, events, now)
+                    await self._package_for(owner, target_id, events, now)
             except Exception:
-                _logger.exception("GlobalHub packaging failed for manager %s", manager_id)
+                _logger.exception("GlobalHub packaging failed for session %s", target_id)
 
     async def _package_for(
-        self, owner: str | None, manager_id: str, events: list[TaskEvent], now: int
+        self, owner: str | None, target_id: str, events: list[TaskEvent], now: int
     ) -> None:
-        session = await asyncio.to_thread(self._manager_session, owner, manager_id)
-        if session is None:
-            # The manager list shows the missing session; the events wait.
-            return
-        idle = not await session_has_live_turn(session, deps=self._send_deps)
-        for batch in manager_batches(events, now=now, manager_idle=idle):
+        target, manager = await asyncio.to_thread(self._target, owner, target_id)
+        if manager:
+            if target is None or target.archived:
+                # The manager list shows the missing session; the events wait.
+                return
+        else:
+            if target is None:
+                await asyncio.to_thread(self._drop_target, owner, target_id, events)
+                return
+            delivered = [event for event in events if event.delivery_count > 0]
+            for event in delivered:
+                await asyncio.to_thread(self._board.events.dismiss, event.id, owner_user_id=owner)
+            events = [event for event in events if event.delivery_count == 0]
+        idle = not await session_has_live_turn(target, deps=self._send_deps)
+        for batch in session_batches(events, now=now, session_idle=idle):
             await asyncio.to_thread(
                 self._board.queue.enqueue,
                 uuid.uuid4().hex,
                 owner_user_id=owner,
-                target_session_id=session.id,
+                target_session_id=target.id,
                 kind="events",
                 event_ids=[event.id for event in batch],
             )
 
-    def _manager_session(self, owner: str | None, manager_id: str) -> Conversation | None:
-        manager = self._board.managers.get(manager_id, owner_user_id=owner)
-        if manager is None or manager.conversation_id is None:
-            return None
-        session = self._conversations.get_conversation(manager.conversation_id)
-        return session if session is not None and not session.archived else None
+    def _target(self, owner: str | None, target_id: str) -> tuple[Conversation | None, bool]:
+        """Return the session that takes the events, and whether it is a manager's. Blocking.
+
+        The session is ``None`` when it cannot take events. A manager's session
+        counts as a manager's even when it is gone or archived.
+        """
+        if self._board.managers.get_by_conversation_id(target_id, owner_user_id=owner):
+            return self._sessions.conversation_store.get_conversation(target_id), True
+        target = self._sessions.conversation_store.get_conversation(target_id)
+        if target is None or target.archived:
+            return None, False
+        if session_role(target.labels) is not None and not is_role_session_current(
+            target,
+            user_id=owner,
+            stores=self._sessions,
+            managers=self._board.managers,
+            watchers=self._board.watchers,
+        ):
+            return None, False
+        return target, False
+
+    def _drop_target(self, owner: str | None, target_id: str, events: list[TaskEvent]) -> None:
+        """Dismiss the events for a session that cannot take them, and end its subscriptions."""
+        for event in events:
+            self._board.events.dismiss(event.id, owner_user_id=owner)
+        self._board.subscriptions.delete_for_session(target_id, owner_user_id=owner)
 
 
 class EventNoticeWriter:
@@ -336,17 +411,26 @@ class EventNoticeWriter:
         """
         Return the notice text, or ``None`` when none of the item's events still waits. Blocking.
 
-        Leaves out events that passed to another role since they were queued,
-        and dismisses events about sessions deleted before delivery, except
-        the ``session.deleted`` events that report it.
+        Leaves out events that passed to another session since they were
+        queued, and dismisses events about sessions deleted before delivery,
+        except the ``session.deleted`` events that report it. The broker gets
+        its routing notice for unrouted events, and a manager its notice for
+        routed events; any other session, or the broker for the sources it
+        follows, gets a ``[System: event]`` notice.
         """
         target = self._conversations.get_conversation(item.target_session_id)
         role = session_role(target.labels) if target is not None else None
         if role is not None and role.key == BROKER_ROLE_KEY:
-            return self._broker_notice(item)
+            routing = self._broker_notice(item)
+            if routing is not None:
+                return routing
+        waiting = self._waiting_events(item, "routed")
+        if not waiting:
+            return None
         if role is not None and role.key == MANAGER_ROLE_KEY:
-            return self._manager_notice(item)
-        raise ValueError("an events notice goes only to a broker or a manager session")
+            # The roster rides each turn as turn context (see role_turn_context).
+            return _manager_events_text(waiting)
+        return _subscriber_events_text(waiting)
 
     def _broker_notice(self, item: AgentQueueItem) -> str | None:
         waiting = self._waiting_events(item, "unrouted")
@@ -359,13 +443,6 @@ class EventNoticeWriter:
         return json.dumps(
             {"prompt": _BROKER_PROMPT, "clusters": clusters}, ensure_ascii=False, indent=2
         )
-
-    def _manager_notice(self, item: AgentQueueItem) -> str | None:
-        # The roster rides each turn as turn context (see role_turn_context).
-        waiting = self._waiting_events(item, "routed")
-        if not waiting:
-            return None
-        return _manager_events_text(waiting)
 
     def _waiting_events(self, item: AgentQueueItem, state: str) -> list[TaskEvent]:
         owner = item.owner_user_id
@@ -436,23 +513,97 @@ class ScheduledRunWriter:
         """
         Return the run message for the role the item names. Blocking.
 
-        A watcher's message lists its active items with the offsets it saw last.
+        A watcher's message lists its active items with the offsets it saw
+        last, then the sources that sessions follow and that it should check:
+        those of its source types, or for the fallback watcher, those of the
+        types without a watcher. Each followed source carries its note, e.g.
+        how to read a source that is hard to read. The custodian's message also
+        lists the source types without a watcher.
 
-        :returns: The message, or ``None`` for a role without one or a watcher
-            that was deleted after the run was queued.
+        :returns: The message, or ``None`` for a role without one, a watcher
+            that was deleted after the run was queued, or a fallback watcher
+            with no source to check.
         """
         role_key = item.payload.get("role_key")
+        owner = item.owner_user_id
         if role_key == CUSTODIAN_ROLE_KEY:
-            return _CUSTODIAN_RUN_PROMPT
-        if isinstance(role_key, str) and role_key.startswith(WATCHER_ROLE_KEY_PREFIX):
-            watcher_id = role_key.removeprefix(WATCHER_ROLE_KEY_PREFIX)
-            watcher = self._board.watchers.get(watcher_id, owner_user_id=item.owner_user_id)
-            if watcher is not None:
-                return f"{_WATCHER_RUN_PROMPT}\n\n{self._tracked_items_text(watcher)}"
-        return None
+            pending = _source_types_text(self._board, owner)
+            return f"{_CUSTODIAN_RUN_PROMPT}\n\n{pending}" if pending else _CUSTODIAN_RUN_PROMPT
+        if not isinstance(role_key, str) or not role_key.startswith(WATCHER_ROLE_KEY_PREFIX):
+            return None
+        watcher_id = role_key.removeprefix(WATCHER_ROLE_KEY_PREFIX)
+        watcher = self._board.watchers.get(watcher_id, owner_user_id=owner)
+        if watcher is None:
+            return None
+        followed = self._followed(watcher)
+        if watcher.builtin and not followed:
+            return None
+        notes = _note_by_source(followed)
+        parts = [_WATCHER_RUN_PROMPT, self._tracked_items_text(watcher, notes)]
+        sources = self._followed_sources_text(watcher, followed, notes)
+        if sources is not None:
+            parts.append(sources)
+        return "\n\n".join(parts)
 
-    def _tracked_items_text(self, watcher: Watcher) -> str:
-        """Write the ``[Tracked items]`` section: active items, least recently checked first."""
+    def _followed(self, watcher: Watcher) -> list[Subscription]:
+        """Return the subscriptions the watcher checks, oldest first."""
+        owner = watcher.owner_user_id
+        subscriptions = self._board.subscriptions
+        if watcher.builtin:
+            return subscriptions.list_unassigned(owner_user_id=owner)
+        types = subscriptions.types_for_watcher(watcher.id, owner_user_id=owner)
+        return subscriptions.list_for_types(types, owner_user_id=owner) if types else []
+
+    def _followed_sources_text(
+        self,
+        watcher: Watcher,
+        followed: Sequence[Subscription],
+        notes: Mapping[tuple[str, str], str],
+    ) -> str | None:
+        """Write the ``[Followed sources]`` section: new sources, and done ones due a check.
+
+        A source that the watcher does not track yet is new. An active item is
+        in ``[Tracked items]`` already; a done item gets a check once a day, to
+        catch a reopen. Each source comes with its note.
+        """
+        keys = list(dict.fromkeys((sub.source_type, sub.source_key) for sub in followed))
+        if not keys:
+            return None
+        owner = watcher.owner_user_id
+        tracked = {
+            (item.source, item.source_key): item
+            for item in self._board.watch_items.find(watcher.id, keys, owner_user_id=owner)
+        }
+        now = now_epoch()
+        lines: list[str] = []
+        for source_type, source_key in keys:
+            item = tracked.get((source_type, source_key))
+            if item is None:
+                line = (
+                    f"- {source_type} {source_key}: not tracked yet; observe it with this "
+                    "source type to start"
+                )
+            elif item.status == "done" and now - item.checked_at >= _DONE_RECHECK_S:
+                done = _utc_day(item.done_at or item.checked_at)
+                line = (
+                    f"- {source_type} {source_key}: done since {done}; observe it to see "
+                    "whether it reopened"
+                )
+            else:
+                continue
+            lines.append(_with_note(line, notes.get((source_type, source_key))))
+        if not lines:
+            return None
+        shown = lines[:_RUN_ITEMS_SHOWN]
+        if len(lines) > len(shown):
+            shown.append(f"… and {len(lines) - len(shown)} more; they come in the next runs.")
+        return "\n".join(["[Followed sources] (sessions follow these)", *shown])
+
+    def _tracked_items_text(self, watcher: Watcher, notes: Mapping[tuple[str, str], str]) -> str:
+        """Write the ``[Tracked items]`` section: active items, least recently checked first.
+
+        An item that sessions follow comes with its note.
+        """
         owner = watcher.owner_user_id
         items = self._board.watch_items.stalest(
             watcher.id, owner_user_id=owner, limit=_RUN_ITEMS_SHOWN
@@ -460,7 +611,9 @@ class ScheduledRunWriter:
         lines = ["[Tracked items] (the least recently checked first)"]
         used = 0
         for index, tracked in enumerate(items):
-            line = _watch_item_line(tracked)
+            line = _with_note(
+                _watch_item_line(tracked), notes.get((tracked.source, tracked.source_key))
+            )
             if index and used + len(line) > _RUN_ITEMS_MAX_CHARS:
                 break
             lines.append(line)
@@ -478,6 +631,58 @@ class ScheduledRunWriter:
                 f'… and {total - shown} more; page through them with watch_items action "list".'
             )
         return "\n".join(lines)
+
+
+class SourceTypesWriter:
+    """Writes the custodian's message for a ``source_types`` queue item when it is sent."""
+
+    def __init__(self, *, board: BoardStores) -> None:
+        """
+        :param board: Holds the subscriptions and the watchers the message lists.
+        """
+        self._board = board
+
+    def write(self, item: AgentQueueItem) -> str | None:
+        """
+        Return the message that lists the source types without a watcher. Blocking.
+
+        :returns: The message, with each type and the owner's watchers, or
+            ``None`` when every type in use has a watcher.
+        """
+        return _source_types_text(self._board, item.owner_user_id)
+
+
+def _source_types_text(board: BoardStores, owner: str | None) -> str | None:
+    """List the source types without a watcher, with an example key each, and the watchers."""
+    unassigned = [
+        use
+        for use in board.subscriptions.source_types(owner_user_id=owner)
+        if use.watcher_id is None
+    ]
+    if not unassigned:
+        return None
+    examples: dict[str, str] = {}
+    for subscription in board.subscriptions.list_unassigned(owner_user_id=owner):
+        examples.setdefault(subscription.source_type, subscription.source_key)
+    watchers = [
+        watcher for watcher in board.watchers.list(owner_user_id=owner) if not watcher.builtin
+    ]
+    lines = [_SOURCE_TYPES_PROMPT, _SOURCE_TYPES_ADVICE, "Types without a watcher:"]
+    for use in unassigned:
+        example = examples.get(use.source_type, "")[:_SOURCE_TYPE_EXAMPLE_CHARS]
+        lines.append(
+            f"- {use.source_type}: {use.subscriptions} subscription(s)"
+            + (f", e.g. {example}" if example else "")
+        )
+    lines.append("Watchers (read a manual with pmv2_read path /v1/agent-tasks/watchers/<id>):")
+    if watchers:
+        lines.extend(
+            f"- {watcher.id} {watcher.name}: {watcher.description or '(no description)'}"
+            for watcher in watchers
+        )
+    else:
+        lines.append("(none; the fallback watcher checks every type)")
+    return "\n".join(lines)
 
 
 def write_notice_click(item: AgentQueueItem) -> str:
@@ -530,30 +735,47 @@ def _broker_entry(event: TaskEvent) -> dict[str, Any]:
 
 def _manager_events_text(events: Sequence[TaskEvent]) -> str:
     """Write v2's manager notice lines, each with its event id."""
-    task_ids = list(dict.fromkeys(event.task_id for event in events if event.task_id))
-    unassigned = sum(1 for event in events if event.task_id is None)
-    if len(task_ids) == 1 and not unassigned:
-        scope = f"task {task_ids[0]}"
-    elif task_ids:
-        scope = f"{len(task_ids)} tasks: " + ", ".join(task_ids)
-    else:
-        scope = "this manager"
-    lines = [f"[System: {len(events)} event(s) routed to {scope} — triage or act]"]
-    if unassigned:
-        lines.append(f"[{unassigned} manager-routed event(s) have no task]")
+    lines = [f"[System: {len(events)} event(s) for you — triage or act]"]
     by_session: dict[str, list[TaskEvent]] = {}
     for event in events:
         if is_session_event(event) and event.source_session_id:
             by_session.setdefault(event.source_session_id, []).append(event)
         else:
-            lines.append(_event_line(event))
+            lines.append(f"- [event:{event.id}] {_event_text(event)}")
     lines.extend(_session_entry(session_events) for session_events in by_session.values())
     return "\n".join(lines)
 
 
-def _event_line(event: TaskEvent) -> str:
-    label = f"[task:{event.task_id}]" if event.task_id else "[manager-routed; task unassigned]"
-    return f"- {label} [event:{event.id}] {event.event_type}: {event.title!r} (routed)"
+def _subscriber_events_text(events: Sequence[TaskEvent]) -> str:
+    """Write the notice for a session that follows the events' sources."""
+    lines = [f"[System: event — {len(events)} update(s) on sources you follow]"]
+    for event in sorted(events, key=lambda event: (event.created_at, event.id)):
+        if is_session_event(event):
+            title = event.payload.get("session_title") or event.source_key
+            lines.append(f"- {event.title} (session {title!r}, id {event.source_key})")
+        else:
+            lines.append(f"- {_event_text(event)}")
+    return "\n".join(lines)
+
+
+def _event_text(event: TaskEvent) -> str:
+    """Write an event's type, source and title, and who reported it."""
+    source = " ".join(part for part in (event.source, event.source_key) if part)
+    text = (
+        f"{event.event_type} {source}: {event.title!r}"
+        if source
+        else (f"{event.event_type}: {event.title!r}")
+    )
+    watcher = event.payload.get("watcher")
+    if isinstance(watcher, dict) and watcher.get("name"):
+        return f"{text} (reported by the watcher {watcher['name']!r})"
+    if event.source_session_id:
+        return f"{text} (reported by session {event.source_session_id})"
+    return text
+
+
+def _utc_day(epoch_seconds: int) -> str:
+    return datetime.fromtimestamp(epoch_seconds, tz=UTC).strftime("%Y-%m-%d")
 
 
 def _session_entry(events: Sequence[TaskEvent]) -> str:
@@ -595,12 +817,26 @@ def _session_entry(events: Sequence[TaskEvent]) -> str:
             ]
         )
     if len(events) == 1:
-        return _event_line(first)
+        return f"- {ids_label} {_event_text(first)}"
     return f"- {ids_label} {len(events)} events for session '{title}' (routed)"
 
 
 def _task_line(task: Task) -> str:
     return f"{task.id} — {task.title} ({task.state})"
+
+
+def _note_by_source(followed: Sequence[Subscription]) -> dict[tuple[str, str], str]:
+    """Return the note of each followed source: that of its oldest subscription with one."""
+    notes: dict[tuple[str, str], str] = {}
+    for subscription in followed:
+        note = " ".join((subscription.note or "").split())
+        if note:
+            notes.setdefault((subscription.source_type, subscription.source_key), note)
+    return notes
+
+
+def _with_note(line: str, note: str | None) -> str:
+    return f"{line}\n  Note: {note}" if note else line
 
 
 def _watch_item_line(item: WatchItem) -> str:

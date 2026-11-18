@@ -7,6 +7,7 @@ import uuid
 import pytest
 
 from omnigent.stores.role_schedule_store.sqlalchemy_store import SqlAlchemyRoleScheduleStore
+from omnigent.stores.subscription_store.sqlalchemy_store import SqlAlchemySubscriptionStore
 from omnigent.stores.watch_item_store import WatchObservation
 from omnigent.stores.watch_item_store.sqlalchemy_store import SqlAlchemyWatchItemStore
 from omnigent.stores.watcher_store import sqlalchemy_store as watcher_sqlalchemy
@@ -49,6 +50,25 @@ def test_each_owner_lists_only_their_watchers_in_creation_order(
     assert (first.manual, first.model, first.role_key) == (None, None, f"watcher:{first.id}")
 
 
+def test_each_owner_finds_only_their_own_builtin_watcher(db_uri: str) -> None:
+    store = SqlAlchemyWatcherStore(db_uri)
+    ordinary = store.create(uuid.uuid4().hex, owner_user_id=ALICE, name="PR watcher")
+    before = store.get_builtin(owner_user_id=ALICE)
+    fallback = store.create(
+        uuid.uuid4().hex, owner_user_id=ALICE, name="Fallback watcher", builtin=True
+    )
+
+    found = store.get_builtin(owner_user_id=ALICE)
+
+    assert before is None
+    assert (ordinary.builtin, fallback.builtin) == (False, True)
+    assert found == fallback
+    stored = store.get(ordinary.id, owner_user_id=ALICE)
+    assert stored is not None and stored.builtin is False
+    assert store.get_builtin(owner_user_id=BOB) is None
+    assert store.get_builtin(owner_user_id=None) is None
+
+
 def test_an_update_changes_only_the_fields_it_names(db_uri: str) -> None:
     store = SqlAlchemyWatcherStore(db_uri)
     watcher = store.create(
@@ -73,10 +93,13 @@ def test_an_update_changes_only_the_fields_it_names(db_uri: str) -> None:
     assert store.get_by_conversation_id(SESSION_ID, owner_user_id=BOB) is None
 
 
-def test_delete_removes_the_watcher_and_only_its_own_schedule_and_items(db_uri: str) -> None:
+def test_delete_removes_the_watcher_and_only_its_own_schedule_items_and_source_types(
+    db_uri: str,
+) -> None:
     store = SqlAlchemyWatcherStore(db_uri)
     schedules = SqlAlchemyRoleScheduleStore(db_uri)
     items = SqlAlchemyWatchItemStore(db_uri)
+    assignments = SqlAlchemySubscriptionStore(db_uri)
     watcher = store.create(uuid.uuid4().hex, owner_user_id=ALICE, name="PR watcher")
     other = store.create(uuid.uuid4().hex, owner_user_id=ALICE, name="Ticket watcher")
     store.update(watcher.id, owner_user_id=ALICE, conversation_id=SESSION_ID)
@@ -85,6 +108,14 @@ def test_delete_removes_the_watcher_and_only_its_own_schedule_and_items(db_uri: 
     seen = [WatchObservation(source="github", source_key="https://example.com/1", offsets={})]
     for each in (watcher, other):
         items.observe(each, seen, session_id=None, now=1)
+    for source_type, assigned in (
+        ("github.pull_request", watcher),
+        ("github.issue", watcher),
+        ("jira.issue", other),
+    ):
+        assignments.assign_type(
+            owner_user_id=ALICE, source_type=source_type, watcher_id=assigned.id
+        )
 
     refused = store.delete(watcher.id, owner_user_id=BOB)
     deleted = store.delete(watcher.id, owner_user_id=ALICE)
@@ -102,3 +133,8 @@ def test_delete_removes_the_watcher_and_only_its_own_schedule_and_items(db_uri: 
         for each in (watcher, other)
     ]
     assert counts == [0, 1]
+    assert assignments.types_for_watcher(watcher.id, owner_user_id=ALICE) == []
+    assert [
+        (assignment.source_type, assignment.watcher_id)
+        for assignment in assignments.source_watchers(owner_user_id=ALICE)
+    ] == [("jira.issue", other.id)]

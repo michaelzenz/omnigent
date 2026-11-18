@@ -54,21 +54,29 @@ def _manager(db_uri: str, title: str, conversation_id: str | None) -> str:
     return manager_id
 
 
-def _event(db_uri: str, owner: str = ALICE_ID, manager_id: str | None = None) -> str:
+def _event(db_uri: str, owner: str = ALICE_ID, target_session_id: str | None = None) -> str:
     event_id = uuid.uuid4().hex
     SqlAlchemyTaskEventStore(db_uri).create(
-        event_id, owner_user_id=owner, event_type="note", title="A note", manager_id=manager_id
+        event_id,
+        owner_user_id=owner,
+        event_type="note",
+        title="A note",
+        target_session_id=target_session_id,
     )
     return event_id
 
 
 def _custodian_item(db_uri: str, custodian: str, kind: str = "notice_click") -> None:
+    payloads = {
+        "notice_click": {"action_id": "confirm"},
+        "scheduled_run": {"role_key": "custodian"},
+    }
     SqlAlchemyAgentQueueStore(db_uri).enqueue(
         uuid.uuid4().hex,
         owner_user_id=ALICE_ID,
         target_session_id=custodian,
         kind=kind,
-        payload={"action_id": "confirm"} if kind == "notice_click" else {"role_key": "custodian"},
+        payload=payloads.get(kind),
     )
 
 
@@ -85,9 +93,11 @@ async def test_the_rows_show_each_role_with_its_session_and_waiting_work(
     _event(db_uri)
     _event(db_uri)
     _event(db_uri, owner=BOB_ID)
-    _event(db_uri, manager_id=storage)
+    _event(db_uri, target_session_id=storage_session)
+    _event(db_uri, target_session_id=_session(db_uri, "Fix S3"))
     _custodian_item(db_uri, custodian)
     _custodian_item(db_uri, custodian, "scheduled_run")
+    _custodian_item(db_uri, custodian, "source_types")
 
     response = await auth_client.get("/v1/agent-tasks/board/roles", headers=ALICE)
 
@@ -97,8 +107,7 @@ async def test_the_rows_show_each_role_with_its_session_and_waiting_work(
         for row in rows
     ] == [
         ("broker", "Task broker", None, broker, 2),
-        # A queued click and the queued daily cleanup.
-        ("custodian", "Task custodian", None, custodian, 2),
+        ("custodian", "Task custodian", None, custodian, 3),
         ("manager:default", "Storage", storage, storage_session, 1),
         ("manager:default", "Docs", sessionless, None, 0),
     ]
@@ -114,13 +123,16 @@ async def test_dismissing_clears_only_that_roles_waiting_work(
     auth_client: httpx.AsyncClient, db_uri: str
 ) -> None:
     _broker, custodian = _place_role_sessions(db_uri)
-    storage = _manager(db_uri, "Storage", _session(db_uri, "Storage manager"))
+    storage_session = _session(db_uri, "Storage manager")
+    storage = _manager(db_uri, "Storage", storage_session)
     docs = _manager(db_uri, "Docs", None)
     unrouted = [_event(db_uri), _event(db_uri)]
     bobs = _event(db_uri, owner=BOB_ID)
-    to_storage, to_docs = _event(db_uri, manager_id=storage), _event(db_uri, manager_id=docs)
+    to_storage = _event(db_uri, target_session_id=storage_session)
+    to_other_session = _event(db_uri, target_session_id=_session(db_uri, "Fix S3"))
     _custodian_item(db_uri, custodian)
     _custodian_item(db_uri, custodian, "scheduled_run")
+    _custodian_item(db_uri, custodian, "source_types")
 
     dismissed = [
         (await auth_client.post(path, headers=ALICE)).json()["dismissed"]
@@ -146,11 +158,11 @@ async def test_dismissing_clears_only_that_roles_waiting_work(
             (unrouted[1], ALICE_ID),
             (bobs, BOB_ID),
             (to_storage, ALICE_ID),
-            (to_docs, ALICE_ID),
+            (to_other_session, ALICE_ID),
         ]
         if (event := events.get(event_id, owner_user_id=owner)) is not None
     ]
-    assert (dismissed, refused) == ([2, 1, 2], [404, 404])
+    assert (dismissed, refused) == ([2, 1, 3], [404, 404])
     assert states == ["dismissed", "dismissed", "unrouted", "dismissed", "routed"]
     queue = SqlAlchemyAgentQueueStore(db_uri)
     assert queue.list(owner_user_id=ALICE_ID, target_session_id=custodian) == []

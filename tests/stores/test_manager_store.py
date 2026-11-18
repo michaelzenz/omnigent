@@ -8,13 +8,18 @@ from typing import Any
 
 import pytest
 
+from omnigent.entities import SESSION_EVENT_SOURCE
+from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+from omnigent.stores.subscription_store.sqlalchemy_store import SqlAlchemySubscriptionStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
 
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
 HOST_ID = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+PR = "https://example.com/example-org/repo/pull/12"
+NOW = 1_800_000_000
 # Creation order ties on the one-second created_at, then falls back to id.
 _ids = (f"{n:032x}" for n in itertools.count(1))
 
@@ -94,31 +99,72 @@ def test_delete_is_owner_scoped(store: SqlAlchemyManagerStore) -> None:
     assert store.list(owner_user_id=ALICE) == []
 
 
-def test_deleting_a_manager_unassigns_its_tasks_and_returns_its_events(
+def test_deleting_a_manager_unassigns_its_tasks_returns_its_events_and_ends_its_subscriptions(
     db_uri: str, store: SqlAlchemyManagerStore
 ) -> None:
     tasks = SqlAlchemyTaskStore(db_uri)
     events = SqlAlchemyTaskEventStore(db_uri)
-    manager_id = _create(store, "Storage")
+    queue = SqlAlchemyAgentQueueStore(db_uri)
+    subscriptions = SqlAlchemySubscriptionStore(db_uri)
+    manager_session, worker_session = uuid.uuid4().hex, uuid.uuid4().hex
+    manager_id = _create(store, "Storage", conversation_id=manager_session)
     task_id = uuid.uuid4().hex
     tasks.create(task_id, owner_user_id=ALICE, title="Task", manager_id=manager_id)
-    unhandled, handled = uuid.uuid4().hex, uuid.uuid4().hex
-    for event_id in (unhandled, handled):
+    unhandled, handled, elsewhere = uuid.uuid4().hex, uuid.uuid4().hex, uuid.uuid4().hex
+    for event_id, target in (
+        (unhandled, manager_session),
+        (handled, manager_session),
+        (elsewhere, worker_session),
+    ):
         events.create(
             event_id,
             owner_user_id=ALICE,
             event_type="github.pr.comment",
             title="Review comment",
-            manager_id=manager_id,
+            target_session_id=target,
         )
     events.dismiss(handled, owner_user_id=ALICE)
+    item = queue.enqueue(
+        uuid.uuid4().hex,
+        owner_user_id=ALICE,
+        target_session_id=manager_session,
+        kind="events",
+        event_ids=[unhandled],
+    )
+    assert item is not None
+    queue.claim_due_all_workspaces(now=NOW)
+    queue.mark_sent(item.id, owner_user_id=ALICE)
+    for session_id, source_type, source_key in (
+        (manager_session, SESSION_EVENT_SOURCE, worker_session),
+        (manager_session, "github.pull_request", PR),
+        (worker_session, "github.pull_request", PR),
+    ):
+        subscriptions.subscribe(
+            owner_user_id=ALICE,
+            session_id=session_id,
+            source_type=source_type,
+            source_key=source_key,
+        )
+    delivered = events.get(unhandled, owner_user_id=ALICE)
 
     assert store.delete(manager_id, owner_user_id=ALICE) is True
 
+    assert delivered is not None
+    assert (delivered.queue_item_id, delivered.delivery_count) == (item.id, 1)
     task = tasks.get(task_id, owner_user_id=ALICE)
     assert task is not None and task.manager_id is None
     returned = events.get(unhandled, owner_user_id=ALICE)
     kept = events.get(handled, owner_user_id=ALICE)
-    assert returned is not None and kept is not None
-    assert (returned.state, returned.manager_id, returned.routed_at) == ("unrouted", None, None)
-    assert (kept.state, kept.manager_id) == ("dismissed", manager_id)
+    untouched = events.get(elsewhere, owner_user_id=ALICE)
+    assert returned is not None and kept is not None and untouched is not None
+    assert (
+        returned.state,
+        returned.target_session_id,
+        returned.queue_item_id,
+        returned.delivery_count,
+        returned.routed_at,
+    ) == ("unrouted", None, None, 0, None)
+    assert (kept.state, kept.target_session_id) == ("dismissed", manager_session)
+    assert (untouched.state, untouched.target_session_id) == ("routed", worker_session)
+    assert subscriptions.list_for_session(manager_session, owner_user_id=ALICE) == []
+    assert subscriptions.subscribers(owner_user_id=ALICE, source_key=PR) == [worker_session]

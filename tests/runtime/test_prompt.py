@@ -13,6 +13,8 @@ from omnigent.runner.subagent_work import (
 from omnigent.runtime.mcp_tool_result import encode_mcp_image_result
 from omnigent.runtime.prompt import (
     EMBEDDED_BROWSER_PRIORITY_INSTRUCTION,
+    EVENT_NOTICE_INSTRUCTION,
+    EVENT_NOTICE_SHAPE,
     SUBAGENT_WAKE_NOTICE_INSTRUCTION,
     SUBAGENT_WAKE_NOTICE_SHAPE,
     WORKSPACE_IMAGE_INSTRUCTION,
@@ -24,10 +26,12 @@ from omnigent.runtime.prompt import (
     raw_author_instructions,
 )
 from omnigent.spec import AgentSpec
+from omnigent.tools.builtins.event_subscriptions import EventSubscriptionsTool
 from tests._image_fixtures import _TINY_PNG_BASE64
 
+_STABLE_FRAMEWORK_INSTRUCTIONS = f"{WORKSPACE_IMAGE_INSTRUCTION}\n\n{EVENT_NOTICE_INSTRUCTION}"
 _DEFAULT_FRAMEWORK_INSTRUCTIONS = (
-    f"{EMBEDDED_BROWSER_PRIORITY_INSTRUCTION}\n\n{WORKSPACE_IMAGE_INSTRUCTION}"
+    f"{EMBEDDED_BROWSER_PRIORITY_INSTRUCTION}\n\n{_STABLE_FRAMEWORK_INSTRUCTIONS}"
 )
 _SAMPLE_FRAMEWORK_INSTRUCTION = "Framework instruction for testing build_instructions_nullable."
 
@@ -54,6 +58,7 @@ def _spec(
             ),
             spawn=spawn,
             tool_groups=SimpleNamespace(browser=browser),
+            allowed_builtin_tools=None,
         ),
     )
 
@@ -408,6 +413,34 @@ def test_embedded_browser_guidance_names_registered_tools() -> None:
         assert name in EMBEDDED_BROWSER_PRIORITY_INSTRUCTION
 
 
+def test_event_notice_guidance_names_its_tool_and_quotes_the_notice_shape() -> None:
+    """
+    The guidance must track the framework-owned tool and the notice it announces.
+    """
+    assert EventSubscriptionsTool.name() in EVENT_NOTICE_INSTRUCTION
+    assert f"`{EVENT_NOTICE_SHAPE}`" in EVENT_NOTICE_INSTRUCTION
+
+
+@pytest.mark.parametrize(
+    ("allowed_builtin_tools", "guided"),
+    [(None, True), (["pmv2_api", "event_subscriptions"], True), (["watch_items"], False)],
+)
+def test_event_notice_guidance_goes_only_to_agents_that_can_follow_sources(
+    allowed_builtin_tools: list[str] | None, guided: bool
+) -> None:
+    spec = AgentSpec(
+        spec_version=1, instructions="Author text.", allowed_builtin_tools=allowed_builtin_tools
+    )
+
+    composed = build_instructions(spec, None, [])
+    native = build_native_startup_instructions(spec)
+
+    assert (EVENT_NOTICE_INSTRUCTION in composed, EVENT_NOTICE_INSTRUCTION in native) == (
+        guided,
+        guided,
+    )
+
+
 def test_subagent_wake_notice_shape_matches_runner_notice() -> None:
     """
     The announced shape must track the notice the runner actually posts.
@@ -444,11 +477,11 @@ def test_browser_guidance_omitted_when_browser_group_disabled() -> None:
     """
     spec = _spec("You are a helpful assistant.", browser=False)
     assert build_instructions_nullable(spec, None, []) == (
-        f"You are a helpful assistant.\n\n{WORKSPACE_IMAGE_INSTRUCTION}"
+        f"You are a helpful assistant.\n\n{_STABLE_FRAMEWORK_INSTRUCTIONS}"
     )
     assert (
         build_instructions_nullable(_spec(None, browser=False), None, [])
-        == WORKSPACE_IMAGE_INSTRUCTION
+        == _STABLE_FRAMEWORK_INSTRUCTIONS
     )
 
 
@@ -457,15 +490,15 @@ def test_browser_group_disabled_keeps_wake_notice_for_spawning_agent() -> None:
     wake notice still rides its own dispatch gate."""
     spec = _spec(None, spawn=True, browser=False)
     result = build_instructions_nullable(spec, None, [])
-    assert result == f"{SUBAGENT_WAKE_NOTICE_INSTRUCTION}\n\n{WORKSPACE_IMAGE_INSTRUCTION}"
+    assert result == f"{SUBAGENT_WAKE_NOTICE_INSTRUCTION}\n\n{_STABLE_FRAMEWORK_INSTRUCTIONS}"
     assert EMBEDDED_BROWSER_PRIORITY_INSTRUCTION not in result
 
 
-def test_native_startup_instructions_keep_only_stable_image_guidance() -> None:
+def test_native_startup_instructions_keep_only_stable_framework_guidance() -> None:
     """Native startup preserves author text without unrelated tool/turn guidance."""
     spec = _spec("  Follow the user's directions.  ", spawn=True)
     result = build_native_startup_instructions(spec)
-    assert result == f"{spec.instructions}\n\n{WORKSPACE_IMAGE_INSTRUCTION}"
+    assert result == f"{spec.instructions}\n\n{_STABLE_FRAMEWORK_INSTRUCTIONS}"
     assert EMBEDDED_BROWSER_PRIORITY_INSTRUCTION not in result
     assert SUBAGENT_WAKE_NOTICE_INSTRUCTION not in result
-    assert build_native_startup_instructions(None) == WORKSPACE_IMAGE_INSTRUCTION
+    assert build_native_startup_instructions(None) == _STABLE_FRAMEWORK_INSTRUCTIONS

@@ -1,9 +1,10 @@
-"""Deliver queued GlobalHub messages to role and worker sessions, one turn at a time.
+"""Deliver queued GlobalHub messages to role and other sessions, one turn at a time.
 
 Every few seconds the packagers queue items from waiting board work. Each pass
 claims every session's oldest queued item, checks that its target still serves
-its role (or, for a worker message, still is that worker's session), writes the
-message text and sends it. A sent item holds its session
+its role (for a worker message, that it still is that worker's session; for
+events to a session without a role, that it still exists), writes the message
+text and sends it. A sent item holds its session
 until the turn handling it ends: main's status hook reports the turn end, and
 a session idle for a minute after the send counts too. A turn whose runner died
 in a crash ends the next time the dispatcher reads the session, which settles
@@ -24,6 +25,7 @@ from typing import Any, Protocol
 
 from omnigent.agent_tasks.board_stores import BoardStores
 from omnigent.agent_tasks.role_sessions import RoleSessionStores, is_role_session_current
+from omnigent.agent_tasks.roles import session_role
 from omnigent.agent_tasks.task_search_index import TaskSearchIndex
 from omnigent.db.db_models import workspace_scope
 from omnigent.entities import AgentQueueItem
@@ -54,6 +56,7 @@ SEARCH_REFRESH_INTERVAL_S = 30
 _BASE_RETRY_DELAY_S = 30
 _MAX_RETRY_DELAY_S = 5 * 60
 WORKER_MESSAGE_KIND = "worker_message"
+EVENTS_KIND = "events"
 
 # Writes an item's message text, or returns None when nothing is left to say.
 ItemRenderer = Callable[[AgentQueueItem], str | None]
@@ -292,7 +295,11 @@ class AgentQueueDispatcher:
             worker = self._workers.get(item.payload["worker_id"], owner_user_id=item.owner_user_id)
             return worker is not None and worker.session_id == item.target_session_id
         conv = self._send_deps.conversation_store.get_conversation(item.target_session_id)
-        return conv is not None and is_role_session_current(
+        if conv is None:
+            return False
+        if item.kind == EVENTS_KIND and session_role(conv.labels) is None:
+            return not conv.archived
+        return is_role_session_current(
             conv,
             user_id=item.owner_user_id,
             stores=self._sessions,

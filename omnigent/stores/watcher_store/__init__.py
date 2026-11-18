@@ -36,6 +36,7 @@ class WatcherStore(ABC):
         description: str = "",
         manual: str | None = None,
         model: str | None = None,
+        builtin: bool = False,
     ) -> Watcher:
         """
         Insert a watcher. Its session comes with its first run.
@@ -47,12 +48,17 @@ class WatcherStore(ABC):
         :param manual: The user's manual, or ``None`` for the packaged template.
         :param model: Model for the watcher's session, or ``None`` for the
             watcher agent's own model.
+        :param builtin: Whether it is the built-in fallback watcher.
         :returns: The new watcher.
         """
 
     @abstractmethod
     def get(self, watcher_id: str, *, owner_user_id: str | None) -> Watcher | None:
         """Return the owner's watcher, or ``None`` when missing or someone else's."""
+
+    @abstractmethod
+    def get_builtin(self, *, owner_user_id: str | None) -> Watcher | None:
+        """Return the owner's built-in fallback watcher, or ``None`` before it exists."""
 
     @abstractmethod
     def get_by_conversation_id(
@@ -88,7 +94,9 @@ class WatcherStore(ABC):
     @abstractmethod
     def delete(self, watcher_id: str, *, owner_user_id: str | None) -> Watcher | None:
         """
-        Delete the owner's watcher, its schedule and its tracked items in one transaction.
+        Delete the owner's watcher, its schedule, its tracked items and its source types.
+
+        One transaction deletes them all; the source types go to the fallback watcher.
 
         :returns: The deleted watcher, or ``None`` when missing or someone else's.
         """

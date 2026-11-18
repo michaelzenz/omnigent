@@ -79,6 +79,7 @@ from omnigent.tools.builtins.async_inbox import (
 )
 from omnigent.tools.builtins.browser import BROWSER_TOOL_NAMES
 from omnigent.tools.builtins.download_file import DownloadFileTool
+from omnigent.tools.builtins.event_subscriptions import EventSubscriptionsTool
 from omnigent.tools.builtins.list_comments import ListCommentsTool
 from omnigent.tools.builtins.os_env import (
     OS_ENV_TOOL_TYPES,
@@ -100,6 +101,7 @@ from omnigent.tools.builtins.session_projects import (
     SysSessionUpdateTool,
 )
 from omnigent.tools.builtins.session_rename import SysSessionRenameTool
+from omnigent.tools.builtins.source_watchers import SourceWatchersTool
 from omnigent.tools.builtins.spawn import (
     # Shared contract values with the in-process sys_session_* tools. Imported
     # (not duplicated) so the runner's REST-backed peek clamps to the same
@@ -363,7 +365,10 @@ _PMV2_API_TOOLS = frozenset({Pmv2ApiTool.name(), Pmv2ReadTool.name()})
 _SYSTEM_NOTICE_TOOLS = frozenset({SystemNoticeTool.name()})
 # Opt-in tracker of a GlobalHub watcher, called as the watcher's session.
 _WATCH_ITEMS_TOOLS = frozenset({WatchItemsTool.name()})
+# Opt-in assigner of source types to watchers, called as the custodian's session.
+_SOURCE_WATCHERS_TOOLS = frozenset({SourceWatchersTool.name()})
 _UI_TOOLS = frozenset({UiOpenFileTool.name(), UiStampFoldersTool.name()})
+_EVENT_SUBSCRIPTION_TOOLS = frozenset({EventSubscriptionsTool.name()})
 
 # The title bound the rename tool advertises to the LLM — read once from the
 # tool schema so the dispatcher can never drift from the published contract.
@@ -525,6 +530,7 @@ _NATIVE_RELAY_BUILTIN_TOOLS = (
     | _SESSION_SELF_WRITE_TOOLS
     | _PROJECT_TOOLS
     | _UI_TOOLS
+    | _EVENT_SUBSCRIPTION_TOOLS
     | _ASYNC_INBOX_TOOLS
     | _SUBAGENT_TOOLS
     | _LIST_MODELS_TOOLS
@@ -651,6 +657,7 @@ def build_native_relay_tool_schemas(spec: AgentSpec | None) -> list[_JsonObject]
             SysProjectUpdateTool,
             UiOpenFileTool,
             UiStampFoldersTool,
+            EventSubscriptionsTool,
             SysAgentGetTool,
             SysAgentListTool,
             SysAgentDownloadTool,
@@ -954,7 +961,9 @@ _ALL_LOCAL_TOOLS = (
     | _PMV2_API_TOOLS
     | _SYSTEM_NOTICE_TOOLS
     | _WATCH_ITEMS_TOOLS
+    | _SOURCE_WATCHERS_TOOLS
     | _UI_TOOLS
+    | _EVENT_SUBSCRIPTION_TOOLS
     | _WEB_FETCH_TOOLS
     | _WEB_SEARCH_TOOLS
     | _WEB_READ_TOOLS
@@ -7491,6 +7500,14 @@ async def execute_tool(
             from omnigent.runner.watch_items import execute_watch_items
 
             output = await execute_watch_items(args, server_client, conversation_id)
+        elif tool_name in _EVENT_SUBSCRIPTION_TOOLS:
+            from omnigent.runner.event_subscriptions import execute_event_subscriptions
+
+            output = await execute_event_subscriptions(args, server_client, conversation_id)
+        elif tool_name in _SOURCE_WATCHERS_TOOLS:
+            from omnigent.runner.source_watchers import execute_source_watchers
+
+            output = await execute_source_watchers(args, server_client, conversation_id)
         elif tool_name in _SESSION_CREATE_TOOLS:
             output = await _execute_session_create(
                 args,

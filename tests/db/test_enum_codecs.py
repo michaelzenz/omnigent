@@ -162,6 +162,8 @@ def test_shipped_codes_are_stable() -> None:
         "notice_click": 2,
         "spawn_managers": 3,
         "scheduled_run": 4,
+        "worker_message": 5,
+        "source_types": 6,
     }
     assert ec.AGENT_QUEUE_ITEM_STATE == {"queued": 1, "sending": 2, "sent": 3, "done": 4}
     assert ec.WATCH_ITEM_STATUS == {"active": 1, "done": 2}

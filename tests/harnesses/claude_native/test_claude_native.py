@@ -43,7 +43,11 @@ from omnigent.native import native_terminal
 from omnigent.runner.identity import OMNIGENT_INTERNAL_WS_ORIGIN
 from omnigent.runtime import tool_result_replay as trc
 from omnigent.runtime import workflow
-from omnigent.runtime.prompt import WORKSPACE_IMAGE_INSTRUCTION
+from omnigent.runtime.prompt import (
+    EVENT_NOTICE_INSTRUCTION,
+    WORKSPACE_IMAGE_INSTRUCTION,
+    build_native_startup_instructions,
+)
 from omnigent.spec import load_omnigent_yaml
 from omnigent.terminals.ws_common import (
     WS_CLOSE_TERMINAL_DETACHED,
@@ -6887,16 +6891,16 @@ def test_wrapper_spec_startup_instructions_resolves_prompt(tmp_path: Path) -> No
     result = claude_native._wrapper_spec_startup_instructions(spec_path)
     assert result is not None
     assert "Claude Code is running in the session terminal" in result
-    assert result.endswith(WORKSPACE_IMAGE_INSTRUCTION)
+    assert result.endswith(f"{WORKSPACE_IMAGE_INSTRUCTION}\n\n{EVENT_NOTICE_INSTRUCTION}")
 
 
 def test_wrapper_spec_startup_instructions_degrades_on_malformed_spec(tmp_path: Path) -> None:
     """A malformed wrapper spec must not block the terminal launch."""
     bad_spec = tmp_path / "bad.yaml"
     bad_spec.write_text("not: [valid, agent, spec")
-    assert (
-        claude_native._wrapper_spec_startup_instructions(bad_spec) == WORKSPACE_IMAGE_INSTRUCTION
-    )
+    assert claude_native._wrapper_spec_startup_instructions(
+        bad_spec
+    ) == build_native_startup_instructions(None)
 
 
 @pytest.mark.asyncio

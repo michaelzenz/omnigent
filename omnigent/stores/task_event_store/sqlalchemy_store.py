@@ -48,7 +48,7 @@ def _to_entity(row: SqlTaskEvent) -> TaskEvent:
         source_session_id=row.source_session_id,
         tags=[EventTag(tag_type=tag["tag_type"], tag=tag["tag"]) for tag in json.loads(row.tags)],
         task_id=row.task_id,
-        manager_id=row.manager_id,
+        target_session_id=row.target_session_id,
         fyi_cluster_id=row.fyi_cluster_id,
         queue_item_id=row.queue_item_id,
         delivery_count=row.delivery_count,
@@ -73,15 +73,15 @@ def new_task_event_row(
     source_session_id: str | None = None,
     tags: Sequence[EventTag] = (),
     task_id: str | None = None,
-    manager_id: str | None = None,
+    target_session_id: str | None = None,
 ) -> SqlTaskEvent:
     """
-    Build a task event row: routed when ``manager_id`` is given, else unrouted.
+    Build a task event row: routed when ``target_session_id`` is given, else unrouted.
 
     Another store adds the row to its own transaction, e.g. to record an event
     together with the change it reports.
     """
-    routed = manager_id is not None
+    routed = target_session_id is not None
     return SqlTaskEvent(
         id=event_id,
         owner_user_id=owner_user_id,
@@ -98,7 +98,7 @@ def new_task_event_row(
         ),
         state=_ROUTED if routed else _UNROUTED,
         task_id=task_id,
-        manager_id=manager_id,
+        target_session_id=target_session_id,
         delivery_count=0,
         created_at=now,
         updated_at=None,
@@ -157,9 +157,9 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         source_session_id: str | None = None,
         tags: Sequence[EventTag] = (),
         task_id: str | None = None,
-        manager_id: str | None = None,
+        target_session_id: str | None = None,
     ) -> TaskEvent:
-        """Record an event: routed when ``manager_id`` is given, else unrouted."""
+        """Record an event: routed when ``target_session_id`` is given, else unrouted."""
         now = now_epoch()
 
         def write(session: Session) -> TaskEvent:
@@ -177,7 +177,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
                 source_session_id=source_session_id,
                 tags=tags,
                 task_id=task_id,
-                manager_id=manager_id,
+                target_session_id=target_session_id,
             )
             session.add(row)
             return _to_entity(row)
@@ -242,7 +242,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         *,
         owner_user_id: str | None,
         states: Collection[str] | None = None,
-        manager_id: str | None = None,
+        target_session_id: str | None = None,
         fyi_cluster_ids: Collection[str] | None = None,
         queue_item_ids: Collection[str] | None = None,
         event_type: str | None = None,
@@ -255,8 +255,11 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             stmt = stmt.where(
                 SqlTaskEvent.state.in_([encode_task_event_state(state) for state in states])
             )
-        if manager_id is not None:
-            stmt = stmt.where(SqlTaskEvent.manager_id == manager_id)
+        if target_session_id is not None:
+            stmt = stmt.where(
+                SqlTaskEvent.target_session_id
+                == (normalize_uuid(target_session_id) or target_session_id)
+            )
         if fyi_cluster_ids is not None:
             stmt = stmt.where(SqlTaskEvent.fyi_cluster_id.in_(fyi_cluster_ids))
         if queue_item_ids is not None:
@@ -292,13 +295,14 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
         with self._session("list_task_events_waiting_for_queue_in_all_workspaces") as session:
             return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
 
-    def route_to_manager(
-        self, event_ids: Collection[str], *, owner_user_id: str | None, manager_id: str
+    def route_to_session(
+        self, event_ids: Collection[str], *, owner_user_id: str | None, session_id: str
     ) -> builtins.list[TaskEvent] | None:
-        """Route the owner's events to one manager, all or none."""
+        """Route the owner's events to one session, e.g. a manager's, all or none."""
         wanted = list(
             dict.fromkeys(normalize_uuid(event_id) or event_id for event_id in event_ids)
         )
+        target = normalize_uuid(session_id) or session_id
         now = now_epoch()
 
         def write(session: Session) -> builtins.list[TaskEvent] | None:
@@ -308,14 +312,14 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             if len(rows) != len(wanted):
                 return None
             for row in rows.values():
-                routed_here = row.state == _ROUTED and row.manager_id == manager_id
+                routed_here = row.state == _ROUTED and row.target_session_id == target
                 if row.state != _UNROUTED and not routed_here:
                     return None
             for row in rows.values():
                 if row.state == _UNROUTED:
                     row.state = _ROUTED
-                    row.manager_id = manager_id
-                    # The manager's own queue item carries it from here.
+                    row.target_session_id = target
+                    # The session's own queue item carries it from here.
                     row.queue_item_id = None
                     row.delivery_count = 0
                     row.routed_at = now
@@ -323,7 +327,7 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             return [_to_entity(rows[event_id]) for event_id in wanted]
 
         return run_write_transaction(
-            self._session_immediate, "route_task_events_to_manager", write
+            self._session_immediate, "route_task_events_to_session", write
         )
 
     def dismiss(self, event_id: str, *, owner_user_id: str | None) -> TaskEvent | None:

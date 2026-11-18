@@ -151,7 +151,7 @@ TASK_EVENT_STATE: dict[str, int] = {
     # Waiting for the broker to route it to a manager.
     "unrouted": 4,
     "routed": 6,
-    # Handled by its manager, or noise.
+    # Handled by the session it went to, or noise.
     "dismissed": 8,
     # Filed into an FYI cluster for the user.
     "fyi": 12,
@@ -177,7 +177,7 @@ SYSTEM_NOTICE_BODY_KIND: dict[str, int] = {
 
 # What a GlobalHub queue item asks its session to handle.
 AGENT_QUEUE_ITEM_KIND: dict[str, int] = {
-    # Task events packaged for the broker or a manager.
+    # Task events packaged for the broker or a session that follows their source.
     "events": 1,
     # A click on a system notice action, for the custodian.
     "notice_click": 2,
@@ -185,6 +185,8 @@ AGENT_QUEUE_ITEM_KIND: dict[str, int] = {
     "spawn_managers": 3,
     # A role session's scheduled run, e.g. the custodian's session cleanup.
     "scheduled_run": 4,
+    "worker_message": 5,
+    "source_types": 6,
 }
 
 # GlobalHub queue items: claimed by the dispatcher, sent, then done when the

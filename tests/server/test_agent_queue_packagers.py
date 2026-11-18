@@ -1,4 +1,4 @@
-"""Tests for queueing broker work and writing its notices (``agent_queue_packagers``)."""
+"""Tests for queueing GlobalHub work and writing its notices (``agent_queue_packagers``)."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from omnigent.agent_tasks.board_stores import BoardStores, open_board_stores
+from omnigent.agent_tasks.default_watchers import ensure_fallback_watcher
 from omnigent.agent_tasks.role_schedules import next_run_at
 from omnigent.agent_tasks.role_sessions import (
     RoleSessionStores,
@@ -27,16 +28,18 @@ from omnigent.agent_tasks.roles import (
     builtin_role,
 )
 from omnigent.db.db_models import workspace_scope
-from omnigent.entities import AgentQueueItem, EventTag
+from omnigent.entities import SESSION_EVENT_SOURCE, AgentQueueItem, EventTag
+from omnigent.runtime.prompt import EVENT_NOTICE_SHAPE
 from omnigent.server import agent_queue_packagers
 from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher
 from omnigent.server.agent_queue_packagers import (
     BrokerPackager,
     EventNoticeWriter,
-    ManagerPackager,
     RoleSchedulePackager,
     ScheduledRunWriter,
+    SourceTypesWriter,
     SpawnManagersWriter,
+    SubscriberPackager,
     write_notice_click,
 )
 from omnigent.server.agent_task_delivery import SendResult, SessionSendDeps
@@ -45,8 +48,9 @@ from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
 from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
 from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
+from omnigent.stores.subscription_store import sqlalchemy_store as subscription_tables
 from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
-from omnigent.stores.watch_item_store import WatchObservation
+from omnigent.stores.watch_item_store import WatchFinish, WatchObservation
 
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
@@ -54,6 +58,9 @@ PLACEMENT = GlobalHubPlacement(
     host_id="0f1e2d3c4b5a69788796a5b4c3d2e1f0", workspace="/Users/alice/globalhub"
 )
 ROUTE_PROMPT = "[System: route these events to managers]\n"
+PULL_REQUEST = "github.pull_request"
+TICKET = "jira.issue"
+PR = "https://github.com/example-org/repo/pull/12"
 # Events made in one second list by id, so ids follow creation order.
 _ids = (f"{n:032x}" for n in itertools.count(1))
 
@@ -128,6 +135,40 @@ def _manager(
         uuid.uuid4().hex, owner_user_id=ALICE, title=title, conversation_id=session.id
     )
     return manager.id, session.id
+
+
+def _follow(
+    board: BoardStores,
+    session_id: str,
+    source_type: str,
+    source_key: str,
+    note: str | None = None,
+) -> None:
+    board.subscriptions.subscribe(
+        owner_user_id=ALICE,
+        session_id=session_id,
+        source_type=source_type,
+        source_key=source_key,
+        note=note,
+    )
+
+
+def _queue_item(kind: str, payload: dict[str, Any]) -> AgentQueueItem:
+    return AgentQueueItem(
+        id=next(_ids),
+        owner_user_id=ALICE,
+        target_session_id=next(_ids),
+        kind=kind,
+        state="sending",
+        seq=1,
+        created_at=0,
+        payload=payload,
+    )
+
+
+def _state(board: BoardStores, event_id: str) -> str | None:
+    event = board.events.get(event_id, owner_user_id=ALICE)
+    return event.state if event is not None else None
 
 
 async def test_waiting_events_become_items_for_each_users_broker(
@@ -211,7 +252,7 @@ async def test_the_notice_carries_the_items_waiting_events_in_tag_clusters(
         event_ids=[storage, storage_pr, untagged, routed, about_deleted_session, deletion_report],
     )
     assert item is not None
-    board.events.route_to_manager([routed], owner_user_id=ALICE, manager_id=uuid.uuid4().hex)
+    board.events.route_to_session([routed], owner_user_id=ALICE, session_id=uuid.uuid4().hex)
     writer = EventNoticeWriter(board=board, conversations=sessions.conversation_store)
 
     notice = json.loads(writer.write(item) or "{}")
@@ -227,29 +268,72 @@ async def test_the_notice_carries_the_items_waiting_events_in_tag_clusters(
     dismissed = board.events.get(about_deleted_session, owner_user_id=ALICE)
     assert dismissed is not None and dismissed.state == "dismissed"
     for event_id in (storage, storage_pr, untagged, deletion_report):
-        board.events.route_to_manager([event_id], owner_user_id=ALICE, manager_id=uuid.uuid4().hex)
+        board.events.route_to_session([event_id], owner_user_id=ALICE, session_id=uuid.uuid4().hex)
     assert writer.write(item) is None
 
 
-async def test_routed_events_become_items_for_their_managers_session(
+async def test_routed_events_become_items_for_the_managers_session_they_went_to(
     board: BoardStores, sessions: RoleSessionStores, send_deps: SessionSendDeps
 ) -> None:
-    manager_id, manager_session = _manager(board, sessions)
-    orphan_id, _ = _manager(board, sessions, "Former manager", archived=True)
-    routed = [_event(board, manager_id=manager_id) for _ in range(2)]
-    stranded = _event(board, manager_id=orphan_id)
-    packager = ManagerPackager(
-        board=board, conversations=sessions.conversation_store, send_deps=send_deps
-    )
+    _, manager_session = _manager(board, sessions)
+    _, archived_session = _manager(board, sessions, "Former manager", archived=True)
+    _, deleted_session = _manager(board, sessions, "Manager without a session")
+    await sessions.conversation_store.delete_conversation(deleted_session)
+    routed = [_event(board, target_session_id=manager_session) for _ in range(2)]
+    stranded = [
+        _event(board, target_session_id=archived_session),
+        _event(board, target_session_id=deleted_session),
+    ]
+    packager = SubscriberPackager(board=board, sessions=sessions, send_deps=send_deps)
 
     await packager.package(int(time.time()) + 31)
 
     [item] = board.queue.list(owner_user_id=ALICE)
     carried = board.events.list(owner_user_id=ALICE, queue_item_ids=[item.id])
     assert (item.target_session_id, [event.id for event in carried]) == (manager_session, routed)
-    # The archived session cannot take the event, so it waits.
-    stranded_event = board.events.get(stranded, owner_user_id=ALICE)
-    assert stranded_event is not None and stranded_event.queue_item_id is None
+    waiting = [board.events.get(event_id, owner_user_id=ALICE) for event_id in stranded]
+    assert [(event.state, event.queue_item_id) for event in waiting if event] == [
+        ("routed", None),
+        ("routed", None),
+    ]
+
+
+async def test_another_session_gets_each_event_once_and_a_gone_one_stops_following(
+    board: BoardStores, sessions: RoleSessionStores, send_deps: SessionSendDeps
+) -> None:
+    conversations = sessions.conversation_store
+    follower = conversations.create_conversation(title="Fix S3").id
+    archived = conversations.create_conversation(title="Old work").id
+    conversations.update_conversation(archived, archived=True)
+    gone = uuid.uuid4().hex
+    for session_id in (archived, gone):
+        _follow(board, session_id, PULL_REQUEST, PR)
+    delivered = _event(board, target_session_id=follower)
+    sent = board.queue.enqueue(
+        uuid.uuid4().hex,
+        owner_user_id=ALICE,
+        target_session_id=follower,
+        kind="events",
+        event_ids=[delivered],
+    )
+    assert sent is not None
+    [claimed] = board.queue.claim_due_all_workspaces(now=int(time.time()))
+    board.queue.mark_sent(claimed.id, owner_user_id=ALICE)
+    board.queue.mark_done(claimed.id, owner_user_id=ALICE)
+    fresh = _event(board, target_session_id=follower)
+    stranded = [_event(board, target_session_id=archived), _event(board, target_session_id=gone)]
+    packager = SubscriberPackager(board=board, sessions=sessions, send_deps=send_deps)
+
+    await packager.package(int(time.time()) + 31)
+
+    [item] = board.queue.list(owner_user_id=ALICE, states=["queued"])
+    carried = board.events.list(owner_user_id=ALICE, queue_item_ids=[item.id])
+    assert (item.target_session_id, [event.id for event in carried]) == (follower, [fresh])
+    assert [_state(board, event_id) for event_id in (delivered, *stranded)] == ["dismissed"] * 3
+    assert [
+        board.subscriptions.list_for_session(session_id, owner_user_id=ALICE)
+        for session_id in (archived, gone)
+    ] == [[], []]
 
 
 async def test_a_broker_whose_turn_lost_its_runner_gets_its_waiting_events(
@@ -270,19 +354,10 @@ async def test_a_broker_whose_turn_lost_its_runner_gets_its_waiting_events(
     assert (item.target_session_id, [event.id for event in carried]) == (broker, [comment])
 
 
-async def test_a_manager_notice_lists_its_events_by_id_and_ends_with_the_roster(
+async def test_a_manager_notice_lists_its_events_by_id_with_their_source_and_reporter(
     board: BoardStores, sessions: RoleSessionStores
 ) -> None:
-    manager_id, manager_session = _manager(board, sessions)
-    task_id = next(_ids)
-    board.tasks.create(task_id, owner_user_id=ALICE, title="S3 retries", manager_id=manager_id)
-    board.tasks.create(
-        next(_ids),
-        owner_user_id=ALICE,
-        title="Old work",
-        manager_id=manager_id,
-        state="archived",
-    )
+    _, manager_session = _manager(board, sessions)
     live_session = sessions.conversation_store.create_conversation(title="Fix S3").id
     gone_session = uuid.uuid4().hex
 
@@ -290,13 +365,30 @@ async def test_a_manager_notice_lists_its_events_by_id_and_ends_with_the_roster(
         return _event(
             board,
             event_type=event_type,
-            manager_id=manager_id,
+            target_session_id=manager_session,
+            source=SESSION_EVENT_SOURCE,
+            source_key=session_id,
             source_session_id=session_id,
             payload={"session_title": title, "session_id": session_id},
         )
 
-    comment = _event(board, manager_id=manager_id, task_id=task_id, title="Review comment")
-    loose = _event(board, manager_id=manager_id, title="Loose comment")
+    watched = _event(
+        board,
+        target_session_id=manager_session,
+        title="Review comment",
+        source=PULL_REQUEST,
+        source_key=PR,
+        payload={"watcher": {"id": "w1", "name": "PR watcher"}},
+    )
+    reported = _event(
+        board,
+        target_session_id=manager_session,
+        title="CI failed",
+        source=PULL_REQUEST,
+        source_key=PR,
+        source_session_id=live_session,
+    )
+    loose = _event(board, target_session_id=manager_session, title="Loose comment")
     turn = session_event("session.turn.finished", live_session, "Fix S3")
     stale_turn = session_event("session.turn.finished", gone_session, "Old work")
     deleted = session_event("session.deleted", gone_session, "Old work")
@@ -305,7 +397,7 @@ async def test_a_manager_notice_lists_its_events_by_id_and_ends_with_the_roster(
         owner_user_id=ALICE,
         target_session_id=manager_session,
         kind="events",
-        event_ids=[comment, loose, turn, stale_turn, deleted],
+        event_ids=[watched, reported, loose, turn, stale_turn, deleted],
     )
     assert item is not None
 
@@ -313,11 +405,12 @@ async def test_a_manager_notice_lists_its_events_by_id_and_ends_with_the_roster(
 
     assert notice == "\n".join(
         [
-            f"[System: 4 event(s) routed to 1 tasks: {task_id} — triage or act]",
-            "[3 manager-routed event(s) have no task]",
-            f"- [task:{task_id}] [event:{comment}] github.pr.comment: 'Review comment' (routed)",
-            f"- [manager-routed; task unassigned] [event:{loose}] github.pr.comment: "
-            "'Loose comment' (routed)",
+            "[System: 5 event(s) for you — triage or act]",
+            f"- [event:{watched}] github.pr.comment {PULL_REQUEST} {PR}: 'Review comment' "
+            "(reported by the watcher 'PR watcher')",
+            f"- [event:{reported}] github.pr.comment {PULL_REQUEST} {PR}: 'CI failed' "
+            f"(reported by session {live_session})",
+            f"- [event:{loose}] github.pr.comment: 'Loose comment'",
             f"- [event:{turn}] session.turn.finished: Session 'Fix S3' finished a turn",
             f"  Session ID: {live_session}",
             "  Read the recent session transcript to see what was done. "
@@ -328,8 +421,82 @@ async def test_a_manager_notice_lists_its_events_by_id_and_ends_with_the_roster(
             "Its task may already be finished.",
         ]
     )
-    dismissed = board.events.get(stale_turn, owner_user_id=ALICE)
-    assert dismissed is not None and dismissed.state == "dismissed"
+    assert _state(board, stale_turn) == "dismissed"
+
+
+async def test_another_session_gets_one_event_notice_for_the_sources_it_follows(
+    board: BoardStores, sessions: RoleSessionStores
+) -> None:
+    conversations = sessions.conversation_store
+    follower = conversations.create_conversation(title="Fix S3").id
+    worker = conversations.create_conversation(title="Review PR 12").id
+    comment = _event(
+        board,
+        target_session_id=follower,
+        title="alice commented: please add a test",
+        source=PULL_REQUEST,
+        source_key=PR,
+        payload={"watcher": {"id": "w1", "name": "PR watcher"}},
+    )
+    turn = _event(
+        board,
+        event_type="session.turn.finished",
+        title="Session turn finished: Review PR 12",
+        target_session_id=follower,
+        source=SESSION_EVENT_SOURCE,
+        source_key=worker,
+        source_session_id=worker,
+        payload={"session_title": "Review PR 12", "session_id": worker},
+    )
+    item = board.queue.enqueue(
+        uuid.uuid4().hex,
+        owner_user_id=ALICE,
+        target_session_id=follower,
+        kind="events",
+        event_ids=[comment, turn],
+    )
+    assert item is not None
+
+    notice = EventNoticeWriter(board=board, conversations=conversations).write(item)
+
+    assert notice == "\n".join(
+        [
+            EVENT_NOTICE_SHAPE.replace("<N>", "2"),
+            f"- github.pr.comment {PULL_REQUEST} {PR}: 'alice commented: please add a test' "
+            "(reported by the watcher 'PR watcher')",
+            f"- Session turn finished: Review PR 12 (session 'Review PR 12', id {worker})",
+        ]
+    )
+
+
+async def test_the_broker_gets_an_event_notice_for_a_source_it_follows(
+    board: BoardStores, sessions: RoleSessionStores
+) -> None:
+    broker = await _broker(sessions)
+    comment = _event(
+        board,
+        target_session_id=broker,
+        title="alice commented: please add a test",
+        source=PULL_REQUEST,
+        source_key=PR,
+    )
+    item = board.queue.enqueue(
+        uuid.uuid4().hex,
+        owner_user_id=ALICE,
+        target_session_id=broker,
+        kind="events",
+        event_ids=[comment],
+    )
+    assert item is not None
+
+    notice = EventNoticeWriter(board=board, conversations=sessions.conversation_store).write(item)
+
+    assert notice == "\n".join(
+        [
+            EVENT_NOTICE_SHAPE.replace("<N>", "1"),
+            f"- github.pr.comment {PULL_REQUEST} {PR}: 'alice commented: please add a test'",
+        ]
+    )
 
 
 async def test_a_due_cleanup_queues_one_message_for_the_custodian_and_skips_missed_runs(
@@ -420,7 +587,7 @@ async def test_a_watcher_run_lists_its_items_and_drops_items_done_long_ago(
     watcher = board.watchers.create(uuid.uuid4().hex, owner_user_id=ALICE, name="PR watcher")
     for n in range(3):
         seen = WatchObservation(
-            source="github",
+            source=PULL_REQUEST,
             source_key=f"https://example.com/pr/{n}",
             offsets={"state": "open"},
             title=f"PR {n}",
@@ -428,9 +595,9 @@ async def test_a_watcher_run_lists_its_items_and_drops_items_done_long_ago(
         # 40 days ago, an hour apart, so the run lists them in this order.
         board.watch_items.observe(watcher, [seen], session_id=None, now=now - 40 * day + n * 3_600)
     board.watch_items.finish(
-        watcher.id,
-        [("github", "https://example.com/pr/0")],
-        owner_user_id=ALICE,
+        watcher,
+        [WatchFinish(source=PULL_REQUEST, source_key="https://example.com/pr/0")],
+        session_id=None,
         now=now - 31 * day,
     )
     board.role_schedules.save(
@@ -448,8 +615,9 @@ async def test_a_watcher_run_lists_its_items_and_drops_items_done_long_ago(
     )
     assert everything == 2
     pr_lines = [
-        '- github https://example.com/pr/1 "PR 1": state=open (checked 2026-12-06 09:00 UTC)',
-        '- github https://example.com/pr/2 "PR 2": state=open (checked 2026-12-06 10:00 UTC)',
+        f'- {PULL_REQUEST} https://example.com/pr/{n} "PR {n}": state=open '
+        f"(checked 2026-12-06 {hour} UTC)"
+        for n, hour in ((1, "09:00"), (2, "10:00"))
     ]
     assert text.splitlines()[-3:] == [
         "[Tracked items] (the least recently checked first)",
@@ -459,6 +627,211 @@ async def test_a_watcher_run_lists_its_items_and_drops_items_done_long_ago(
         pr_lines[0],
         '… and 1 more; page through them with watch_items action "list".',
     ]
+
+
+def test_a_watcher_run_lists_the_followed_sources_new_to_it_and_done_ones_due_a_check(
+    board: BoardStores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = 1_800_000_000
+    day = 86_400
+    monkeypatch.setattr(subscription_tables, "now_epoch", itertools.count(now - day).__next__)
+    monkeypatch.setattr(agent_queue_packagers, "now_epoch", lambda: now)
+    watcher = board.watchers.create(uuid.uuid4().hex, owner_user_id=ALICE, name="PR watcher")
+    ticket_watcher = board.watchers.create(
+        uuid.uuid4().hex, owner_user_id=ALICE, name="Ticket watcher"
+    )
+    subscriptions = board.subscriptions
+    subscriptions.assign_type(owner_user_id=ALICE, source_type=PULL_REQUEST, watcher_id=watcher.id)
+    subscriptions.assign_type(
+        owner_user_id=ALICE, source_type=TICKET, watcher_id=ticket_watcher.id
+    )
+    untracked, active, recently_done, done_long_ago = (
+        f"https://github.com/example-org/repo/pull/{n}" for n in range(1, 5)
+    )
+    for source_key in (untracked, active, recently_done, done_long_ago):
+        _follow(board, uuid.uuid4().hex, PULL_REQUEST, source_key)
+    _follow(board, uuid.uuid4().hex, TICKET, "PROJ-12")
+    private = "Private repository: read it with the GitHub MCP server of the work account."
+    _follow(board, uuid.uuid4().hex, PULL_REQUEST, untracked, note="Opened by\n  this session")
+    _follow(board, uuid.uuid4().hex, PULL_REQUEST, untracked, note="Reviewing it for the release")
+    _follow(board, uuid.uuid4().hex, PULL_REQUEST, active, note=private)
+
+    def observe(source_key: str, at: int) -> None:
+        seen = WatchObservation(
+            source=PULL_REQUEST, source_key=source_key, offsets={"state": "open"}
+        )
+        board.watch_items.observe(watcher, [seen], session_id=None, now=at)
+
+    def finish(source_key: str, at: int) -> None:
+        done = WatchFinish(source=PULL_REQUEST, source_key=source_key)
+        board.watch_items.finish(watcher, [done], session_id=None, now=at)
+
+    observe(active, now - 3_600)
+    observe(recently_done, now - 3_600)
+    finish(recently_done, now - 1_800)
+    observe(done_long_ago, now - 2 * day)
+    finish(done_long_ago, now - 2 * day)
+
+    text = ScheduledRunWriter(board=board).write(
+        _queue_item("scheduled_run", {"role_key": watcher.role_key})
+    )
+
+    assert (text or "").split("\n\n")[1:] == [
+        "\n".join(
+            [
+                "[Tracked items] (the least recently checked first)",
+                f"- {PULL_REQUEST} {active}: state=open (checked 2027-01-15 07:00 UTC)",
+                f"  Note: {private}",
+            ]
+        ),
+        "\n".join(
+            [
+                "[Followed sources] (sessions follow these)",
+                f"- {PULL_REQUEST} {untracked}: not tracked yet; observe it with this source "
+                "type to start",
+                "  Note: Opened by this session",
+                f"- {PULL_REQUEST} {done_long_ago}: done since 2027-01-13; observe it to see "
+                "whether it reopened",
+            ]
+        ),
+    ]
+
+
+def test_the_fallback_watcher_run_checks_the_followed_sources_that_no_watcher_covers(
+    board: BoardStores,
+) -> None:
+    fallback = ensure_fallback_watcher(
+        board.watchers, board.role_schedules, owner_user_id=ALICE, now=1_800_000_000
+    )
+    run = _queue_item("scheduled_run", {"role_key": fallback.role_key})
+    writer = ScheduledRunWriter(board=board)
+    without_sources = writer.write(run)
+    watcher = board.watchers.create(uuid.uuid4().hex, owner_user_id=ALICE, name="PR watcher")
+    board.subscriptions.assign_type(
+        owner_user_id=ALICE, source_type=PULL_REQUEST, watcher_id=watcher.id
+    )
+    _follow(board, uuid.uuid4().hex, PULL_REQUEST, PR)
+    _follow(board, uuid.uuid4().hex, SESSION_EVENT_SOURCE, uuid.uuid4().hex)
+    covered_or_own = writer.write(run)
+    _follow(board, uuid.uuid4().hex, TICKET, "PROJ-12")
+
+    text = writer.write(run)
+
+    assert (without_sources, covered_or_own) == (None, None)
+    assert (text or "").split("\n\n")[-1] == "\n".join(
+        [
+            "[Followed sources] (sessions follow these)",
+            f"- {TICKET} PROJ-12: not tracked yet; observe it with this source type to start",
+        ]
+    )
+
+
+async def test_the_fallback_watcher_runs_only_while_a_followed_source_has_no_watcher(
+    board: BoardStores, sessions: RoleSessionStores
+) -> None:
+    now = 1_800_000_000
+    fallback = ensure_fallback_watcher(
+        board.watchers, board.role_schedules, owner_user_id=ALICE, now=now
+    )
+    board.role_schedules.save(
+        fallback.role_key,
+        owner_user_id=ALICE,
+        rrule="FREQ=HOURLY;BYMINUTE=0",
+        timezone="UTC",
+        next_run_at=now,
+    )
+    packager = RoleSchedulePackager(board=board, sessions=sessions)
+
+    await packager.package(now)
+    without_sources = board.queue.list(owner_user_id=ALICE)
+    _follow(board, uuid.uuid4().hex, TICKET, "PROJ-12")
+    await packager.package(now + 3_600)
+
+    recorded = board.watchers.get(fallback.id, owner_user_id=ALICE)
+    assert without_sources == []
+    assert recorded is not None and recorded.conversation_id is not None
+    assert [
+        (item.payload, item.target_session_id) for item in board.queue.list(owner_user_id=ALICE)
+    ] == [({"role_key": fallback.role_key}, recorded.conversation_id)]
+
+
+async def test_a_watcher_run_ends_the_subscriptions_to_sources_done_for_a_week(
+    board: BoardStores, sessions: RoleSessionStores
+) -> None:
+    day = 86_400
+    now = int(time.time()) + 30 * day
+    watcher = board.watchers.create(uuid.uuid4().hex, owner_user_id=ALICE, name="PR watcher")
+    follower = uuid.uuid4().hex
+    done_for_a_week, done_lately = PR, "https://github.com/example-org/repo/pull/13"
+    followed_after_done = "https://github.com/example-org/repo/pull/14"
+    for source_key, done_at in (
+        (done_for_a_week, now - 8 * day),
+        (done_lately, now - 6 * day),
+        (followed_after_done, now - 31 * day),
+    ):
+        _follow(board, follower, PULL_REQUEST, source_key)
+        seen = WatchObservation(
+            source=PULL_REQUEST, source_key=source_key, offsets={"state": "open"}
+        )
+        board.watch_items.observe(watcher, [seen], session_id=None, now=done_at)
+        done = WatchFinish(source=PULL_REQUEST, source_key=source_key)
+        board.watch_items.finish(watcher, [done], session_id=None, now=done_at)
+    board.role_schedules.save(
+        watcher.role_key, owner_user_id=ALICE, rrule="FREQ=HOURLY", timezone="UTC", next_run_at=now
+    )
+
+    await RoleSchedulePackager(board=board, sessions=sessions).package(now)
+
+    followed = board.subscriptions.list_for_session(follower, owner_user_id=ALICE)
+    assert sorted(subscription.source_key for subscription in followed) == [
+        done_lately,
+        followed_after_done,
+    ]
+
+
+def test_the_custodian_hears_of_the_source_types_that_no_watcher_checks(
+    board: BoardStores,
+) -> None:
+    run = _queue_item("scheduled_run", {"role_key": CUSTODIAN_ROLE_KEY})
+    request = _queue_item("source_types", {})
+    run_writer, types_writer = ScheduledRunWriter(board=board), SourceTypesWriter(board=board)
+    plain_run, nothing_pending = run_writer.write(run), types_writer.write(request)
+    ensure_fallback_watcher(
+        board.watchers, board.role_schedules, owner_user_id=ALICE, now=1_800_000_000
+    )
+    ticket_watcher = board.watchers.create(
+        uuid.uuid4().hex, owner_user_id=ALICE, name="Ticket watcher", description="Jira tickets"
+    )
+    board.subscriptions.assign_type(
+        owner_user_id=ALICE, source_type=TICKET, watcher_id=ticket_watcher.id
+    )
+    for source_type, source_key in (
+        (PULL_REQUEST, PR),
+        (PULL_REQUEST, PR),
+        (TICKET, "PROJ-12"),
+        (SESSION_EVENT_SOURCE, uuid.uuid4().hex),
+    ):
+        _follow(board, uuid.uuid4().hex, source_type, source_key)
+
+    pending = types_writer.write(request)
+    run_text = run_writer.write(run)
+
+    assert (plain_run or "").startswith("[System: session cleanup]\n")
+    assert nothing_pending is None
+    assert pending == "\n".join(
+        [
+            "[System: assign source types to watchers]",
+            "Sessions follow sources of the types below, and no watcher checks them yet. Follow "
+            '"Assigning source types" in the Custodian manual: assign each type to the watcher '
+            "whose manual covers it with source_watchers, and leave a type unassigned when no "
+            "manual covers it.",
+            "Types without a watcher:",
+            f"- {PULL_REQUEST}: 2 subscription(s), e.g. {PR}",
+            "Watchers (read a manual with pmv2_read path /v1/agent-tasks/watchers/<id>):",
+            f"- {ticket_watcher.id} Ticket watcher: Jira tickets",
+        ]
+    )
+    assert run_text == f"{plain_run}\n\n{pending}"
 
 
 async def test_the_schedule_of_a_deleted_watcher_goes_away_without_a_run(

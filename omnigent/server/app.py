@@ -36,6 +36,7 @@ from omnigent._platform import resolve_repo_symlink
 from omnigent.agent_tasks.board_stores import open_board_stores
 from omnigent.agent_tasks.embeddings import DatabricksEmbedder, load_task_embedding_settings
 from omnigent.agent_tasks.role_sessions import RoleSessionStores
+from omnigent.agent_tasks.source_assignment import SOURCE_TYPES_KIND
 from omnigent.agent_tasks.task_search_index import TaskSearchIndex
 from omnigent.agent_tasks.worker_turns import ConversationSessions
 from omnigent.db.db_models import InvalidUuidError
@@ -95,10 +96,11 @@ from omnigent.server.agent_queue_dispatcher import WORKER_MESSAGE_KIND, AgentQue
 from omnigent.server.agent_queue_packagers import (
     BrokerPackager,
     EventNoticeWriter,
-    ManagerPackager,
     RoleSchedulePackager,
     ScheduledRunWriter,
+    SourceTypesWriter,
     SpawnManagersWriter,
+    SubscriberPackager,
     write_notice_click,
     write_worker_message,
 )
@@ -4326,7 +4328,13 @@ def create_app(
             tags=["agent-tasks"],
         )
         app.include_router(
-            create_agent_task_subscriptions_router(board_stores, auth_provider),
+            create_agent_task_subscriptions_router(
+                board_stores,
+                conversation_store,
+                sessions=role_session_stores,
+                permission_store=permission_store,
+                auth_provider=auth_provider,
+            ),
             prefix="/v1",
             tags=["agent-tasks"],
         )
@@ -4391,13 +4399,14 @@ def create_app(
                     "spawn_managers": SpawnManagersWriter(board=board_stores).write,
                     "scheduled_run": ScheduledRunWriter(board=board_stores).write,
                     WORKER_MESSAGE_KIND: write_worker_message,
+                    SOURCE_TYPES_KIND: SourceTypesWriter(board=board_stores).write,
                 },
                 packagers=[
                     BrokerPackager(
                         board=board_stores, sessions=role_session_stores, send_deps=send_deps
                     ),
-                    ManagerPackager(
-                        board=board_stores, conversations=conversation_store, send_deps=send_deps
+                    SubscriberPackager(
+                        board=board_stores, sessions=role_session_stores, send_deps=send_deps
                     ),
                     RoleSchedulePackager(board=board_stores, sessions=role_session_stores),
                 ],

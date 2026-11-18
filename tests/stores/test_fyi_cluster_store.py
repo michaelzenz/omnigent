@@ -11,7 +11,7 @@ from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEven
 
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
-MANAGER = f"{100:032x}"
+MANAGER_SESSION = f"{100:032x}"
 # Creation order ties on the one-second created_at, then falls back to id.
 _ids = (f"{n:032x}" for n in itertools.count(1))
 
@@ -27,7 +27,7 @@ def events(db_uri: str) -> SqlAlchemyTaskEventStore:
 
 
 def _event(
-    events: SqlAlchemyTaskEventStore, *, owner: str = ALICE, manager_id: str | None = None
+    events: SqlAlchemyTaskEventStore, *, owner: str = ALICE, target_session_id: str | None = None
 ) -> str:
     event_id = next(_ids)
     events.create(
@@ -35,7 +35,7 @@ def _event(
         owner_user_id=owner,
         event_type="slack.message",
         title="Channel chatter",
-        manager_id=manager_id,
+        target_session_id=target_session_id,
     )
     return event_id
 
@@ -49,7 +49,7 @@ def _state(events: SqlAlchemyTaskEventStore, event_id: str) -> tuple[str, str | 
 def test_a_new_cluster_files_waiting_and_routed_events(
     clusters: SqlAlchemyFyiClusterStore, events: SqlAlchemyTaskEventStore
 ) -> None:
-    unrouted, routed = _event(events), _event(events, manager_id=MANAGER)
+    unrouted, routed = _event(events), _event(events, target_session_id=MANAGER_SESSION)
     cluster_id = next(_ids)
 
     cluster = clusters.create(

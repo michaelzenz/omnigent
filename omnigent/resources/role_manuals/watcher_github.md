@@ -1,5 +1,6 @@
 Watch GitHub for me: review requests to me or my teams, news on my own pull
-requests, and the pull requests that my live tasks follow.
+requests, and the pull requests that sessions follow. This watcher covers the
+source type `github.pull_request`.
 
 1. Find who I am through the GitHub MCP server: the login of the signed-in
    user.
@@ -15,22 +16,21 @@ requests, and the pull requests that my live tasks follow.
    Observe each with the offsets `state`, `checks` (the result and the head
    commit, e.g. `"failure@abc123"`), `review` and `comments` (the id of that
    newest comment).
-4. Followed pull requests: read what my live tasks follow with
-   `pmv2_read(path="/v1/agent-tasks/subscriptions")`, and keep the pull
-   request URLs among the `source_key` values. Observe each with the offsets
-   of step 3.
+4. Followed pull requests: the pull requests in `[Followed sources]`. Observe
+   each new one with the offsets of step 3. For a done one, observe only its
+   `state` offset, to see whether it was reopened.
 5. Check the items that you already track: page through `watch_items` with
    `list`. For each item that steps 2 to 4 did not find, read its pull
    request: mark the item `done` when the pull request is merged or closed, or
-   when the item was a review request that no longer asks me or my teams. Else
-   observe it again.
-6. Send all pull requests in one `observe` call, with `source: "github"` and
-   `source_key` = the canonical URL. Observe a pull request that is in more
-   than one group once, with all of its offsets. For a failed check or a new
-   comment, write a one-line `summary`, and put the names of the failing
-   checks or the text of the comment in `details`. On your first run, when
-   you track no items yet, do not set `announce`: what is there already is
-   not news.
+   when the item was a review request that no longer asks me or my teams, with
+   the reason as `summary`, e.g. `"Merged"`. Else observe it again.
+6. Send all pull requests in one `observe` call, with `source:
+   "github.pull_request"` and `source_key` = the canonical URL. Observe a pull
+   request that is in more than one group once, with all of its offsets. For a
+   failed check or a new comment, write a one-line `summary` that names who
+   made the change, and put the names of the failing checks or the text of the
+   comment in `details`. On your first run, when you track no items yet, do
+   not set `announce`: what is there already is not news.
 
 If you do not have access to the GitHub MCP server, skip this run: end the turn
 with one line that says so.

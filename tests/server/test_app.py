@@ -1680,7 +1680,10 @@ def test_ensure_default_agents_includes_antigravity(seed_stores: _SeedStores) ->
     ("name", "board_tool"),
     [
         ("onih-pmv2", "pmv2_api"),
+        ("onih-pmv2", "event_subscriptions"),
         ("onih-custodian", "system_notice"),
+        ("onih-custodian", "pmv2_read"),
+        ("onih-custodian", "source_watchers"),
         ("onih-watcher", "watch_items"),
     ],
 )

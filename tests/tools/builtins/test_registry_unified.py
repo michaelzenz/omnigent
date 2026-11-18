@@ -132,6 +132,7 @@ def test_builtin_names_size_matches_registry() -> None:
                 "pmv2_read",
                 "system_notice",
                 "watch_items",
+                "source_watchers",
                 # Hindsight long-term memory tools (optional `hindsight`
                 # extra; factories probe for hindsight-client).
                 "hindsight_retain",
@@ -167,6 +168,7 @@ def test_builtin_names_size_matches_registry() -> None:
                 "browser_screenshot",
                 "ui_open_file",
                 "ui_stamp_folders",
+                "event_subscriptions",
             }
         )
         == BUILTIN_NAMES

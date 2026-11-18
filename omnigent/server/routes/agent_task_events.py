@@ -25,7 +25,13 @@ from omnigent.server.schemas import (
     RouteAgentTaskEventsRequest,
 )
 from omnigent.stores import ConversationStore
-from omnigent.stores.task_subscription_store import SourceKeyError
+from omnigent.stores.subscription_store import (
+    SourceError,
+    is_reserved_source_type,
+    normalize_source_key,
+    normalize_source_type,
+)
+from omnigent.util.uuid import normalize_uuid
 
 # Session events come only from the server's own session hooks.
 _SESSION_EVENT_PREFIX = "session."
@@ -41,7 +47,8 @@ def create_agent_task_events_router(
     :param board: The board's events, tasks, managers, workers and subscriptions.
     :param auth_provider: Identifies the caller; ``None`` is single-user mode.
     :param conversation_store: Confirms that a session event's session still
-        exists before it becomes a worker; ``None`` skips the check.
+        exists before it becomes a worker, and that a manager's session can
+        take events; ``None`` skips the checks.
     :returns: A configured :class:`APIRouter`.
     """
     router = APIRouter()
@@ -55,40 +62,57 @@ def create_agent_task_events_router(
     ) -> AgentTaskEventResponse:
         """Record an event on the caller's board.
 
-        Each live task that follows the event's source key gets a copy through
-        its manager, and the response is the first copy; without such a task,
-        the broker routes the event. A report that names its source and source
-        key is recorded once.
+        Each session that follows the event's source key gets a copy, except
+        the session the event came from, and the response is the first copy.
+        When only that session follows the key, the event is recorded as
+        handled. When no session follows the key, the broker routes the event.
+        A report that names its source type and source key is recorded once.
         """
         user_id = require_user(request, auth_provider)
-        if (
-            body.event_type.startswith(_SESSION_EVENT_PREFIX)
-            or body.source == SESSION_EVENT_SOURCE
-        ):
+        if body.event_type.startswith(_SESSION_EVENT_PREFIX):
             raise OmnigentError(
                 "session events come only from the server's session hooks",
                 code=ErrorCode.INVALID_INPUT,
             )
+        try:
+            source = normalize_source_type(body.source) if body.source is not None else None
+            source_key = (
+                normalize_source_key(body.source_key) if body.source_key is not None else None
+            )
+        except SourceError as exc:
+            raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
+        if source is not None and is_reserved_source_type(source):
+            raise OmnigentError(
+                f"the source type {source!r} is the server's own", code=ErrorCode.INVALID_INPUT
+            )
 
         def create() -> TaskEvent:
-            if body.source is not None and body.source_key is not None:
+            if source is not None and source_key is not None:
                 earlier = events.get_by_source(
                     owner_user_id=user_id,
                     event_type=body.event_type,
-                    source=body.source,
-                    source_key=body.source_key,
+                    source=source,
+                    source_key=source_key,
                     source_offset=body.source_offset,
                 )
                 if earlier is not None:
                     return earlier
             followers = (
-                subscriptions.followers(
-                    owner_user_id=user_id, source=body.source, source_key=body.source_key
-                )
-                if body.source_key is not None
+                subscriptions.subscribers(owner_user_id=user_id, source_key=source_key)
+                if source_key is not None
                 else []
             )
-            targets = [(follower.task_id, follower.manager_id) for follower in followers]
+            reporter = (
+                normalize_uuid(body.source_session_id) or body.source_session_id
+                if body.source_session_id is not None
+                else None
+            )
+            targets: list[str | None] = [
+                follower for follower in followers if follower != reporter
+            ]
+            own_report = bool(followers) and not targets
+            if own_report:
+                targets = [reporter]
             created = [
                 events.create(
                     uuid.uuid4().hex,
@@ -96,16 +120,17 @@ def create_agent_task_events_router(
                     event_type=body.event_type,
                     title=body.title,
                     payload=body.payload,
-                    source=body.source,
-                    source_key=body.source_key,
+                    source=source,
+                    source_key=source_key,
                     source_offset=body.source_offset,
                     source_session_id=body.source_session_id,
                     tags=[EventTag(tag_type=tag.tag_type, tag=tag.tag) for tag in body.tags],
-                    task_id=task_id,
-                    manager_id=manager_id,
+                    target_session_id=target,
                 )
-                for task_id, manager_id in targets or [(None, None)]
+                for target in targets or [None]
             ]
+            if own_report:
+                return events.dismiss(created[0].id, owner_user_id=user_id) or created[0]
             return created[0]
 
         return task_event_response(await asyncio.to_thread(create))
@@ -114,30 +139,44 @@ def create_agent_task_events_router(
     async def route_events_to_manager(
         request: Request, body: RouteAgentTaskEventsRequest
     ) -> AgentTaskEventList:
-        """Route events that wait for the broker to one of the caller's managers.
+        """Route events that wait for the broker to the session of one of the caller's managers.
 
         Either every event is routed or none is. Events already routed to that
-        manager are left as they are, so a retry is safe.
+        manager are left as they are, so a retry is safe. A manager whose
+        session is gone or archived takes no events. The manager does not
+        follow the events' sources: a later event about a source that no
+        session follows comes to the broker again.
         """
         user_id = require_user(request, auth_provider)
 
         def route() -> list[TaskEvent]:
-            if managers.get(body.manager_id, owner_user_id=user_id) is None:
+            manager = managers.get(body.manager_id, owner_user_id=user_id)
+            if manager is None:
                 raise OmnigentError("manager not found", code=ErrorCode.NOT_FOUND)
+            session_id = manager.conversation_id
+            if session_id is None:
+                raise OmnigentError("the manager has no session yet", code=ErrorCode.CONFLICT)
+            if conversation_store is not None:
+                session = conversation_store.get_conversation(session_id)
+                if session is None or session.archived:
+                    raise OmnigentError(
+                        "the manager's session is gone; route to another manager",
+                        code=ErrorCode.CONFLICT,
+                    )
             for event_id in body.event_ids:
                 event = events.get(event_id, owner_user_id=user_id)
                 if event is None:
                     raise OmnigentError(
                         f"task event {event_id} not found", code=ErrorCode.NOT_FOUND
                     )
-                routed_here = event.state == "routed" and event.manager_id == body.manager_id
+                routed_here = event.state == "routed" and event.target_session_id == session_id
                 if event.state != "unrouted" and not routed_here:
                     raise OmnigentError(
                         f"task event {event_id} is {event.state}, not waiting for the broker",
                         code=ErrorCode.CONFLICT,
                     )
-            routed = events.route_to_manager(
-                body.event_ids, owner_user_id=user_id, manager_id=body.manager_id
+            routed = events.route_to_session(
+                body.event_ids, owner_user_id=user_id, session_id=session_id
             )
             if routed is None:
                 raise OmnigentError("task events changed while routing", code=ErrorCode.CONFLICT)
@@ -164,11 +203,10 @@ def create_agent_task_events_router(
     ) -> AgentTaskEventAssignment:
         """Assign one of the caller's events to one of their tasks, and mark it handled.
 
-        The task then follows the event's key, so later events with the key go
-        to the task's manager. A session event makes the session the task's
-        worker (``title`` names the worker); another event with a source key
-        subscribes the task to it. Assigning again changes only the worker's
-        title. An event filed into an FYI cluster cannot be assigned.
+        The assignment is a record on the event. A session event also makes the
+        session the task's worker (``title`` names the worker), which the task's
+        manager then follows. Assigning again changes only the worker's title.
+        An event filed into an FYI cluster cannot be assigned.
         """
         user_id = require_user(request, auth_provider)
 
@@ -183,7 +221,7 @@ def create_agent_task_events_router(
             task = board.tasks.get(body.task_id, owner_user_id=user_id)
             if task is None:
                 raise OmnigentError("task not found", code=ErrorCode.NOT_FOUND)
-            worker_id = subscription_id = None
+            worker_id = None
             if event.source == SESSION_EVENT_SOURCE and event.source_key:
                 session_id = event.source_key
                 # A deleted session does not become a worker.
@@ -192,29 +230,16 @@ def create_agent_task_events_router(
                     or conversation_store.get_conversation(session_id) is not None
                 ):
                     worker, _ = adopt_worker(
-                        board.workers,
+                        board,
                         owner_user_id=user_id,
-                        task_id=task.id,
+                        task=task,
                         session_id=session_id,
                         title=body.title,
                     )
                     worker_id = worker.id
-            elif event.source_key:
-                try:
-                    subscription_id = subscriptions.subscribe(
-                        uuid.uuid4().hex,
-                        owner_user_id=user_id,
-                        task_id=task.id,
-                        source_key=event.source_key,
-                        source=event.source,
-                    ).id
-                except SourceKeyError as exc:
-                    raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
             assigned = events.assign(event.id, owner_user_id=user_id, task_id=task.id)
             return AgentTaskEventAssignment(
-                event=task_event_response(assigned or event),
-                worker_id=worker_id,
-                subscription_id=subscription_id,
+                event=task_event_response(assigned or event), worker_id=worker_id
             )
 
         return await asyncio.to_thread(assign)
@@ -236,7 +261,7 @@ def task_event_response(event: TaskEvent) -> AgentTaskEventResponse:
         source_session_id=event.source_session_id,
         tags=[AgentTaskEventTag(tag_type=tag.tag_type, tag=tag.tag) for tag in event.tags],
         task_id=event.task_id,
-        manager_id=event.manager_id,
+        target_session_id=event.target_session_id,
         fyi_cluster_id=event.fyi_cluster_id,
         created_at=event.created_at,
         updated_at=event.updated_at,

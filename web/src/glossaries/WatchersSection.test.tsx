@@ -71,6 +71,8 @@ function watcher(id: string, fields: Partial<WatcherDetail> = {}): WatcherDetail
     session_id: null,
     created_at: 1,
     updated_at: 1,
+    builtin: false,
+    source_types: [],
     manual: TEMPLATE,
     default_manual: TEMPLATE,
     ...fields,
@@ -257,6 +259,38 @@ describe("WatchersSection", () => {
 
     await waitFor(() => expect(deletedPaths()).toEqual([`${WATCHERS}/w1`, "/v1/sessions/s-w1"]));
     expect(await screen.findByText("No watchers yet.")).toBeInTheDocument();
+  });
+
+  it("marks the built-in fallback watcher, offers no delete for it, and shows each watcher's source types", async () => {
+    serveWatchers([
+      watcher("w-fallback", {
+        name: "Fallback watcher",
+        builtin: true,
+        source_types: ["jira.issue"],
+      }),
+      watcher("w1", { source_types: ["github.pull_request"] }),
+      watcher("w2", { name: "Slack watcher" }),
+    ]);
+    renderSection();
+
+    const fallback = within(await screen.findByTestId("watcher-card-w-fallback"));
+    expect(fallback.getByText("Built-in")).toBeInTheDocument();
+    expect(
+      fallback.queryByRole("button", { name: "Delete watcher Fallback watcher" }),
+    ).not.toBeInTheDocument();
+    const fallbackTypes = within(screen.getByTestId("watcher-source-types-w-fallback"));
+    expect(fallbackTypes.getByText("Checks types without a watcher:")).toBeInTheDocument();
+    expect(fallbackTypes.getByText("jira.issue")).toBeInTheDocument();
+
+    const assigned = within(screen.getByTestId("watcher-card-w1"));
+    expect(assigned.queryByText("Built-in")).not.toBeInTheDocument();
+    expect(assigned.getByRole("button", { name: "Delete watcher PR watcher" })).toBeInTheDocument();
+    const assignedTypes = within(screen.getByTestId("watcher-source-types-w1"));
+    expect(assignedTypes.getByText("Source types:")).toBeInTheDocument();
+    expect(assignedTypes.getByText("github.pull_request")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("watcher-source-types-w2")).getByText("none"),
+    ).toBeInTheDocument();
   });
 
   it("pages through the tracked items and shows the done ones on request", async () => {

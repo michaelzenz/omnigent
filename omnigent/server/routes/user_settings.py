@@ -7,7 +7,7 @@ import logging
 
 from fastapi import APIRouter, Request
 
-from omnigent.agent_tasks.default_watchers import add_default_watchers
+from omnigent.agent_tasks.default_watchers import add_default_watchers, ensure_fallback_watcher
 from omnigent.agent_tasks.role_schedules import (
     DEFAULT_CUSTODIAN_RRULE,
     require_role_schedule,
@@ -155,6 +155,14 @@ def create_user_settings_router(
                     owner_user_id=user_id,
                     now=now_epoch(),
                 )
+        if schedules is not None and watchers is not None and placement is not None:
+            await asyncio.to_thread(
+                ensure_fallback_watcher,
+                watchers,
+                schedules,
+                owner_user_id=user_id,
+                now=now_epoch(),
+            )
         if role_sessions is not None and placement is not None:
             await _start_custodian(role_sessions, user_id)
         if body.report_new_sessions is not None:

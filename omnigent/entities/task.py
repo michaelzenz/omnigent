@@ -1,14 +1,18 @@
 """GlobalHub board entities, persisted in the ``tasks``, ``managers``, ``workers``,
 ``task_events``, ``fyi_clusters``, ``task_assets``, ``system_notices``,
-``agent_queue_items``, ``role_schedules``, ``watchers`` and ``watch_items`` tables.
+``agent_queue_items``, ``role_schedules``, ``watchers``, ``watch_items``,
+``subscriptions`` and ``source_watchers`` tables.
 
 A :class:`Task` is a long-lived unit of work on one user's GlobalHub board,
 owned by one :class:`Manager`. Each :class:`Worker` attaches a session that
 works on the task, and each :class:`TaskAsset` is a link the task carries. A
-:class:`TaskEvent` is a signal the broker routes to a manager, which can file
+session follows a source through a :class:`Subscription`; each
+:class:`TaskEvent` about the source goes to the sessions that follow it, and
+the broker routes an event that no session follows to a manager, which can file
 it into an :class:`FyiCluster` for the user. A :class:`SystemNotice` is pinned
 on the board for the user to act on. A :class:`Watcher` runs on its schedule
-and reports what changed in the things it watches, each a :class:`WatchItem`.
+and reports what changed in the things it watches, each a :class:`WatchItem`;
+a :class:`SourceWatcher` assigns a source type to the watcher that checks it.
 """
 
 from __future__ import annotations
@@ -18,8 +22,11 @@ from typing import Any
 
 # The task states in a manager's portfolio; an archived task is no longer in it.
 LIVE_TASK_STATES = ("active", "idle", "agent-resolved")
-#: The source of the events that the server records about a session; its key is the session id.
-SESSION_EVENT_SOURCE = "session"
+#: The source type of the events that the server records about a session; its key is
+#: the session id. A manager follows each of its workers' sessions with it.
+SESSION_EVENT_SOURCE = "omnigent.session"
+#: Starts the source types that only the server records events for.
+RESERVED_SOURCE_TYPE_PREFIX = "omnigent."
 #: Starts a watcher's role key, which names its schedule, e.g. ``"watcher:<id>"``.
 WATCHER_ROLE_KEY_PREFIX = "watcher:"
 #: The most offsets one tracked item keeps.
@@ -74,8 +81,8 @@ class Manager:
     """
     A manager on a user's GlobalHub board: the durable identity behind its session.
 
-    Tasks and events refer to the manager, never to its session, so the session
-    can be recreated without losing the manager's portfolio.
+    Tasks refer to the manager. Events and subscriptions refer to its session,
+    as they do for every other session.
 
     :param id: UUID primary key (bare 32-char hex string, no dashes).
     :param owner_user_id: Owning user, or ``None`` in single-user mode.
@@ -150,9 +157,10 @@ class TaskEvent:
     """
     A signal on a user's GlobalHub board, e.g. a session finishing a turn.
 
-    The broker routes an ``unrouted`` event to one of the owner's managers. The
-    manager handles a ``routed`` event and dismisses it, or files it into an
-    FYI cluster.
+    An event about a source that sessions follow is ``routed`` to one of them.
+    The broker routes an ``unrouted`` event to the session of one of the
+    owner's managers. A manager handles a ``routed`` event and dismisses it, or
+    files it into an FYI cluster; any other session gets its event once.
 
     :param id: UUID primary key (bare 32-char hex string, no dashes).
     :param owner_user_id: Owning user, or ``None`` in single-user mode.
@@ -161,21 +169,21 @@ class TaskEvent:
     :param state: ``"unrouted"``, ``"routed"``, ``"dismissed"`` or ``"fyi"``.
     :param created_at: Unix epoch seconds at row creation.
     :param payload: Details of the event.
-    :param source: The system that reported it, e.g. ``"github"``.
+    :param source: The source type, e.g. ``"github.pull_request"``.
     :param source_key: What the source reported on, e.g. a pull request URL.
     :param source_offset: Which report this is, e.g. a comment id. With the
         source, key and event type it identifies a repeated report.
     :param source_session_id: The session the event came from.
     :param tags: Routing hints.
-    :param task_id: The task the event concerns.
-    :param manager_id: The manager the event was routed to.
+    :param task_id: The task a manager assigned the event to.
+    :param target_session_id: The session the event was routed to.
     :param fyi_cluster_id: The FYI cluster the event was filed into.
     :param queue_item_id: The queue item that carries the event to its role
         session; cleared when the event passes to another role.
     :param delivery_count: How many sent queue items carried the event since it
         last passed to another role.
     :param updated_at: Unix epoch seconds of the last change.
-    :param routed_at: When the event was routed to a manager.
+    :param routed_at: When the event was routed to its session.
     :param processed_at: When the event was dismissed or filed.
     :param workspace_id: Tenant partition key that owns this row.
     """
@@ -193,7 +201,7 @@ class TaskEvent:
     source_session_id: str | None = None
     tags: list[EventTag] = field(default_factory=list)
     task_id: str | None = None
-    manager_id: str | None = None
+    target_session_id: str | None = None
     fyi_cluster_id: str | None = None
     queue_item_id: str | None = None
     delivery_count: int = 0
@@ -311,7 +319,7 @@ class AgentQueueItem:
     :param owner_user_id: Owning user, or ``None`` in single-user mode.
     :param target_session_id: The session the message goes to.
     :param kind: ``"events"``, ``"notice_click"``, ``"spawn_managers"``,
-        ``"scheduled_run"`` or ``"worker_message"``.
+        ``"scheduled_run"``, ``"worker_message"`` or ``"source_types"``.
     :param state: ``"queued"``, ``"sending"``, ``"sent"`` or ``"done"``.
     :param seq: Arrival order; a session receives its items in this order.
     :param created_at: Unix epoch seconds at row creation.
@@ -396,6 +404,8 @@ class Watcher:
         agent's own model.
     :param conversation_id: The watcher's current session, or ``None`` before
         its first run.
+    :param builtin: Whether it is the built-in fallback watcher, which checks
+        the source types with no assigned watcher. The user cannot delete it.
     """
 
     id: str
@@ -407,6 +417,7 @@ class Watcher:
     manual: str | None = None
     model: str | None = None
     conversation_id: str | None = None
+    builtin: bool = False
 
     @property
     def role_key(self) -> str:
@@ -423,7 +434,7 @@ class WatchItem:
     :param owner_user_id: Owning user (the watcher's owner), or ``None`` in
         single-user mode.
     :param watcher_id: The watcher that tracks it.
-    :param source: The system, e.g. ``"github"``.
+    :param source: The source type, e.g. ``"github.pull_request"``.
     :param source_key: What is tracked, e.g. a pull request URL.
     :param title: A short label for events and the watcher card; may be empty.
     :param offsets: The values the watcher saw last, by name, e.g.
@@ -452,25 +463,49 @@ class WatchItem:
 
 
 @dataclass
-class TaskSubscription:
+class Subscription:
     """
-    A key that a GlobalHub task follows, e.g. a pull request URL.
+    A source that a session follows, e.g. a pull request.
 
-    The task's manager subscribes the task. An event whose source key a live
-    task follows goes to that task's manager.
+    Each event about the source key goes to every session that follows it. Any
+    session can subscribe; the server also subscribes a manager to the
+    sessions of its workers.
 
     :param id: UUID primary key (bare 32-char hex string, no dashes).
-    :param owner_user_id: Owning user (the task's owner), or ``None`` in
+    :param owner_user_id: Owning user (the session's owner), or ``None`` in
         single-user mode.
-    :param task_id: The task that follows the key.
-    :param source_key: The key, matched exactly.
+    :param session_id: The session that follows the source.
+    :param source_type: What kind of source it is, e.g. ``"github.pull_request"``.
+    :param source_key: The source, e.g. a pull request URL; events match it exactly.
     :param created_at: Unix epoch seconds at row creation.
-    :param source: The system of the key, e.g. ``"github"``, or ``None``.
+    :param note: Why the session follows it and, for a source that is hard to
+        read, how a watcher reads it, e.g. a permission it needs; or ``None``.
     """
 
     id: str
     owner_user_id: str | None
-    task_id: str
+    session_id: str
+    source_type: str
     source_key: str
     created_at: int
-    source: str | None = None
+    note: str | None = None
+
+
+@dataclass
+class SourceWatcher:
+    """
+    The watcher that checks the sources of one type, e.g. the GitHub watcher.
+
+    The custodian assigns each new source type to a watcher whose manual
+    covers it. The fallback watcher checks the types with no assignment.
+
+    :param owner_user_id: Owning user, or ``None`` in single-user mode.
+    :param source_type: The source type, e.g. ``"github.pull_request"``.
+    :param watcher_id: The assigned watcher.
+    :param assigned_at: Unix epoch seconds of the assignment.
+    """
+
+    owner_user_id: str | None
+    source_type: str
+    watcher_id: str
+    assigned_at: int

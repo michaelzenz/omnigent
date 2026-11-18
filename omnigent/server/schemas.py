@@ -5996,7 +5996,10 @@ class GlobalHubWatcher(BaseModel):
     uses the watcher agent's own model. ``customized`` is ``["manual"]`` when
     the caller replaced the packaged template. ``schedule`` is null when the
     watcher has none and so never runs. ``session_id`` is its current session,
-    null before its first run.
+    null before its first run. ``builtin`` marks the fallback watcher, which
+    cannot be deleted. ``source_types`` are the source types the custodian
+    assigned to the watcher; for the fallback watcher, the types that sessions
+    follow and no other watcher covers.
     """
 
     object: Literal["agent.task.watcher"] = "agent.task.watcher"
@@ -6009,12 +6012,15 @@ class GlobalHubWatcher(BaseModel):
     session_id: str | None
     created_at: int
     updated_at: int
+    builtin: bool
+    source_types: list[str]
 
 
 class GlobalHubWatcherDetail(GlobalHubWatcher):
     """A watcher with the manual attached to every turn of its session.
 
-    ``default_manual`` is the packaged watcher template, which a reset restores.
+    ``default_manual`` is the packaged manual, which a reset restores: the
+    watcher template, or the fallback manual for the fallback watcher.
     """
 
     manual: str
@@ -6104,14 +6110,15 @@ _WATCH_ITEMS_PER_CALL = 100
 class WatchItemObservation(BaseModel):
     """What the calling watcher sees now for one item, e.g. a pull request.
 
-    ``source`` names the system and ``source_key`` the item; together they
-    identify it. The server keeps the ``session`` source for its session
-    events. Task subscriptions match ``source_key`` exactly, so it is the
-    item's canonical form, e.g. ``https://github.com/<org>/<repo>/pull/<number>``.
-    ``offsets`` maps a name to the value to compare with the last run, and null
-    removes the name; names left out keep their value. A null ``title`` keeps
-    the saved one. ``summary`` and ``details`` explain a change in its events.
-    ``announce`` records events for a new item.
+    ``source`` is the source type, e.g. ``github.pull_request``, and
+    ``source_key`` the item; together they identify it. The server keeps the
+    ``omnigent.`` types for its own events. Subscriptions match ``source_key``
+    exactly after the server normalizes it, so send the item's canonical form,
+    e.g. ``https://github.com/<org>/<repo>/pull/<number>``. ``offsets`` maps a
+    name to the value to compare with the last run, and null removes the name;
+    names left out keep their value. A null ``title`` keeps the saved one.
+    ``summary`` and ``details`` explain a change in its events. ``announce``
+    records events for a new item.
     """
 
     source: _WatchItemSource
@@ -6179,14 +6186,15 @@ class WatchItemObservationResult(BaseModel):
     """What an observation found for one item.
 
     ``outcome`` is ``"new"`` for an item the watcher had not tracked,
-    ``"changed"`` when an offset changed, else ``"unchanged"``. ``event_ids``
-    are the task events recorded for the change, or for an announced new item:
-    one for each live task that follows the item, else one for the broker.
+    ``"changed"`` when an offset changed, ``"reopened"`` when an offset of a
+    done item changed, else ``"unchanged"``. ``event_ids`` are the task events
+    recorded for the change, or for an announced new item: one for each session
+    that follows the item, else one for the broker.
     """
 
     source: str
     source_key: str
-    outcome: Literal["new", "changed", "unchanged"]
+    outcome: Literal["new", "changed", "reopened", "unchanged"]
     changes: list[WatchItemChange]
     event_ids: list[str]
 
@@ -6207,10 +6215,19 @@ class WatchItemKey(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class FinishWatchItemsRequest(BaseModel):
-    """Items the calling watcher stops checking, e.g. merged pull requests."""
+class FinishWatchItem(WatchItemKey):
+    """One item the calling watcher marks done; ``summary`` says why, e.g. ``"Merged"``."""
 
-    items: list[WatchItemKey] = Field(..., min_length=1, max_length=_WATCH_ITEMS_PER_CALL)
+    summary: str | None = Field(default=None, max_length=256)
+
+
+class FinishWatchItemsRequest(BaseModel):
+    """Items the calling watcher marks done, e.g. merged pull requests.
+
+    Each session that follows a newly done item gets a ``watch.done`` event.
+    """
+
+    items: list[FinishWatchItem] = Field(..., min_length=1, max_length=_WATCH_ITEMS_PER_CALL)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -6578,8 +6595,11 @@ class AgentTaskEventTag(BaseModel):
 class AgentTaskEventResponse(BaseModel):
     """A signal on the caller's GlobalHub board.
 
-    The broker routes an ``unrouted`` event to a manager. The manager handles a
-    ``routed`` event and dismisses it, or files it into an FYI cluster.
+    An event about a source that sessions follow is ``routed`` to each of them;
+    ``target_session_id`` is the session it went to. The broker routes an
+    ``unrouted`` event to a manager's session. A manager handles a ``routed``
+    event and dismisses it, or files it into an FYI cluster; another session
+    gets its event once. ``task_id`` is the task a manager assigned it to.
     """
 
     object: Literal["agent.task.event"] = "agent.task.event"
@@ -6594,7 +6614,7 @@ class AgentTaskEventResponse(BaseModel):
     source_session_id: str | None
     tags: list[AgentTaskEventTag]
     task_id: str | None
-    manager_id: str | None
+    target_session_id: str | None
     fyi_cluster_id: str | None
     created_at: int
     updated_at: int | None
@@ -6612,11 +6632,12 @@ class AgentTaskEventList(BaseModel):
 class CreateAgentTaskEventRequest(BaseModel):
     """Record an event on the caller's board.
 
-    Each live task that follows ``source_key`` (an exact match) gets the event
-    through its manager; without such a task, the broker routes it. A report
+    ``source`` is the source type, e.g. ``github.pull_request``. Each session
+    that follows ``source_key`` (an exact match after the server normalizes it)
+    gets the event; when no session follows it, the broker routes it. A report
     that names its ``source`` and ``source_key`` is recorded once: sending it
     again returns the first event. ``session.*`` event types and the
-    ``session`` source come only from the server's session hooks.
+    ``omnigent.`` source types come only from the server.
     """
 
     event_type: _AgentTaskEventType
@@ -6632,7 +6653,11 @@ class CreateAgentTaskEventRequest(BaseModel):
 
 
 class RouteAgentTaskEventsRequest(BaseModel):
-    """Route events that wait for the broker to one of the caller's managers."""
+    """Route events that wait for the broker to one of the caller's managers.
+
+    The events go to the manager's session; the manager does not follow their
+    sources.
+    """
 
     event_ids: list[str] = Field(..., min_length=1, max_length=100)
     manager_id: str
@@ -6643,10 +6668,8 @@ class RouteAgentTaskEventsRequest(BaseModel):
 class AssignAgentTaskEventRequest(BaseModel):
     """Assign one of the caller's events to one of their tasks, and mark the event handled.
 
-    The task then follows the event's key, so later events with the key go to
-    the task's manager. A session event makes the session the task's worker,
-    with ``title`` as the worker's title; another event with a source key
-    subscribes the task to that key.
+    A session event also makes the session the task's worker, with ``title``
+    as the worker's title; the task's manager then follows the session.
     """
 
     task_id: str = Field(min_length=1, max_length=64)
@@ -6656,18 +6679,15 @@ class AssignAgentTaskEventRequest(BaseModel):
 
 
 class AgentTaskEventAssignment(BaseModel):
-    """An event assigned to a task, and what the task follows now.
+    """An event assigned to a task.
 
-    ``worker_id`` is the session's worker on the task, for a session event.
-    ``subscription_id`` is the task's subscription to the event's key, for
-    another event. Both are null for an event without a key, or for a session
-    that is gone.
+    ``worker_id`` is the session's worker on the task, for a session event; it
+    is null for other events, or for a session that is gone.
     """
 
     object: Literal["agent.task.event_assignment"] = "agent.task.event_assignment"
     event: AgentTaskEventResponse
     worker_id: str | None
-    subscription_id: str | None
 
 
 AgentFyiClusterState = Literal["pending", "dismissed"]
@@ -6760,51 +6780,94 @@ class AgentTaskAssetDeletedResponse(BaseModel):
     deleted: Literal[True] = True
 
 
-_AgentTaskSubscriptionKey = Annotated[
-    str, Field(max_length=512), AfterValidator(_strip_required_text)
-]
+_SourceType = Annotated[str, Field(max_length=64), AfterValidator(_strip_required_text)]
+_SourceKey = Annotated[str, Field(max_length=512), AfterValidator(_strip_required_text)]
 
 
-class CreateAgentTaskSubscriptionRequest(BaseModel):
-    """Make one of the caller's tasks follow a key, e.g. a pull request URL.
+class CreateSessionSubscriptionRequest(BaseModel):
+    """Make a session follow a source, e.g. a pull request.
 
-    While the task is live, events with the same key go to the task's manager.
-    Keys match exactly, so write the key in its canonical form, e.g.
-    ``https://github.com/<org>/<repo>/pull/<number>``. Subscribing again
-    returns the subscription the task has.
+    ``source_type`` names the system and the kind of source in lowercase words
+    joined by dots, e.g. ``github.pull_request``; reuse a type that is in use
+    when one fits. ``source_key`` names the source, e.g. its URL; the server
+    normalizes it, so keys match exactly. ``note``, at most 300 words, says why
+    the session follows it and, only for a source that is hard to read, how a
+    watcher reads it, e.g. a permission or an account it needs; the watcher
+    sees it on each run. Following a source again keeps one subscription and
+    replaces its type and note.
     """
 
-    source_key: _AgentTaskSubscriptionKey
-    source: str | None = Field(default=None, min_length=1, max_length=64)
+    source_type: _SourceType
+    source_key: _SourceKey
+    note: str | None = Field(default=None, max_length=3000)
 
     model_config = ConfigDict(extra="forbid")
 
 
-class AgentTaskSubscriptionResponse(BaseModel):
-    """A key that one of the caller's tasks follows; the task's manager subscribed it."""
+class SessionSubscriptionResponse(BaseModel):
+    """A source that a session follows: each event about it goes to the session."""
 
-    object: Literal["agent.task.subscription"] = "agent.task.subscription"
+    object: Literal["session.subscription"] = "session.subscription"
     id: str
-    task_id: str
+    session_id: str
+    source_type: str
     source_key: str
-    source: str | None
+    note: str | None
     created_at: int
 
 
-class AgentTaskSubscriptionList(BaseModel):
-    """Keys that the caller's tasks follow, oldest first."""
+class SessionSubscriptionList(BaseModel):
+    """The sources that a session follows, in the order it started to follow them."""
 
     object: Literal["list"] = "list"
-    data: list[AgentTaskSubscriptionResponse]
+    data: list[SessionSubscriptionResponse]
 
 
-class AgentTaskSubscriptionDeletedResponse(BaseModel):
-    """A key that one of the caller's tasks no longer follows."""
+class RemoveSessionSubscriptionRequest(BaseModel):
+    """Stop a session from following a source."""
 
-    object: Literal["agent.task.subscription"] = "agent.task.subscription"
-    id: str
-    task_id: str
-    deleted: Literal[True] = True
+    source_key: _SourceKey
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SessionSubscriptionRemoved(BaseModel):
+    """A source that a session no longer follows; ``removed`` is false when it was not followed."""
+
+    object: Literal["session.subscription"] = "session.subscription"
+    session_id: str
+    source_key: str
+    removed: bool
+
+
+class SourceTypeResponse(BaseModel):
+    """A source type in use, with the watcher that checks it.
+
+    ``watcher_id`` and ``watcher_name`` are null when no watcher is assigned;
+    the fallback watcher then checks the type. ``subscriptions`` counts the
+    subscriptions of the type.
+    """
+
+    object: Literal["source_type"] = "source_type"
+    source_type: str
+    watcher_id: str | None
+    watcher_name: str | None
+    subscriptions: int
+
+
+class SourceTypeList(BaseModel):
+    """The source types in use, by name."""
+
+    object: Literal["list"] = "list"
+    data: list[SourceTypeResponse]
+
+
+class AssignSourceTypeRequest(BaseModel):
+    """Assign a source type to the watcher whose manual covers it."""
+
+    watcher_id: str = Field(min_length=1, max_length=64)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class AgentTaskBoardSession(BaseModel):

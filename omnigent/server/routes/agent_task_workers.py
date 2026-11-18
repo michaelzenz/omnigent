@@ -10,7 +10,8 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.exc import IntegrityError
 
 from omnigent.agent_tasks.board_stores import BoardStores
-from omnigent.entities import Worker
+from omnigent.agent_tasks.worker_subscriptions import follow_workers
+from omnigent.entities import Task, Worker
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.agent_queue_dispatcher import WORKER_MESSAGE_KIND
 from omnigent.server.auth import LEVEL_OWNER, AuthProvider
@@ -58,9 +59,11 @@ def create_agent_task_workers_router(
     tasks = board.tasks
     workers = board.workers
 
-    async def require_owned_task(task_id: str, user_id: str | None) -> None:
-        if await asyncio.to_thread(tasks.get, task_id, owner_user_id=user_id) is None:
+    async def require_owned_task(task_id: str, user_id: str | None) -> Task:
+        task = await asyncio.to_thread(tasks.get, task_id, owner_user_id=user_id)
+        if task is None:
             raise OmnigentError("task not found", code=ErrorCode.NOT_FOUND)
+        return task
 
     async def require_owned_session(session_id: str, user_id: str | None) -> None:
         if await asyncio.to_thread(conversation_store.get_conversation, session_id) is None:
@@ -78,16 +81,16 @@ def create_agent_task_workers_router(
         """Attach one of the caller's sessions to one of their tasks.
 
         A session has one worker per task: adopting it again only retitles that
-        worker.
+        worker. The task's manager follows the session.
         """
         user_id = require_user(request, auth_provider)
-        await require_owned_task(body.task_id, user_id)
+        task = await require_owned_task(body.task_id, user_id)
         await require_owned_session(session_id, user_id)
         worker, created = await asyncio.to_thread(
             adopt_worker,
-            workers,
+            board,
             owner_user_id=user_id,
-            task_id=body.task_id,
+            task=task,
             session_id=session_id,
             title=body.title,
         )
@@ -175,6 +178,37 @@ def create_agent_task_workers_router(
 
 
 def adopt_worker(
+    board: BoardStores,
+    *,
+    owner_user_id: str | None,
+    task: Task,
+    session_id: str,
+    title: str | None,
+) -> tuple[Worker, bool]:
+    """
+    Attach a session to a task as its worker, or retitle the worker it has. Blocking.
+
+    The task's manager then follows the session, so it hears when a turn ends.
+
+    :param board: Holds the workers, the managers and their subscriptions.
+    :param owner_user_id: The task's owner, or ``None`` in single-user mode.
+    :param task: The task.
+    :param session_id: The session.
+    :param title: The worker's title; ``None`` keeps the current one.
+    :returns: The worker, and whether this call created it.
+    """
+    worker, created = _attach_worker(
+        board.workers,
+        owner_user_id=owner_user_id,
+        task_id=task.id,
+        session_id=session_id,
+        title=title,
+    )
+    follow_workers(board, task, owner_user_id=owner_user_id, session_ids=[session_id])
+    return worker, created
+
+
+def _attach_worker(
     workers: WorkerStore,
     *,
     owner_user_id: str | None,
@@ -182,16 +216,6 @@ def adopt_worker(
     session_id: str,
     title: str | None,
 ) -> tuple[Worker, bool]:
-    """
-    Attach a session to a task as its worker, or retitle the worker it has. Blocking.
-
-    :param workers: Holds the workers.
-    :param owner_user_id: The task's owner, or ``None`` in single-user mode.
-    :param task_id: The task.
-    :param session_id: The session.
-    :param title: The worker's title; ``None`` keeps the current one.
-    :returns: The worker, and whether this call created it.
-    """
     existing = workers.get_for_task_and_session(task_id, session_id, owner_user_id=owner_user_id)
     if existing is None:
         try:

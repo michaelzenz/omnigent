@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import itertools
+import uuid
 from typing import Any
 
 import pytest
 
-from omnigent.entities import EventTag
+from omnigent.entities import SESSION_EVENT_SOURCE, EventTag
 from omnigent.stores.task_event_store import sqlalchemy_store as event_tables
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
-MANAGER = f"{100:032x}"
-OTHER_MANAGER = f"{101:032x}"
+TARGET_SESSION = f"{100:032x}"
+OTHER_TARGET_SESSION = f"{101:032x}"
 # Creation order ties on the one-second created_at, then falls back to id.
 _ids = (f"{n:032x}" for n in itertools.count(1))
 
@@ -47,7 +48,7 @@ def test_events_keep_their_details_for_their_owner(store: SqlAlchemyTaskEventSto
         source_session_id=session_id,
         tags=[EventTag(tag_type="repo", tag="example-org/storage")],
     )
-    routed_id = _record(store, manager_id=MANAGER)
+    routed_id = _record(store, target_session_id=TARGET_SESSION)
 
     unrouted = store.get(unrouted_id, owner_user_id=ALICE)
     routed = store.get(routed_id, owner_user_id=ALICE)
@@ -59,9 +60,9 @@ def test_events_keep_their_details_for_their_owner(store: SqlAlchemyTaskEventSto
         [EventTag(tag_type="repo", tag="example-org/storage")],
         session_id,
     )
-    assert (routed.state, routed.manager_id, routed.payload, routed.tags) == (
+    assert (routed.state, routed.target_session_id, routed.payload, routed.tags) == (
         "routed",
-        MANAGER,
+        TARGET_SESSION,
         {},
         [],
     )
@@ -100,12 +101,12 @@ def test_the_latest_route_of_each_source_key_to_each_task_is_found(
     clock = {"now": 1_000}
     monkeypatch.setattr(event_tables, "now_epoch", lambda: clock["now"])
     for now, owner, source, source_key, task_id in [
-        (1_000, ALICE, "session", session, task),
-        (1_005, ALICE, "session", session, task),
-        (1_002, ALICE, "session", session, other_task),
-        (1_009, ALICE, "session", quiet_session, None),
-        (1_011, ALICE, "github", session, task),
-        (1_020, BOB, "session", session, task),
+        (1_000, ALICE, SESSION_EVENT_SOURCE, session, task),
+        (1_005, ALICE, SESSION_EVENT_SOURCE, session, task),
+        (1_002, ALICE, SESSION_EVENT_SOURCE, session, other_task),
+        (1_009, ALICE, SESSION_EVENT_SOURCE, quiet_session, None),
+        (1_011, ALICE, "github.pull_request", session, task),
+        (1_020, BOB, SESSION_EVENT_SOURCE, session, task),
     ]:
         clock["now"] = now
         _record(
@@ -114,45 +115,51 @@ def test_the_latest_route_of_each_source_key_to_each_task_is_found(
             source=source,
             source_key=source_key,
             task_id=task_id,
-            manager_id=MANAGER,
+            target_session_id=TARGET_SESSION,
         )
 
-    routes = store.latest_routes("session", [session, quiet_session], owner_user_id=ALICE)
+    routes = store.latest_routes(
+        SESSION_EVENT_SOURCE, [session, quiet_session], owner_user_id=ALICE
+    )
 
     assert routes == {(session, task): 1_005, (session, other_task): 1_002}
-    assert store.latest_routes("session", [], owner_user_id=ALICE) == {}
+    assert store.latest_routes(SESSION_EVENT_SOURCE, [], owner_user_id=ALICE) == {}
 
 
-def test_routing_to_a_manager_is_all_or_nothing(store: SqlAlchemyTaskEventStore) -> None:
+def test_routing_to_a_session_is_all_or_nothing(store: SqlAlchemyTaskEventStore) -> None:
     unrouted = _record(store)
-    routed_here = _record(store, manager_id=MANAGER)
-    routed_elsewhere = _record(store, manager_id=OTHER_MANAGER)
+    routed_here = _record(store, target_session_id=TARGET_SESSION)
+    routed_elsewhere = _record(store, target_session_id=OTHER_TARGET_SESSION)
     dismissed = _record(store)
     store.dismiss(dismissed, owner_user_id=ALICE)
     bobs = _record(store, owner=BOB)
 
     for refused in (routed_elsewhere, dismissed, bobs, f"{999:032x}"):
         assert (
-            store.route_to_manager([unrouted, refused], owner_user_id=ALICE, manager_id=MANAGER)
+            store.route_to_session(
+                [unrouted, refused], owner_user_id=ALICE, session_id=TARGET_SESSION
+            )
             is None
         )
     untouched = store.get(unrouted, owner_user_id=ALICE)
     assert untouched is not None and untouched.state == "unrouted"
 
-    routed = store.route_to_manager(
-        [unrouted, routed_here, unrouted], owner_user_id=ALICE, manager_id=MANAGER
+    routed = store.route_to_session(
+        [unrouted, routed_here, unrouted],
+        owner_user_id=ALICE,
+        session_id=str(uuid.UUID(hex=TARGET_SESSION)),
     )
 
     assert routed is not None
-    assert [(event.id, event.state, event.manager_id) for event in routed] == [
-        (unrouted, "routed", MANAGER),
-        (routed_here, "routed", MANAGER),
+    assert [(event.id, event.state, event.target_session_id) for event in routed] == [
+        (unrouted, "routed", TARGET_SESSION),
+        (routed_here, "routed", TARGET_SESSION),
     ]
     assert routed[0].routed_at is not None
 
 
 def test_dismiss_is_idempotent_and_owner_scoped(store: SqlAlchemyTaskEventStore) -> None:
-    event_id = _record(store, manager_id=MANAGER)
+    event_id = _record(store, target_session_id=TARGET_SESSION)
 
     assert store.dismiss(event_id, owner_user_id=BOB) is None
     first = store.dismiss(event_id, owner_user_id=ALICE)
@@ -163,9 +170,11 @@ def test_dismiss_is_idempotent_and_owner_scoped(store: SqlAlchemyTaskEventStore)
     assert (again.state, again.processed_at) == ("dismissed", first.processed_at)
 
 
-def test_lists_are_oldest_first_by_state_and_manager(store: SqlAlchemyTaskEventStore) -> None:
+def test_lists_are_oldest_first_by_state_and_target_session(
+    store: SqlAlchemyTaskEventStore,
+) -> None:
     first = _record(store)
-    routed = _record(store, manager_id=MANAGER)
+    routed = _record(store, target_session_id=TARGET_SESSION)
     second = _record(store)
     single_user = _record(store, owner=None)
     _record(store, owner=BOB)
@@ -174,7 +183,8 @@ def test_lists_are_oldest_first_by_state_and_manager(store: SqlAlchemyTaskEventS
         return [event.id for event in store.list(owner_user_id=ALICE, **filters)]
 
     assert ids(states=["unrouted"]) == [first, second]
-    assert ids(manager_id=MANAGER) == [routed]
+    assert ids(target_session_id=TARGET_SESSION) == [routed]
+    assert ids(target_session_id=str(uuid.UUID(hex=TARGET_SESSION))) == [routed]
     assert ids(limit=2) == [first, routed]
     assert [event.id for event in store.list(owner_user_id=None)] == [single_user]
 

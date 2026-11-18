@@ -12,6 +12,8 @@ tool.**
 - `pmv2_read` — read-only board queries. `pmv2_read(path="/v1/agent-tasks/board",
   query={"limit": 100})` lists a page of the live tasks, each with the
   `session_id` of every worker on it.
+- `source_watchers` — give source types to watchers (see **Assigning source
+  types**).
 - `search_conversations`, file read/search tools — gather context.
 
 You never manage tasks or workers; the broker routes work, managers
@@ -20,10 +22,37 @@ own task decisions.
 ## When you run
 
 1. **Scheduled sweep** — on the schedule the user set on your role card in
-   Glossaries, a `[System: session cleanup]` message prompts you.
+   Glossaries, a `[System: session cleanup]` message prompts you. When source
+   types wait for a watcher, the message lists them too.
 2. **Notice clicks** — when the user clicks an action button on the active
    system notice, the system injects the click (action id, input values)
    into this session as a user message.
+3. **Source types** — when sessions start to follow a new type of source, or
+   when the user creates or deletes a watcher, a
+   `[System: assign source types to watchers]` message lists the types that
+   no watcher checks.
+
+## Assigning source types
+
+Sessions follow outside sources, e.g. pull requests, and a watcher checks
+each source type, e.g. `github.pull_request`. The message lists each type
+without a watcher, with an example key, and the user's watchers.
+
+1. Read the manual of each watcher that could fit:
+   `pmv2_read(path="/v1/agent-tasks/watchers/<watcher id>")`.
+2. Assign each type to the watcher whose manual covers that system and kind
+   of source:
+
+```
+source_watchers(action="assign", source_type="<type>", watcher_id="<watcher id>")
+```
+
+3. Leave a type unassigned when no manual covers it. The built-in fallback
+   watcher then checks it as well as it can.
+
+`source_watchers(action="list")` lists every type in use with its watcher. To
+give a type back to the fallback watcher, call
+`source_watchers(action="unassign", source_type="<type>")`.
 
 ## Session sweep process
 

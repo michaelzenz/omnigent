@@ -226,12 +226,19 @@ async def test_a_worker_message_goes_into_the_workers_session_once_the_session_i
 async def test_items_without_a_current_target_or_anything_to_say_are_dropped(
     harness: _Harness,
 ) -> None:
-    plain = harness.sessions.conversation_store.create_conversation(title="Fix S3 retries")
+    conversations = harness.sessions.conversation_store
+    archived = conversations.create_conversation(title="Fix S3 retries")
+    conversations.update_conversation(archived.id, archived=True)
     event_id = uuid.uuid4().hex
     harness.board.events.create(
-        event_id, owner_user_id=ALICE, event_type="github.pr.comment", title="Comment"
+        event_id,
+        owner_user_id=ALICE,
+        event_type="github.pr.comment",
+        title="Comment",
+        target_session_id=archived.id,
     )
-    stranded = harness.enqueue(plain.id, event_ids=[event_id])
+    stranded = harness.enqueue(archived.id, event_ids=[event_id])
+    deleted = harness.enqueue(uuid.uuid4().hex)
     empty = harness.enqueue(await harness.broker(), text=None)
     session_id, worker_id = harness.worker()
     unworked = harness.message_worker(session_id, worker_id, "Fix it.")
@@ -239,14 +246,23 @@ async def test_items_without_a_current_target_or_anything_to_say_are_dropped(
 
     await harness.run()
 
+    remaining = [harness.item(item_id) for item_id in (stranded, deleted, empty, unworked)]
     assert harness.sent == []
-    assert (harness.item(stranded), harness.item(empty), harness.item(unworked)) == (
-        None,
-        None,
-        None,
-    )
+    assert remaining == [None] * 4
     event = harness.board.events.get(event_id, owner_user_id=ALICE)
     assert event is not None and event.queue_item_id is None
+
+
+async def test_events_go_to_a_session_without_a_role_while_it_is_not_archived(
+    harness: _Harness,
+) -> None:
+    follower = harness.sessions.conversation_store.create_conversation(title="Fix S3 retries")
+    item_id = harness.enqueue(follower.id, "1 update on a source you follow")
+
+    await harness.run()
+
+    assert harness.sent == [(follower.id, "1 update on a source you follow", ALICE)]
+    assert harness.state(item_id) == "sent"
 
 
 async def test_a_missed_turn_end_is_settled_after_a_minute_idle(harness: _Harness) -> None:

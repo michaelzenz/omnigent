@@ -9,16 +9,15 @@ import pytest
 
 from omnigent.entities import Watcher
 from omnigent.errors import StaleCursorError
-from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
+from omnigent.stores.subscription_store.sqlalchemy_store import SqlAlchemySubscriptionStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
-from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
-from omnigent.stores.task_subscription_store.sqlalchemy_store import (
-    SqlAlchemyTaskSubscriptionStore,
-)
 from omnigent.stores.watch_item_store import (
     WATCH_CHANGED_EVENT_TYPE,
+    WATCH_DONE_EVENT_TYPE,
     WATCH_NEW_EVENT_TYPE,
+    WATCH_REOPENED_EVENT_TYPE,
     WatchChange,
+    WatchFinish,
     WatchItemLimitError,
     WatchObservation,
 )
@@ -28,14 +27,27 @@ from omnigent.stores.watcher_store.sqlalchemy_store import SqlAlchemyWatcherStor
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
 SESSION_ID = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+SOURCE_TYPE = "github.pull_request"
 PR = "https://github.com/example-org/repo/pull/12"
 OTHER_PR = "https://github.com/example-org/repo/pull/13"
+THIRD_PR = "https://github.com/example-org/repo/pull/14"
+UNTRACKED = "https://example.com/gone"
 
 
 def _watcher(db_uri: str, owner: str = ALICE) -> Watcher:
     return SqlAlchemyWatcherStore(db_uri).create(
         uuid.uuid4().hex, owner_user_id=owner, name="PR watcher"
     )
+
+
+def _follow(
+    db_uri: str, source_key: str, *, owner: str = ALICE, session_id: str | None = None
+) -> str:
+    follower = session_id or uuid.uuid4().hex
+    SqlAlchemySubscriptionStore(db_uri).subscribe(
+        owner_user_id=owner, session_id=follower, source_type=SOURCE_TYPE, source_key=source_key
+    )
+    return follower
 
 
 def _seen(
@@ -48,7 +60,7 @@ def _seen(
     announce: bool = False,
 ) -> WatchObservation:
     return WatchObservation(
-        source="github",
+        source=SOURCE_TYPE,
         source_key=source_key,
         offsets=offsets if offsets is not None else {"state": "open", "checks": "pending@abc"},
         title=title,
@@ -84,20 +96,20 @@ def test_a_first_look_is_silent_and_a_change_records_one_event(db_uri: str) -> N
     (event_id,) = result.event_ids
     event = events.get(event_id, owner_user_id=ALICE)
     assert event is not None
-    assert (event.event_type, event.state, event.manager_id) == (
+    assert (event.event_type, event.state, event.target_session_id) == (
         WATCH_CHANGED_EVENT_TYPE,
         "unrouted",
         None,
     )
     assert (event.title, event.source, event.source_key, event.source_offset) == (
         "repo#12: checks pending@abc -> failure@abc",
-        "github",
+        SOURCE_TYPE,
         PR,
         "v1",
     )
     assert event.source_session_id == SESSION_ID
     assert [(tag.tag_type, tag.tag) for tag in event.tags] == [
-        ("source", "github"),
+        ("source", SOURCE_TYPE),
         ("watcher", "PR watcher"),
     ]
     assert event.payload["details"] == {"failing": ["unit-tests"]}
@@ -146,51 +158,142 @@ def test_an_announced_new_item_records_a_new_event(db_uri: str) -> None:
     )
 
 
-def test_a_change_goes_to_each_live_task_that_follows_the_item_else_to_the_broker(
+def test_a_change_goes_to_each_following_session_but_the_reporter_else_to_the_broker(
     db_uri: str,
 ) -> None:
     store = SqlAlchemyWatchItemStore(db_uri)
-    tasks = SqlAlchemyTaskStore(db_uri)
-    manager = SqlAlchemyManagerStore(db_uri).create(
-        uuid.uuid4().hex, owner_user_id=ALICE, title="Storage"
-    )
-    managed = tasks.create(
-        uuid.uuid4().hex, owner_user_id=ALICE, title="S3 retries", manager_id=manager.id
-    )
-    unmanaged = tasks.create(uuid.uuid4().hex, owner_user_id=ALICE, title="Review")
-    archived = tasks.create(
-        uuid.uuid4().hex,
-        owner_user_id=ALICE,
-        title="Old work",
-        manager_id=manager.id,
-        state="archived",
-    )
-    subscriptions = SqlAlchemyTaskSubscriptionStore(db_uri)
-    for task_id, key in ((managed.id, PR), (unmanaged.id, PR), (archived.id, OTHER_PR)):
-        subscriptions.subscribe(
-            uuid.uuid4().hex, owner_user_id=ALICE, task_id=task_id, source_key=key
-        )
+    events = SqlAlchemyTaskEventStore(db_uri)
+    first, second = _follow(db_uri, PR), _follow(db_uri, PR)
+    _follow(db_uri, PR, session_id=SESSION_ID)
+    _follow(db_uri, OTHER_PR, session_id=SESSION_ID)
+    _follow(db_uri, THIRD_PR, owner=BOB)
     watcher = _watcher(db_uri)
-    store.observe(watcher, [_seen(), _seen(OTHER_PR)], session_id=None, now=100)
+    keys = (PR, OTHER_PR, THIRD_PR)
+    store.observe(watcher, [_seen(key) for key in keys], session_id=SESSION_ID, now=100)
 
-    followed, unfollowed = store.observe(
+    followed, followed_by_the_reporter, unfollowed = store.observe(
         watcher,
-        [_seen(offsets={"state": "merged"}), _seen(OTHER_PR, offsets={"state": "merged"})],
-        session_id=None,
+        [_seen(key, offsets={"state": "merged"}) for key in keys],
+        session_id=SESSION_ID,
         now=200,
     )
 
-    events = SqlAlchemyTaskEventStore(db_uri)
     copies = [events.get(event_id, owner_user_id=ALICE) for event_id in followed.event_ids]
+    assert len(copies) == 2
     assert {
-        (event.task_id, event.manager_id, event.state, len(event.tags))
+        (event.target_session_id, event.state, event.routed_at, len(event.tags))
         for event in copies
         if event is not None
-    } == {(managed.id, manager.id, "routed", 0), (unmanaged.id, None, "unrouted", 2)}
+    } == {(first, "routed", 200, 0), (second, "routed", 200, 0)}
+    assert (followed_by_the_reporter.outcome, followed_by_the_reporter.event_ids) == (
+        "changed",
+        (),
+    )
     (broker_event_id,) = unfollowed.event_ids
     to_broker = events.get(broker_event_id, owner_user_id=ALICE)
     assert to_broker is not None
-    assert (to_broker.task_id, to_broker.manager_id, to_broker.state) == (None, None, "unrouted")
+    assert (to_broker.target_session_id, to_broker.state, len(to_broker.tags)) == (
+        None,
+        "unrouted",
+        2,
+    )
+    assert len(events.list(owner_user_id=ALICE)) == 3
+
+
+def test_marking_items_done_tells_their_other_followers_once_and_never_the_broker(
+    db_uri: str,
+) -> None:
+    store = SqlAlchemyWatchItemStore(db_uri)
+    events = SqlAlchemyTaskEventStore(db_uri)
+    follower = _follow(db_uri, PR)
+    _follow(db_uri, PR, session_id=SESSION_ID)
+    other_follower = _follow(db_uri, OTHER_PR)
+    watcher = _watcher(db_uri)
+    store.observe(
+        watcher,
+        [_seen(title="repo#12"), _seen(OTHER_PR), _seen(THIRD_PR)],
+        session_id=SESSION_ID,
+        now=100,
+    )
+
+    missing = store.finish(
+        watcher,
+        [
+            WatchFinish(SOURCE_TYPE, PR, summary=" Merged "),
+            WatchFinish(SOURCE_TYPE, OTHER_PR),
+            WatchFinish(SOURCE_TYPE, THIRD_PR),
+            WatchFinish(SOURCE_TYPE, UNTRACKED),
+        ],
+        session_id=SESSION_ID,
+        now=150,
+    )
+    finished_again = store.finish(
+        watcher, [WatchFinish(SOURCE_TYPE, PR, summary="Closed")], session_id=SESSION_ID, now=160
+    )
+
+    assert (missing, finished_again) == ([(SOURCE_TYPE, UNTRACKED)], [])
+    done_events = events.list(owner_user_id=ALICE)
+    assert len(done_events) == 2
+    assert {event.target_session_id: event.title for event in done_events} == {
+        follower: "Done: repo#12: Merged",
+        other_follower: f"Done: {OTHER_PR}",
+    }
+    assert {
+        (event.event_type, event.state, event.source_offset, event.source_session_id)
+        for event in done_events
+    } == {(WATCH_DONE_EVENT_TYPE, "routed", "done-v0", SESSION_ID)}
+    found = store.find(
+        watcher.id,
+        [
+            (SOURCE_TYPE, PR),
+            (SOURCE_TYPE, THIRD_PR),
+            ("github.issue", PR),
+            (SOURCE_TYPE, UNTRACKED),
+        ],
+        owner_user_id=ALICE,
+    )
+    assert sorted((item.source_key, item.status, item.done_at) for item in found) == [
+        (PR, "done", 150),
+        (THIRD_PR, "done", 150),
+    ]
+    assert store.find(watcher.id, [(SOURCE_TYPE, PR)], owner_user_id=BOB) == []
+    assert store.find(watcher.id, [], owner_user_id=ALICE) == []
+
+
+def test_a_done_item_stays_done_while_unchanged_and_reopens_when_its_offsets_change(
+    db_uri: str,
+) -> None:
+    store = SqlAlchemyWatchItemStore(db_uri)
+    events = SqlAlchemyTaskEventStore(db_uri)
+    watcher = _watcher(db_uri)
+    store.observe(watcher, [_seen(title="repo#12")], session_id=None, now=100)
+    store.finish(watcher, [WatchFinish(SOURCE_TYPE, PR)], session_id=None, now=150)
+    follower = _follow(db_uri, PR)
+
+    (unchanged,) = store.observe(watcher, [_seen()], session_id=None, now=200)
+    (still_done,) = store.find(watcher.id, [(SOURCE_TYPE, PR)], owner_user_id=ALICE)
+    (reopened,) = store.observe(
+        watcher, [_seen(offsets={"checks": "success@abc"})], session_id=None, now=300
+    )
+
+    assert (unchanged.outcome, unchanged.event_ids) == ("unchanged", ())
+    assert (still_done.status, still_done.done_at, still_done.checked_at) == ("done", 150, 200)
+    assert (reopened.outcome, reopened.changes) == (
+        "reopened",
+        (WatchChange(offset="checks", before="pending@abc", after="success@abc"),),
+    )
+    (event_id,) = reopened.event_ids
+    event = events.get(event_id, owner_user_id=ALICE)
+    assert event is not None
+    assert (event.event_type, event.target_session_id, event.title, event.source_offset) == (
+        WATCH_REOPENED_EVENT_TYPE,
+        follower,
+        "repo#12: checks pending@abc -> success@abc",
+        "v1",
+    )
+    assert [each.id for each in events.list(owner_user_id=ALICE)] == [event_id]
+    (item,) = store.list(watcher.id, owner_user_id=ALICE).data
+    assert (item.status, item.done_at, item.version, item.changed_at) == ("active", None, 1, 300)
 
 
 def test_an_observation_that_would_keep_too_many_offsets_saves_nothing(db_uri: str) -> None:
@@ -224,7 +327,7 @@ def test_pages_keep_the_tracking_order_and_a_purged_cursor_is_stale(db_uri: str)
     first = store.list(watcher.id, owner_user_id=ALICE, limit=2)
     second = store.list(watcher.id, owner_user_id=ALICE, limit=2, after=first.last_id)
     third = store.list(watcher.id, owner_user_id=ALICE, limit=2, after=second.last_id)
-    store.finish(watcher.id, [("github", keys[1])], owner_user_id=ALICE, now=300)
+    store.finish(watcher, [WatchFinish(SOURCE_TYPE, keys[1])], session_id=None, now=300)
     store.purge_done(watcher.id, owner_user_id=ALICE, before=301)
 
     pages = [[item.source_key for item in page.data] for page in (first, second, third)]
@@ -240,36 +343,33 @@ def test_pages_keep_the_tracking_order_and_a_purged_cursor_is_stale(db_uri: str)
         store.list(watcher.id, owner_user_id=ALICE, after="not-an-item-id")
 
 
-def test_done_items_leave_the_active_list_until_observed_and_then_get_purged(
+def test_done_items_leave_the_active_list_and_the_old_ones_get_listed_and_purged(
     db_uri: str,
 ) -> None:
     store = SqlAlchemyWatchItemStore(db_uri)
     watcher = _watcher(db_uri)
     bobs = _watcher(db_uri, owner=BOB)
-    store.observe(watcher, [_seen()], session_id=None, now=100)
-    store.observe(watcher, [_seen(OTHER_PR)], session_id=None, now=101)
+    store.observe(watcher, [_seen(), _seen(OTHER_PR), _seen(THIRD_PR)], session_id=None, now=100)
     store.observe(bobs, [_seen()], session_id=None, now=100)
+    store.finish(watcher, [WatchFinish(SOURCE_TYPE, OTHER_PR)], session_id=None, now=120)
+    store.finish(watcher, [WatchFinish(SOURCE_TYPE, PR)], session_id=None, now=150)
+    store.finish(bobs, [WatchFinish(SOURCE_TYPE, PR)], session_id=None, now=110)
 
-    missing = store.finish(
-        watcher.id,
-        [("github", PR), ("github", "https://example.com/gone")],
-        owner_user_id=ALICE,
-        now=150,
-    )
     active = store.list(watcher.id, owner_user_id=ALICE).data
-    store.observe(watcher, [_seen()], session_id=None, now=200)
-    reactivated = store.list(watcher.id, owner_user_id=ALICE).data
-    store.finish(watcher.id, [("github", OTHER_PR)], owner_user_id=ALICE, now=300)
-    kept = store.purge_done(watcher.id, owner_user_id=ALICE, before=300)
-    purged = store.purge_done(watcher.id, owner_user_id=ALICE, before=301)
+    done_before_both = store.list_done_before(watcher.id, owner_user_id=ALICE, before=151)
+    done_before_the_last = store.list_done_before(watcher.id, owner_user_id=ALICE, before=150)
+    kept = store.purge_done(watcher.id, owner_user_id=ALICE, before=120)
+    purged = store.purge_done(watcher.id, owner_user_id=ALICE, before=151)
 
-    assert missing == [("github", "https://example.com/gone")]
-    assert [item.source_key for item in active] == [OTHER_PR]
-    assert [(item.source_key, item.done_at) for item in reactivated] == [
-        (PR, None),
-        (OTHER_PR, None),
+    assert [item.source_key for item in active] == [THIRD_PR]
+    assert [(item.source_key, item.done_at) for item in done_before_both] == [
+        (OTHER_PR, 120),
+        (PR, 150),
     ]
-    assert (kept, purged) == (0, 1)
-    assert [item.source_key for item in store.list(watcher.id, owner_user_id=ALICE).data] == [PR]
+    assert [item.source_key for item in done_before_the_last] == [OTHER_PR]
+    assert store.list_done_before(watcher.id, owner_user_id=BOB, before=151) == []
+    assert (kept, purged) == (0, 2)
+    remaining = store.list(watcher.id, owner_user_id=ALICE, statuses=("active", "done")).data
+    assert [item.source_key for item in remaining] == [THIRD_PR]
     assert store.count(watcher.id, owner_user_id=BOB) == 0
-    assert store.count(bobs.id, owner_user_id=BOB) == 1
+    assert store.count(bobs.id, owner_user_id=BOB, statuses=("done",)) == 1

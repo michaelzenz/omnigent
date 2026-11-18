@@ -11,15 +11,19 @@ _ITEM_SCHEMA: dict[str, Any] = {
     "properties": {
         "source": {
             "type": "string",
-            "description": 'The system the item lives in, e.g. "github" or "jira".',
+            "description": (
+                "The source type: the system and the kind of item, in lowercase words joined "
+                'by dots, e.g. "github.pull_request" or "jira.issue". For a source that '
+                "sessions follow, use the type of their subscription."
+            ),
         },
         "source_key": {
             "type": "string",
             "description": (
                 "What you track there, in its canonical form: a pull request as "
                 "https://github.com/<org>/<repo>/pull/<number> (no query, fragment, trailing "
-                "slash or page such as /files), a ticket as its key. Tasks follow keys by an "
-                "exact match, so always write a key the same way."
+                "slash or page such as /files), a ticket as its key. Sessions follow keys by "
+                "an exact match, so always write a key the same way."
             ),
         },
         "offsets": {
@@ -40,7 +44,11 @@ _ITEM_SCHEMA: dict[str, Any] = {
         },
         "summary": {
             "type": "string",
-            "description": 'One line that explains a change, e.g. "CI failed: unit-tests".',
+            "description": (
+                "One line that explains a change and who made it, e.g. "
+                '"CI failed: unit-tests" or "alice commented: please add a test". For '
+                "'done', why the item is done, e.g. \"Merged\"."
+            ),
         },
         "details": {
             "type": "object",
@@ -71,13 +79,14 @@ class WatchItemsTool(Tool):
         return (
             "Track the things you watch across your runs; you can track any number of items. "
             "'observe' sends each item's current state as named offsets; the server compares "
-            "them with the last run and reports each change to the managers of the tasks that "
-            "follow the item's source_key, else to the broker, so do not report changes any "
-            "other way. A new item is a silent first look unless "
-            "you set announce. 'list' returns a page of your items with the offsets you saw "
-            "last, in the order you started to track them; while has_more is true, pass the "
-            "page's last_id as after for the next page. 'done' stops checking items, e.g. "
-            "merged pull requests; observing an item again makes it active."
+            "them with the last run and reports each change to the sessions that follow the "
+            "item's source_key, else to the broker, so do not report changes any other way. "
+            "A new item is a silent first look unless you set announce. 'list' returns a page "
+            "of your items with the offsets you saw last, in the order you started to track "
+            "them; while has_more is true, pass the page's last_id as after for the next "
+            "page. 'done' marks items finished, e.g. merged pull requests, and tells the "
+            "sessions that follow them; an observation that changes a done item's offsets "
+            "reopens it."
         )
 
     def get_schema(self) -> dict[str, Any]:
@@ -94,14 +103,15 @@ class WatchItemsTool(Tool):
                             "enum": list(WATCH_ITEMS_ACTIONS),
                             "description": (
                                 "'list' reads your items, 'observe' reports what you see "
-                                "now, and 'done' stops checking items."
+                                "now, and 'done' marks items finished."
                             ),
                         },
                         "items": {
                             "type": "array",
                             "description": (
                                 "For 'observe', up to 100 items, each with its offsets. For "
-                                "'done', up to 100 items; only source and source_key count."
+                                "'done', up to 100 items; only source, source_key and "
+                                "summary count."
                             ),
                             "items": _ITEM_SCHEMA,
                         },

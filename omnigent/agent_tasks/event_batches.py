@@ -79,19 +79,19 @@ def broker_batches(
     return batches
 
 
-def manager_batches(
-    events: Sequence[TaskEvent], *, now: int, manager_idle: bool
+def session_batches(
+    events: Sequence[TaskEvent], *, now: int, session_idle: bool
 ) -> list[list[TaskEvent]]:
     """
-    Return the batches of one manager's waiting events to queue now.
+    Return the batches of the waiting events routed to one session to queue now.
 
     Session events go out at once, one batch per session. All other events
     share one batch, which goes out once it holds :data:`BATCH_MAX_EVENTS`, or
-    while the manager is idle and its oldest event is older than
+    while the target session is idle and its oldest event is older than
     :data:`PARTIAL_BATCH_MIN_AGE_S`.
     """
     batches, others = _split_session_events(events)
-    if others and _due(others, now=now, session_idle=manager_idle):
+    if others and _due(others, now=now, session_idle=session_idle):
         batches.append(others)
     return batches
 

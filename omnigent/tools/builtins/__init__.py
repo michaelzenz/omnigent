@@ -206,6 +206,18 @@ def _create_watch_items(config: dict[str, str]) -> Tool:
     return WatchItemsTool()
 
 
+def _create_source_watchers(config: dict[str, str]) -> Tool:
+    """
+    Lazy factory for SourceWatchersTool.
+
+    :param config: Tool config (unused).
+    :returns: A SourceWatchersTool instance.
+    """
+    from omnigent.tools.builtins.source_watchers import SourceWatchersTool
+
+    return SourceWatchersTool()
+
+
 def _create_system_notice(config: dict[str, str]) -> Tool:
     """
     Lazy factory for SystemNoticeTool.
@@ -332,6 +344,7 @@ _BUILTIN_REGISTRY: dict[str, _BuiltinFactory | None] = {
     "pmv2_read": _create_pmv2_read,
     "system_notice": _create_system_notice,
     "watch_items": _create_watch_items,
+    "source_watchers": _create_source_watchers,
     "export_agent": _create_export_agent,
     # Framework-owned: need runtime context. ``web_fetch`` is
     # constructed by ToolManager before reaching this registry.
@@ -369,6 +382,7 @@ _BUILTIN_REGISTRY: dict[str, _BuiltinFactory | None] = {
     "browser_screenshot": None,
     "ui_open_file": None,
     "ui_stamp_folders": None,
+    "event_subscriptions": None,
 }
 
 # Hindsight long-term memory (optional ``hindsight`` extra). Registered only

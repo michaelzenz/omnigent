@@ -1,7 +1,7 @@
 """Migration ``1306afe778d8`` adds task subscriptions.
 
-At head a task follows a key once, and ``watch_items`` has no task column.
-The downgrade drops the table.
+At that revision a task follows a key once, and ``watch_items`` has no task
+column. The downgrade drops the table; a later revision drops it at head.
 """
 
 from __future__ import annotations

@@ -197,7 +197,7 @@ def test_an_event_left_waiting_is_offered_again_until_its_delivery_cap(
         event_ids=[left],
     )
     deliver(first, NOW)
-    events.route_to_manager([routed], owner_user_id=ALICE, manager_id=f"{400:032x}")
+    events.route_to_session([routed], owner_user_id=ALICE, session_id=f"{400:032x}")
     offered_again = waiting()
     second = _enqueue(queue, BROKER_SESSION, left)
     carried = [event.id for event in events.list(owner_user_id=ALICE, queue_item_ids=[second])]
@@ -233,11 +233,17 @@ def test_an_event_leaves_its_item_when_it_changes_hands(
     db_uri: str, queue: SqlAlchemyAgentQueueStore, events: SqlAlchemyTaskEventStore
 ) -> None:
     managers = SqlAlchemyManagerStore(db_uri)
-    manager = managers.create(next(_ids), owner_user_id=ALICE, title="Storage", description="S3")
+    manager = managers.create(
+        next(_ids),
+        owner_user_id=ALICE,
+        title="Storage",
+        description="S3",
+        conversation_id=MANAGER_SESSION,
+    )
     unrouted = _event(events)
     _enqueue(queue, BROKER_SESSION, unrouted)
 
-    events.route_to_manager([unrouted], owner_user_id=ALICE, manager_id=manager.id)
+    events.route_to_session([unrouted], owner_user_id=ALICE, session_id=MANAGER_SESSION)
     routed_released = _item_of(events, unrouted)
     _enqueue(queue, MANAGER_SESSION, unrouted)
     managers.delete(manager.id, owner_user_id=ALICE)
@@ -245,7 +251,32 @@ def test_an_event_leaves_its_item_when_it_changes_hands(
     assert routed_released is None
     returned = events.get(unrouted, owner_user_id=ALICE)
     assert returned is not None
-    assert (returned.state, returned.queue_item_id) == ("unrouted", None)
+    assert (returned.state, returned.target_session_id, returned.queue_item_id) == (
+        "unrouted",
+        None,
+        None,
+    )
+
+
+def test_the_queue_takes_worker_messages_and_source_type_requests(
+    queue: SqlAlchemyAgentQueueStore,
+) -> None:
+    message = queue.enqueue(
+        next(_ids),
+        owner_user_id=ALICE,
+        target_session_id=MANAGER_SESSION,
+        kind="worker_message",
+        payload={"message": "Rebase on main"},
+    )
+    request = queue.enqueue(
+        next(_ids), owner_user_id=ALICE, target_session_id=BROKER_SESSION, kind="source_types"
+    )
+
+    assert message is not None and request is not None
+    assert [(item.kind, item.payload) for item in queue.list(owner_user_id=ALICE)] == [
+        ("worker_message", {"message": "Rebase on main"}),
+        ("source_types", {}),
+    ]
 
 
 def test_the_background_scans_cover_every_workspace(

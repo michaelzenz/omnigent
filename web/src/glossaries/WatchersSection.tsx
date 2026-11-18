@@ -182,23 +182,32 @@ function WatcherCard({ watcher }: { watcher: Watcher }) {
       data-testid={`watcher-card-${watcher.id}`}
     >
       <div className="flex items-center gap-2">
-        <h3 className="min-w-0 flex-1 truncate text-base font-semibold">{watcher.name}</h3>
+        <h3 className="min-w-0 truncate text-base font-semibold">{watcher.name}</h3>
+        {watcher.builtin && (
+          <Badge variant="secondary" title="Built in: checks the source types no watcher covers">
+            Built-in
+          </Badge>
+        )}
+        <span className="flex-1" />
         {watcher.session_id && (
           <OpenSessionLink
             sessionId={watcher.session_id}
             label={`Open the ${watcher.name} session`}
           />
         )}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={`Delete watcher ${watcher.name}`}
-          title="Delete the watcher and its session"
-          onClick={() => setConfirmingDelete(true)}
-        >
-          <Trash2Icon className="text-destructive" aria-hidden />
-        </Button>
+        {!watcher.builtin && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Delete watcher ${watcher.name}`}
+            title="Delete the watcher and its session"
+            onClick={() => setConfirmingDelete(true)}
+          >
+            <Trash2Icon className="text-destructive" aria-hidden />
+          </Button>
+        )}
       </div>
+      <SourceTypes watcher={watcher} />
       {detail.data ? (
         <WatcherForm
           key={formVersion}
@@ -232,6 +241,28 @@ function WatcherCard({ watcher }: { watcher: Watcher }) {
         />
       )}
     </section>
+  );
+}
+
+/** The source types the watcher checks for the sessions that follow sources. */
+function SourceTypes({ watcher }: { watcher: Watcher }) {
+  const label = watcher.builtin ? "Checks types without a watcher" : "Source types";
+  return (
+    <div
+      className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground"
+      data-testid={`watcher-source-types-${watcher.id}`}
+    >
+      <span>{label}:</span>
+      {watcher.source_types.length === 0 ? (
+        <span>none</span>
+      ) : (
+        watcher.source_types.map((sourceType) => (
+          <Badge key={sourceType} variant="outline" className="font-mono">
+            {sourceType}
+          </Badge>
+        ))
+      )}
+    </div>
   );
 }
 

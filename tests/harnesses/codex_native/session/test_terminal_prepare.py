@@ -15,7 +15,11 @@ import pytest
 
 from omnigent._runner_startup import RunnerStartupProgress
 from omnigent.harnesses.codex_native import main as codex_native
-from omnigent.runtime.prompt import WORKSPACE_IMAGE_INSTRUCTION
+from omnigent.runtime.prompt import (
+    EVENT_NOTICE_INSTRUCTION,
+    WORKSPACE_IMAGE_INSTRUCTION,
+    build_native_startup_instructions,
+)
 from tests.harnesses.codex_native.session._support import (
     _write_source_rollout,
 )
@@ -32,14 +36,16 @@ def test_wrapper_spec_startup_instructions_resolves_prompt(tmp_path: Path) -> No
     result = codex_native._wrapper_spec_startup_instructions(spec_path)
     assert result is not None
     assert "Codex is running in the session terminal" in result
-    assert result.endswith(WORKSPACE_IMAGE_INSTRUCTION)
+    assert result.endswith(f"{WORKSPACE_IMAGE_INSTRUCTION}\n\n{EVENT_NOTICE_INSTRUCTION}")
 
 
 def test_wrapper_spec_startup_instructions_degrades_on_malformed_spec(tmp_path: Path) -> None:
     """A malformed wrapper spec must not block the terminal launch."""
     bad_spec = tmp_path / "bad.yaml"
     bad_spec.write_text("not: [valid, agent, spec")
-    assert codex_native._wrapper_spec_startup_instructions(bad_spec) == WORKSPACE_IMAGE_INSTRUCTION
+    assert codex_native._wrapper_spec_startup_instructions(
+        bad_spec
+    ) == build_native_startup_instructions(None)
 
 
 @pytest.mark.asyncio

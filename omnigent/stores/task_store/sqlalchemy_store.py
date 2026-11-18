@@ -14,7 +14,6 @@ from omnigent.db.account_authority import require_active_account
 from omnigent.db.db_models import (
     SqlTask,
     SqlTaskAsset,
-    SqlTaskSubscription,
     SqlWorker,
     current_workspace_id,
 )
@@ -363,7 +362,7 @@ class SqlAlchemyTaskStore(TaskStore):
         return run_write_transaction(self._session_immediate, "move_task_to_board_end", write)
 
     def delete(self, task_id: str, *, owner_user_id: str | None) -> bool:
-        """Permanently delete the owner's task, its workers, assets and subscriptions.
+        """Permanently delete the owner's task, its workers and its assets.
 
         :returns: Whether the task existed.
         """
@@ -383,12 +382,6 @@ class SqlAlchemyTaskStore(TaskStore):
                 delete(SqlTaskAsset).where(
                     SqlTaskAsset.workspace_id == current_workspace_id(),
                     SqlTaskAsset.task_id == task_id,
-                )
-            )
-            session.execute(
-                delete(SqlTaskSubscription).where(
-                    SqlTaskSubscription.workspace_id == current_workspace_id(),
-                    SqlTaskSubscription.task_id == task_id,
                 )
             )
             session.delete(row)

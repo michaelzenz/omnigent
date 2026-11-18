@@ -9,7 +9,13 @@ from sqlalchemy import ColumnElement, and_, asc, delete, select
 from sqlalchemy.orm import Session
 
 from omnigent.db.account_authority import require_active_account
-from omnigent.db.db_models import SqlRoleSchedule, SqlWatcher, SqlWatchItem, current_workspace_id
+from omnigent.db.db_models import (
+    SqlRoleSchedule,
+    SqlSourceWatcher,
+    SqlWatcher,
+    SqlWatchItem,
+    current_workspace_id,
+)
 from omnigent.db.utils import (
     get_or_create_engine,
     make_named_managed_session_maker,
@@ -31,6 +37,7 @@ def _to_entity(row: SqlWatcher) -> Watcher:
         manual=row.manual,
         model=row.model,
         conversation_id=row.conversation_id,
+        builtin=row.builtin,
     )
 
 
@@ -79,6 +86,7 @@ class SqlAlchemyWatcherStore(WatcherStore):
         description: str = "",
         manual: str | None = None,
         model: str | None = None,
+        builtin: bool = False,
     ) -> Watcher:
         """Insert a watcher. Its session comes with its first run."""
         now = now_epoch()
@@ -92,6 +100,7 @@ class SqlAlchemyWatcherStore(WatcherStore):
                 description=description,
                 manual=manual,
                 model=model,
+                builtin=builtin,
                 created_at=now,
                 updated_at=now,
             )
@@ -104,6 +113,17 @@ class SqlAlchemyWatcherStore(WatcherStore):
         """Return the owner's watcher, or ``None`` when missing or someone else's."""
         with self._session("select_watcher_by_id") as session:
             row = _owned_row(session, watcher_id, owner_user_id)
+            return _to_entity(row) if row is not None else None
+
+    def get_builtin(self, *, owner_user_id: str | None) -> Watcher | None:
+        """Return the owner's built-in fallback watcher, or ``None`` before it exists."""
+        stmt = (
+            select(SqlWatcher)
+            .where(_owned(owner_user_id), SqlWatcher.builtin.is_(True))
+            .order_by(asc(SqlWatcher.created_at), asc(SqlWatcher.id))
+        )
+        with self._session("select_builtin_watcher") as session:
+            row = session.execute(stmt).scalars().first()
             return _to_entity(row) if row is not None else None
 
     def get_by_conversation_id(
@@ -168,7 +188,7 @@ class SqlAlchemyWatcherStore(WatcherStore):
         return run_write_transaction(self._session_immediate, "update_watcher", write)
 
     def delete(self, watcher_id: str, *, owner_user_id: str | None) -> Watcher | None:
-        """Delete the owner's watcher, its schedule and its tracked items in one transaction."""
+        """Delete the owner's watcher, its schedule, its tracked items and its source types."""
 
         def write(session: Session) -> Watcher | None:
             require_active_account(session, owner_user_id)
@@ -188,6 +208,13 @@ class SqlAlchemyWatcherStore(WatcherStore):
                     SqlWatchItem.workspace_id == current_workspace_id(),
                     SqlWatchItem.owner_user_id == owner_user_id,
                     SqlWatchItem.watcher_id == deleted.id,
+                )
+            )
+            session.execute(
+                delete(SqlSourceWatcher).where(
+                    SqlSourceWatcher.workspace_id == current_workspace_id(),
+                    SqlSourceWatcher.owner_user_id == owner_user_id,
+                    SqlSourceWatcher.watcher_id == deleted.id,
                 )
             )
             session.delete(row)

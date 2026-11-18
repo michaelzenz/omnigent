@@ -38,6 +38,7 @@ allowed_builtin_tools:
   - sys_scheduled_task_update
   - sys_scheduled_task_delete
   - pmv2_api
+  - event_subscriptions
 
 # system_prompt_mode: replace requires non-empty instructions.
 instructions: |

@@ -12,6 +12,8 @@ from omnigent.stores.manager_store import ManagerStore
 from omnigent.stores.manager_store.sqlalchemy_store import SqlAlchemyManagerStore
 from omnigent.stores.role_schedule_store import RoleScheduleStore
 from omnigent.stores.role_schedule_store.sqlalchemy_store import SqlAlchemyRoleScheduleStore
+from omnigent.stores.subscription_store import SubscriptionStore
+from omnigent.stores.subscription_store.sqlalchemy_store import SqlAlchemySubscriptionStore
 from omnigent.stores.system_notice_store import SystemNoticeStore
 from omnigent.stores.system_notice_store.sqlalchemy_store import SqlAlchemySystemNoticeStore
 from omnigent.stores.task_asset_store import TaskAssetStore
@@ -22,10 +24,6 @@ from omnigent.stores.task_event_store import TaskEventStore
 from omnigent.stores.task_event_store.sqlalchemy_store import SqlAlchemyTaskEventStore
 from omnigent.stores.task_store import TaskStore
 from omnigent.stores.task_store.sqlalchemy_store import SqlAlchemyTaskStore
-from omnigent.stores.task_subscription_store import TaskSubscriptionStore
-from omnigent.stores.task_subscription_store.sqlalchemy_store import (
-    SqlAlchemyTaskSubscriptionStore,
-)
 from omnigent.stores.watch_item_store import WatchItemStore
 from omnigent.stores.watch_item_store.sqlalchemy_store import SqlAlchemyWatchItemStore
 from omnigent.stores.watcher_store import WatcherStore
@@ -42,7 +40,7 @@ class BoardStores:
     :param tasks: The board's tasks.
     :param managers: The managers that own the tasks.
     :param workers: The sessions working on the tasks.
-    :param events: The signals the broker routes to managers.
+    :param events: The signals that go to the sessions that follow their sources.
     :param fyi_clusters: Events that need no task, kept for the user to read.
     :param assets: The links the tasks carry.
     :param system_notices: The notice pinned on each user's board.
@@ -50,7 +48,8 @@ class BoardStores:
     :param role_schedules: When each user's role sessions get their scheduled runs.
     :param watchers: The watchers that report changes in the things they watch.
     :param watch_items: What each watcher tracks, with what it saw last.
-    :param subscriptions: The keys that the tasks follow, which route events.
+    :param subscriptions: The sources that sessions follow, which route events, and
+        the watcher of each source type.
     :param embeddings: The search vectors of the tasks.
     """
 
@@ -65,7 +64,7 @@ class BoardStores:
     role_schedules: RoleScheduleStore
     watchers: WatcherStore
     watch_items: WatchItemStore
-    subscriptions: TaskSubscriptionStore
+    subscriptions: SubscriptionStore
     embeddings: TaskEmbeddingStore
 
 
@@ -91,6 +90,6 @@ def open_board_stores(conversation_store: object) -> BoardStores | None:
         role_schedules=SqlAlchemyRoleScheduleStore(location),
         watchers=SqlAlchemyWatcherStore(location),
         watch_items=SqlAlchemyWatchItemStore(location),
-        subscriptions=SqlAlchemyTaskSubscriptionStore(location),
+        subscriptions=SqlAlchemySubscriptionStore(location),
         embeddings=SqlAlchemyTaskEmbeddingStore(location),
     )
