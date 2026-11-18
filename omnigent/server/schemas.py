@@ -6550,10 +6550,15 @@ class AgentTaskWorkerMessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class AgentTaskWorkerMessageSent(BaseModel):
-    """A message that the session of one of the caller's workers took; it starts a turn."""
+class AgentTaskWorkerMessageQueued(BaseModel):
+    """A message queued for the session of one of the caller's workers.
+
+    It goes in as the caller's message when the session is free, and starts a
+    turn. ``id`` is the queue item's id.
+    """
 
     object: Literal["agent.task.worker_message"] = "agent.task.worker_message"
+    id: str
     worker_id: str
     session_id: str
 

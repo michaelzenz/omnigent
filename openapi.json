@@ -2511,25 +2511,13 @@
         "title": "AgentTaskWorkerList",
         "type": "object"
       },
-      "AgentTaskWorkerMessageRequest": {
-        "additionalProperties": false,
-        "description": "A message for the session of one of the caller's workers.",
+      "AgentTaskWorkerMessageQueued": {
+        "description": "A message queued for the session of one of the caller's workers.\n\nIt goes in as the caller's message when the session is free, and starts a\nturn. `id` is the queue item's id.",
         "properties": {
-          "message": {
-            "maxLength": 8000,
-            "title": "Message",
+          "id": {
+            "title": "Id",
             "type": "string"
-          }
-        },
-        "required": [
-          "message"
-        ],
-        "title": "AgentTaskWorkerMessageRequest",
-        "type": "object"
-      },
-      "AgentTaskWorkerMessageSent": {
-        "description": "A message that the session of one of the caller's workers took; it starts a turn.",
-        "properties": {
+          },
           "object": {
             "const": "agent.task.worker_message",
             "default": "agent.task.worker_message",
@@ -2546,10 +2534,27 @@
           }
         },
         "required": [
+          "id",
           "worker_id",
           "session_id"
         ],
-        "title": "AgentTaskWorkerMessageSent",
+        "title": "AgentTaskWorkerMessageQueued",
+        "type": "object"
+      },
+      "AgentTaskWorkerMessageRequest": {
+        "additionalProperties": false,
+        "description": "A message for the session of one of the caller's workers.",
+        "properties": {
+          "message": {
+            "maxLength": 8000,
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "AgentTaskWorkerMessageRequest",
         "type": "object"
       },
       "AgentTaskWorkerResponse": {
@@ -31456,7 +31461,7 @@
     },
     "/v1/task-workers/{worker_id}/messages": {
       "post": {
-        "description": "Send a message into the session of one of the caller's workers.\n\nThe message goes in as the caller's message and starts a turn. While the\nsession runs a turn it takes no message: the call fails with 409, and the\ncaller sends the message again after the turn ends.",
+        "description": "Queue a message for the session of one of the caller's workers.\n\nThe message goes in as the caller's message when the session is free, and\nstarts a turn; the messages for one session go in one at a time, in order.\nA request from an agent must come from a private session, as for a start.",
         "operationId": "message_worker_v1_task_workers__worker_id__messages_post",
         "parameters": [
           {
@@ -31484,7 +31489,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentTaskWorkerMessageSent"
+                  "$ref": "#/components/schemas/AgentTaskWorkerMessageQueued"
                 }
               }
             },

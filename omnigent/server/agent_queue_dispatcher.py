@@ -1,8 +1,9 @@
-"""Deliver queued GlobalHub messages to role sessions, one turn at a time per session.
+"""Deliver queued GlobalHub messages to role and worker sessions, one turn at a time.
 
 Every few seconds the packagers queue items from waiting board work. Each pass
 claims every session's oldest queued item, checks that its target still serves
-its role, writes the message text and sends it. A sent item holds its session
+its role (or, for a worker message, still is that worker's session), writes the
+message text and sends it. A sent item holds its session
 until the turn handling it ends: main's status hook reports the turn end, and
 a session idle for a minute after the send counts too. A turn whose runner died
 in a crash ends the next time the dispatcher reads the session, which settles
@@ -52,6 +53,7 @@ _STALE_SWEEP_INTERVAL_S = 60
 SEARCH_REFRESH_INTERVAL_S = 30
 _BASE_RETRY_DELAY_S = 30
 _MAX_RETRY_DELAY_S = 5 * 60
+WORKER_MESSAGE_KIND = "worker_message"
 
 # Writes an item's message text, or returns None when nothing is left to say.
 ItemRenderer = Callable[[AgentQueueItem], str | None]
@@ -73,7 +75,7 @@ def retry_delay_s(attempts: int) -> int:
 
 
 class AgentQueueDispatcher:
-    """Sends each GlobalHub role session its queued messages, one turn at a time."""
+    """Sends each GlobalHub role or worker session its queued messages, one turn at a time."""
 
     def __init__(
         self,
@@ -89,7 +91,7 @@ class AgentQueueDispatcher:
         clock: Callable[[], float] = time.time,
     ) -> None:
         """
-        :param board: Holds the queue and the managers.
+        :param board: Holds the queue, the managers and the workers.
         :param sessions: Where role sessions and their records live.
         :param send_deps: How a send reaches a session's runner.
         :param renderers: Writes the message text for each item kind.
@@ -105,6 +107,7 @@ class AgentQueueDispatcher:
         self._queue = board.queue
         self._managers = board.managers
         self._watchers = board.watchers
+        self._workers = board.workers
         self._task_store = board.tasks
         self._sessions = sessions
         self._send_deps = send_deps
@@ -285,6 +288,9 @@ class AgentQueueDispatcher:
         )
 
     def _target_is_current(self, item: AgentQueueItem) -> bool:
+        if item.kind == WORKER_MESSAGE_KIND:
+            worker = self._workers.get(item.payload["worker_id"], owner_user_id=item.owner_user_id)
+            return worker is not None and worker.session_id == item.target_session_id
         conv = self._send_deps.conversation_store.get_conversation(item.target_session_id)
         return conv is not None and is_role_session_current(
             conv,

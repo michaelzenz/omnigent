@@ -91,7 +91,7 @@ from omnigent.server import (
     session_pull_requests,
     shutdown_state,
 )
-from omnigent.server.agent_queue_dispatcher import AgentQueueDispatcher
+from omnigent.server.agent_queue_dispatcher import WORKER_MESSAGE_KIND, AgentQueueDispatcher
 from omnigent.server.agent_queue_packagers import (
     BrokerPackager,
     EventNoticeWriter,
@@ -100,6 +100,7 @@ from omnigent.server.agent_queue_packagers import (
     ScheduledRunWriter,
     SpawnManagersWriter,
     write_notice_click,
+    write_worker_message,
 )
 from omnigent.server.agent_task_session_events import (
     SessionEventReporter,
@@ -4389,6 +4390,7 @@ def create_app(
                     "notice_click": write_notice_click,
                     "spawn_managers": SpawnManagersWriter(board=board_stores).write,
                     "scheduled_run": ScheduledRunWriter(board=board_stores).write,
+                    WORKER_MESSAGE_KIND: write_worker_message,
                 },
                 packagers=[
                     BrokerPackager(

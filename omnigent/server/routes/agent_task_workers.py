@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from omnigent.agent_tasks.board_stores import BoardStores
 from omnigent.entities import Worker
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.server.agent_queue_dispatcher import WORKER_MESSAGE_KIND
 from omnigent.server.auth import LEVEL_OWNER, AuthProvider
 from omnigent.server.routes._auth_helpers import require_access, require_user
 from omnigent.server.routes._content_type import require_json_content_type
@@ -20,12 +21,13 @@ from omnigent.server.schemas import (
     AdoptAgentTaskSessionRequest,
     AgentTaskSessionAdoption,
     AgentTaskWorkerList,
+    AgentTaskWorkerMessageQueued,
     AgentTaskWorkerMessageRequest,
-    AgentTaskWorkerMessageSent,
     AgentTaskWorkerResponse,
     StartAgentTaskWorkerRequest,
     StartedAgentTaskWorker,
 )
+from omnigent.server.session_orchestration import require_named_source_private
 from omnigent.stores import ConversationStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.worker_store import WorkerStore
@@ -48,8 +50,8 @@ def create_agent_task_workers_router(
     :param permission_store: Checks that the caller owns an adopted session;
         ``None`` on servers without permissions.
     :param auth_provider: Identifies the caller; ``None`` is single-user mode.
-    :param starter: Starts sessions for tasks and sends messages to workers;
-        ``None`` on servers without GlobalHub settings.
+    :param starter: Starts sessions for tasks; ``None`` on servers without
+        GlobalHub settings, which also cannot deliver messages to workers.
     :returns: A configured :class:`APIRouter`.
     """
     router = APIRouter()
@@ -121,17 +123,17 @@ def create_agent_task_workers_router(
     @router.post(
         "/task-workers/{worker_id}/messages",
         status_code=202,
-        response_model=AgentTaskWorkerMessageSent,
+        response_model=AgentTaskWorkerMessageQueued,
         dependencies=[Depends(require_json_content_type), Depends(require_trusted_origin)],
     )
     async def message_worker(
         request: Request, worker_id: str, body: AgentTaskWorkerMessageRequest
-    ) -> AgentTaskWorkerMessageSent:
-        """Send a message into the session of one of the caller's workers.
+    ) -> AgentTaskWorkerMessageQueued:
+        """Queue a message for the session of one of the caller's workers.
 
-        The message goes in as the caller's message and starts a turn. While the
-        session runs a turn it takes no message: the call fails with 409, and the
-        caller sends the message again after the turn ends.
+        The message goes in as the caller's message when the session is free, and
+        starts a turn; the messages for one session go in one at a time, in order.
+        A request from an agent must come from a private session, as for a start.
         """
         user_id = require_user(request, auth_provider)
         if starter is None:
@@ -139,8 +141,27 @@ def create_agent_task_workers_router(
                 "Messaging workers needs GlobalHub settings on this server",
                 code=ErrorCode.INVALID_INPUT,
             )
-        worker = await starter.send_message(request, worker_id, body.message, user_id=user_id)
-        return AgentTaskWorkerMessageSent(worker_id=worker.id, session_id=worker.session_id)
+        await asyncio.to_thread(
+            require_named_source_private, request, user_id, conversation_store, permission_store
+        )
+        worker = await asyncio.to_thread(workers.get, worker_id, owner_user_id=user_id)
+        if worker is None:
+            raise OmnigentError("worker not found", code=ErrorCode.NOT_FOUND)
+        session = await asyncio.to_thread(conversation_store.get_conversation, worker.session_id)
+        if session is None or session.archived:
+            raise OmnigentError("the worker's session no longer exists", code=ErrorCode.NOT_FOUND)
+        item_id = uuid.uuid4().hex
+        await asyncio.to_thread(
+            board.queue.enqueue,
+            item_id,
+            owner_user_id=user_id,
+            target_session_id=worker.session_id,
+            kind=WORKER_MESSAGE_KIND,
+            payload={"worker_id": worker.id, "message": body.message},
+        )
+        return AgentTaskWorkerMessageQueued(
+            id=item_id, worker_id=worker.id, session_id=worker.session_id
+        )
 
     @router.get("/agent-tasks/{task_id}/workers", response_model=AgentTaskWorkerList)
     async def list_task_workers(request: Request, task_id: str) -> AgentTaskWorkerList:

@@ -267,12 +267,10 @@ pmv2_api(
 (`GET /v1/agent-tasks/<task_id>/workers`) give each worker's `id` and
 `session_id`. When the titles do not show which worker did the work, read
 the sessions with `sys_session_get_history`.
-- **The message.** It goes in as the user's message, and the session starts a
-turn for it. The session knows its work, so write only what changed and what
-to do now.
-- **Busy worker.** While the session runs a turn, the call fails with 409 and
-sends nothing. Send the message again when that worker's next
-`session.turn.finished` event comes to you.
+- **The message.** The server queues it and sends it as the user's message
+when the session is free, so a busy worker gets it after its current turn.
+Messages to one worker go in one at a time, in order, and each starts a turn.
+The session knows its work, so write only what changed and what to do now.
 
 ## Start a worker session
 

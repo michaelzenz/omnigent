@@ -1,8 +1,8 @@
 """GlobalHub delivery queue persistence.
 
-Each item is a message for one role session. Reads and writes are scoped to
-the item's owner, except the dispatcher's claim, which scans every owner and
-keeps each item's owner on it.
+Each item is a message for one role or worker session. Reads and writes are
+scoped to the item's owner, except the dispatcher's claim, which scans every
+owner and keeps each item's owner on it.
 """
 
 from __future__ import annotations
@@ -42,8 +42,8 @@ class AgentQueueStore(ABC):
         :param item_id: Pre-generated id (bare 32-char hex).
         :param owner_user_id: The owner, or ``None`` in single-user mode.
         :param target_session_id: The session the message goes to.
-        :param kind: ``"events"``, ``"notice_click"``, ``"spawn_managers"`` or
-            ``"scheduled_run"``.
+        :param kind: ``"events"``, ``"notice_click"``, ``"spawn_managers"``,
+            ``"scheduled_run"`` or ``"worker_message"``.
         :param payload: Inputs for the message text.
         :param event_ids: The owner's task events the item carries.
         :returns: The queued item, or ``None``, changing nothing, when an event

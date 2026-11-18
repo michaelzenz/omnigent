@@ -310,8 +310,8 @@ class AgentQueueItem:
     :param id: UUID primary key (bare 32-char hex string, no dashes).
     :param owner_user_id: Owning user, or ``None`` in single-user mode.
     :param target_session_id: The session the message goes to.
-    :param kind: ``"events"``, ``"notice_click"``, ``"spawn_managers"`` or
-        ``"scheduled_run"``.
+    :param kind: ``"events"``, ``"notice_click"``, ``"spawn_managers"``,
+        ``"scheduled_run"`` or ``"worker_message"``.
     :param state: ``"queued"``, ``"sending"``, ``"sent"`` or ``"done"``.
     :param seq: Arrival order; a session receives its items in this order.
     :param created_at: Unix epoch seconds at row creation.

@@ -505,6 +505,11 @@ def write_notice_click(item: AgentQueueItem) -> str:
     return "\n".join(lines)
 
 
+def write_worker_message(item: AgentQueueItem) -> str:
+    """Write a worker's message for a ``worker_message`` queue item: the text its sender wrote."""
+    return item.payload["message"]
+
+
 def _tags(event: TaskEvent) -> list[dict[str, str]]:
     return [{"tag_type": tag.tag_type, "tag": tag.tag} for tag in event.tags]
 

@@ -17,9 +17,11 @@ from omnigent.db.db_models import current_workspace_id, workspace_scope
 from omnigent.entities import AgentQueueItem, Conversation
 from omnigent.server.agent_queue_dispatcher import (
     TASK_IDLE_AFTER_S,
+    WORKER_MESSAGE_KIND,
     AgentQueueDispatcher,
     Packager,
 )
+from omnigent.server.agent_queue_packagers import write_worker_message
 from omnigent.server.agent_task_delivery import SendResult, SessionSendDeps
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -69,7 +71,10 @@ class _Harness:
             send_deps=SessionSendDeps(
                 conversation_store=conversations, agent_store=agents, app_state=SimpleNamespace()
             ),
-            renderers={"events": lambda item: item.payload.get("text")},
+            renderers={
+                "events": lambda item: item.payload.get("text"),
+                WORKER_MESSAGE_KIND: write_worker_message,
+            },
             packagers=packagers,
             send=self._send,
             settle_orphans=self._settle_orphans,
@@ -110,6 +115,31 @@ class _Harness:
             kind="events",
             payload={"text": text} if text is not None else None,
             event_ids=event_ids,
+        )
+        assert item is not None
+        return item.id
+
+    def worker(self) -> tuple[str, str]:
+        """Return a plain session and the id of its worker on a new task."""
+        task_id = uuid.uuid4().hex
+        self.board.tasks.create(task_id, owner_user_id=ALICE, title="PR 12")
+        session = self.sessions.conversation_store.create_conversation(title="Fix S3 retries")
+        worker = self.board.workers.create(
+            uuid.uuid4().hex,
+            owner_user_id=ALICE,
+            task_id=task_id,
+            session_id=session.id,
+            title=None,
+        )
+        return session.id, worker.id
+
+    def message_worker(self, session_id: str, worker_id: str, text: str) -> str:
+        item = self.board.queue.enqueue(
+            uuid.uuid4().hex,
+            owner_user_id=ALICE,
+            target_session_id=session_id,
+            kind=WORKER_MESSAGE_KIND,
+            payload={"worker_id": worker_id, "message": text},
         )
         assert item is not None
         return item.id
@@ -176,6 +206,23 @@ async def test_a_busy_session_is_rechecked_soon_and_a_failed_send_backs_off(
     assert (item.state, item.attempts, item.not_before, item.last_error) == expected
 
 
+async def test_a_worker_message_goes_into_the_workers_session_once_the_session_is_free(
+    harness: _Harness,
+) -> None:
+    session_id, worker_id = harness.worker()
+    item_id = harness.message_worker(session_id, worker_id, "CI failed. Fix it.")
+    harness.replies.append(SendResult("busy"))
+
+    await harness.run()
+    waiting = harness.state(item_id)
+    harness.now += 5
+    await harness.run()
+
+    assert waiting == "queued"
+    assert harness.sent == [(session_id, "CI failed. Fix it.", ALICE)] * 2
+    assert harness.state(item_id) == "sent"
+
+
 async def test_items_without_a_current_target_or_anything_to_say_are_dropped(
     harness: _Harness,
 ) -> None:
@@ -186,11 +233,18 @@ async def test_items_without_a_current_target_or_anything_to_say_are_dropped(
     )
     stranded = harness.enqueue(plain.id, event_ids=[event_id])
     empty = harness.enqueue(await harness.broker(), text=None)
+    session_id, worker_id = harness.worker()
+    unworked = harness.message_worker(session_id, worker_id, "Fix it.")
+    harness.board.workers.delete(worker_id, owner_user_id=ALICE)
 
     await harness.run()
 
     assert harness.sent == []
-    assert (harness.item(stranded), harness.item(empty)) == (None, None)
+    assert (harness.item(stranded), harness.item(empty), harness.item(unworked)) == (
+        None,
+        None,
+        None,
+    )
     event = harness.board.events.get(event_id, owner_user_id=ALICE)
     assert event is not None and event.queue_item_id is None
 

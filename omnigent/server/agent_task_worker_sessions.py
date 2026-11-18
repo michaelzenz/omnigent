@@ -6,8 +6,6 @@ the session row and the owner's grant. The session becomes the task's worker
 before its first message, so each finished turn reports to the task's manager.
 The first message goes out in the background, because a runner can take longer
 to start than a tool call waits. A message that cannot be sent becomes an event.
-A later message to a worker goes into its session the same way, but at once,
-and fails when the session runs a turn.
 """
 
 from __future__ import annotations
@@ -22,17 +20,12 @@ from fastapi import Request
 from omnigent.agent_tasks.board_stores import BoardStores
 from omnigent.agent_tasks.role_sessions import RoleSessionStores, ensure_named_project
 from omnigent.agent_tasks.roles import BUILTIN_ROLES, WATCHER_ROLE
-from omnigent.entities import Conversation, Worker
+from omnigent.entities import Conversation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.host.git_worktree import WorktreeError, validate_branch_name
 from omnigent.native.native_coding_agents import native_coding_agent_for_agent_name
 from omnigent.server.agent_queue_dispatcher import Sender
-from omnigent.server.agent_task_delivery import (
-    SendOutcome,
-    SendResult,
-    SessionSendDeps,
-    send_to_session,
-)
+from omnigent.server.agent_task_delivery import SendResult, SessionSendDeps, send_to_session
 from omnigent.server.agent_task_session_events import SessionEventReporter
 from omnigent.server.auth import LEVEL_OWNER, RESERVED_USER_LOCAL
 from omnigent.server.routes._agent_task_callers import runner_bound_caller
@@ -64,19 +57,9 @@ _logger = logging.getLogger(__name__)
 # GlobalHub's own role agents act on the board, so they never work on a task.
 _ROLE_AGENT_NAMES = frozenset(role.agent_name for role in (*BUILTIN_ROLES, WATCHER_ROLE))
 
-_MESSAGE_FAILURES: dict[SendOutcome, tuple[str, str]] = {
-    "busy": (
-        ErrorCode.CONFLICT,
-        "the worker's session is running a turn; send the message after the turn ends",
-    ),
-    "gone": (ErrorCode.NOT_FOUND, "the worker's session no longer exists"),
-    "unreachable": (ErrorCode.RUNNER_UNAVAILABLE, "the worker's session is unreachable"),
-    "failed": (ErrorCode.INTERNAL_ERROR, "the message did not reach the worker's session"),
-}
-
 
 class WorkerSessionStarter:
-    """Starts the sessions that work on users' tasks, and sends messages into them."""
+    """Starts the sessions that work on users' tasks and sends their first messages."""
 
     def __init__(
         self,
@@ -200,45 +183,6 @@ class WorkerSessionStarter:
             git_branch=git_branch,
             project_id=conv.project_id,
         )
-
-    async def send_message(
-        self, request: Request, worker_id: str, message: str, *, user_id: str | None
-    ) -> Worker:
-        """
-        Send a message into the session of one of the user's workers, as the user's message.
-
-        The session starts a turn for the message. A request from an agent must
-        come from a private session, as for :meth:`start`.
-
-        :param request: The request; it can name the calling session.
-        :param worker_id: One of the user's workers.
-        :param message: The message.
-        :param user_id: The owner, or ``None`` in single-user mode.
-        :returns: The worker whose session took the message.
-        :raises OmnigentError: ``NOT_FOUND`` when the worker or its session is
-            missing or someone else's; ``FORBIDDEN`` for a calling session
-            shared with edit access; ``CONFLICT`` while the session runs a turn;
-            ``RUNNER_UNAVAILABLE`` or ``INTERNAL_ERROR`` when the message does
-            not reach the session.
-        """
-        sessions = self._sessions
-        await asyncio.to_thread(
-            require_named_source_private,
-            request,
-            user_id,
-            sessions.conversation_store,
-            sessions.permission_store,
-        )
-        worker = await asyncio.to_thread(self._board.workers.get, worker_id, owner_user_id=user_id)
-        if worker is None:
-            raise OmnigentError("worker not found", code=ErrorCode.NOT_FOUND)
-        result = await self._send_as_owner(worker.session_id, message, user_id)
-        if result.outcome != "sent":
-            code, reason = _MESSAGE_FAILURES[result.outcome]
-            raise OmnigentError(
-                f"{reason} ({result.error})" if result.error else reason, code=code
-            )
-        return worker
 
     async def stop(self) -> None:
         """Cancel the first messages still on their way."""
@@ -366,16 +310,6 @@ class WorkerSessionStarter:
         )
         return worker.id
 
-    async def _send_as_owner(
-        self, session_id: str, message: str, user_id: str | None
-    ) -> SendResult:
-        return await self._send(
-            session_id,
-            message,
-            created_by=user_id or RESERVED_USER_LOCAL,
-            deps=self._send_deps,
-        )
-
     def _send_first_message(self, session_id: str, message: str, user_id: str | None) -> None:
         sending = asyncio.create_task(
             self._deliver_first_message(session_id, message, user_id),
@@ -388,7 +322,12 @@ class WorkerSessionStarter:
         self, session_id: str, message: str, user_id: str | None
     ) -> None:
         try:
-            result = await self._send_as_owner(session_id, message, user_id)
+            result = await self._send(
+                session_id,
+                message,
+                created_by=user_id or RESERVED_USER_LOCAL,
+                deps=self._send_deps,
+            )
         except Exception as exc:
             _logger.exception("GlobalHub could not send the first message to %s", session_id)
             result = SendResult("failed", str(exc) or type(exc).__name__)

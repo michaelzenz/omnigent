@@ -30,6 +30,7 @@ from omnigent.server.routes._host_worktree import (
 )
 from omnigent.server.schemas import SessionGitOptions
 from omnigent.server.server_config import PickerCuration
+from omnigent.stores.agent_queue_store.sqlalchemy_store import SqlAlchemyAgentQueueStore
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.conversation_store import CREATED_BY_SESSION_LABEL_KEY
@@ -368,54 +369,38 @@ async def test_starting_a_session_needs_the_callers_task_agent_and_host_and_a_pr
     assert roster.json()["data"] == []
 
 
-async def test_a_message_to_a_worker_goes_into_its_session_as_the_callers_message(
-    hub_app: FastAPI, hub_client: httpx.AsyncClient, db_uri: str, monkeypatch: pytest.MonkeyPatch
+async def test_a_message_to_a_worker_is_queued_for_its_session(
+    hub_client: httpx.AsyncClient, db_uri: str
 ) -> None:
-    runner = _runner(hub_app, monkeypatch, SendResult("sent"))
     task_id, session_id = _task(db_uri, "PR 12"), _session(db_uri)
     worker_id = (await _adopt(hub_client, session_id, task_id)).json()["worker_id"]
 
-    sent = await _message(hub_client, worker_id, f"CI failed on {PR}. Fix it.")
+    queued = await _message(hub_client, worker_id, f"CI failed on {PR}. Fix it.")
 
-    assert (sent.status_code, sent.json()) == (
-        202,
-        {"object": "agent.task.worker_message", "worker_id": worker_id, "session_id": session_id},
+    assert queued.status_code == 202
+    [item] = SqlAlchemyAgentQueueStore(db_uri).list(
+        owner_user_id=ALICE_ID, target_session_id=session_id
     )
-    assert runner.messages == [(session_id, f"CI failed on {PR}. Fix it.", ALICE_ID)]
+    assert queued.json() == {
+        "object": "agent.task.worker_message",
+        "id": item.id,
+        "worker_id": worker_id,
+        "session_id": session_id,
+    }
+    assert (item.kind, item.state, item.payload) == (
+        "worker_message",
+        "queued",
+        {"worker_id": worker_id, "message": f"CI failed on {PR}. Fix it."},
+    )
 
 
-@pytest.mark.parametrize(
-    ("result", "status"),
-    [
-        (SendResult("busy"), 409),
-        (SendResult("gone"), 404),
-        (SendResult("unreachable", "no runner can be reached or woken"), 503),
-        (SendResult("failed", "the runner did not accept the message"), 500),
-    ],
-)
-async def test_a_message_that_the_workers_session_does_not_take_fails_with_the_reason(
-    hub_app: FastAPI,
-    hub_client: httpx.AsyncClient,
-    db_uri: str,
-    monkeypatch: pytest.MonkeyPatch,
-    result: SendResult,
-    status: int,
+async def test_a_message_needs_the_callers_own_live_worker_some_text_and_a_private_caller(
+    hub_client: httpx.AsyncClient, db_uri: str
 ) -> None:
-    _runner(hub_app, monkeypatch, result)
-    task_id, session_id = _task(db_uri, "PR 12"), _session(db_uri)
+    task_id, session_id, archived_id = _task(db_uri, "PR 12"), _session(db_uri), _session(db_uri)
     worker_id = (await _adopt(hub_client, session_id, task_id)).json()["worker_id"]
-
-    failed = await _message(hub_client, worker_id, "Fix it.")
-
-    assert failed.status_code == status
-
-
-async def test_a_message_needs_the_callers_own_worker_some_text_and_a_private_caller(
-    hub_app: FastAPI, hub_client: httpx.AsyncClient, db_uri: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    runner = _runner(hub_app, monkeypatch, SendResult("sent"))
-    task_id, session_id = _task(db_uri, "PR 12"), _session(db_uri)
-    worker_id = (await _adopt(hub_client, session_id, task_id)).json()["worker_id"]
+    archived_worker_id = (await _adopt(hub_client, archived_id, task_id)).json()["worker_id"]
+    SqlAlchemyConversationStore(db_uri).update_conversation(archived_id, archived=True)
     shared_session_id, shared_runner = _calling_session(db_uri)
     permissions = SqlAlchemyPermissionStore(db_uri)
     permissions.ensure_user(BOB_ID)
@@ -424,9 +409,10 @@ async def test_a_message_needs_the_callers_own_worker_some_text_and_a_private_ca
     statuses = [
         (await _message(hub_client, worker_id, "Fix it.", headers=BOB)).status_code,
         (await _message(hub_client, uuid.uuid4().hex, "Fix it.")).status_code,
+        (await _message(hub_client, archived_worker_id, "Fix it.")).status_code,
         (await _message(hub_client, worker_id, "  ")).status_code,
         (await _message(hub_client, worker_id, "Fix it.", headers=shared_runner)).status_code,
     ]
 
-    assert statuses == [404, 404, 422, 403]
-    assert runner.messages == []
+    assert statuses == [404, 404, 404, 422, 403]
+    assert SqlAlchemyAgentQueueStore(db_uri).list(owner_user_id=ALICE_ID) == []
