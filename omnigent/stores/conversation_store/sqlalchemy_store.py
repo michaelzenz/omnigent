@@ -5859,6 +5859,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         copy_model_settings: bool = True,
         copy_terminal_launch_args: bool = True,
         copy_inference_snapshot: bool = True,
+        copy_open_folders: bool = False,
         override_model_override: str | None = None,
         override_model_override_set: bool = False,
         override_reasoning_effort: str | None = None,
@@ -5935,6 +5936,9 @@ class SqlAlchemyConversationStore(ConversationStore):
             keeps the source's saved provider binding. When ``False``, it has
             none and resolves its provider like a new session: used when the
             fork binds another agent, whose provider may differ.
+        :param copy_open_folders: When ``True``, the fork keeps the folders
+            that the source's agent stamped for the user to open, e.g. for a
+            clone by the source's owner. ``False`` (default) starts with none.
         :param override_model_override: Explicit ``model_override`` for the
             fork, applied only when ``override_model_override_set`` is
             ``True`` — then it supersedes the ``copy_model_settings`` copy
@@ -6050,6 +6054,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             copy_model_settings=copy_model_settings,
             copy_terminal_launch_args=copy_terminal_launch_args,
             copy_inference_snapshot=copy_inference_snapshot,
+            copy_open_folders=copy_open_folders,
             override_model_override=override_model_override,
             override_model_override_set=override_model_override_set,
             override_reasoning_effort=override_reasoning_effort,
@@ -6084,6 +6089,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         copy_model_settings: bool = True,
         copy_terminal_launch_args: bool = True,
         copy_inference_snapshot: bool = True,
+        copy_open_folders: bool = False,
         override_model_override: str | None = None,
         override_model_override_set: bool = False,
         override_reasoning_effort: str | None = None,
@@ -6610,6 +6616,13 @@ class SqlAlchemyConversationStore(ConversationStore):
                     )
                     if host is not None and host.deleted_at is None:
                         fork_meta.host_id = current.host_id
+            if copy_open_folders:
+                fork_meta.open_folders = meta_sess.execute(
+                    select(SqlConversationMetadata.open_folders).where(
+                        SqlConversationMetadata.workspace_id == current_workspace_id(),
+                        SqlConversationMetadata.id == source_conversation_id,
+                    )
+                ).scalar_one_or_none()
             meta_sess.add(fork_meta)
             if creating_clone and agent_id is not None:
                 assert cloned_agent_name is not None and cloned_agent_bundle_location is not None

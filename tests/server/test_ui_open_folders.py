@@ -1,4 +1,7 @@
-"""Stamped folders merge by path, persist with the session, and follow session access."""
+"""Stamped folders merge by path, persist with the session, and follow session access.
+
+The owner's clone of a session keeps its folders; another user's clone starts with none.
+"""
 
 import asyncio
 import json
@@ -102,3 +105,13 @@ async def test_open_folders_follow_session_access(
     assert (await auth_client.get(route, headers=stranger)).status_code in (403, 404)
     missing = await auth_client.get("/v1/sessions/missing/ui/open-folders", headers=owner)
     assert missing.status_code == 404
+
+    owner_clone = await auth_client.post(f"/v1/sessions/{session_id}/fork", json={}, headers=owner)
+    reader_clone = await auth_client.post(
+        f"/v1/sessions/{session_id}/fork", json={}, headers=reader
+    )
+    assert (owner_clone.status_code, reader_clone.status_code) == (201, 201)
+    owner_clone_route = f"/v1/sessions/{owner_clone.json()['id']}/ui/open-folders"
+    reader_clone_route = f"/v1/sessions/{reader_clone.json()['id']}/ui/open-folders"
+    assert (await auth_client.get(owner_clone_route, headers=owner)).json() == stamp
+    assert (await auth_client.get(reader_clone_route, headers=reader)).json() == {"folders": []}

@@ -142,6 +142,28 @@ def test_fork_drops_the_automation_source_label(
     assert SCHEDULED_TASK_SOURCE_LABEL_KEY not in fork.labels
 
 
+def test_a_fork_keeps_the_stamped_folders_only_when_asked(
+    conversation_store: SqlAlchemyConversationStore, db_uri: str
+) -> None:
+    """A clone by the owner keeps the folders that its source's agent stamped."""
+    from omnigent.stores.session_open_folder_store import OpenFolder, SessionOpenFolderStore
+
+    folders = SessionOpenFolderStore(db_uri)
+    source = conversation_store.create_conversation()
+    stamped = [
+        OpenFolder(title="Repo", path="/srv/repo"),
+        OpenFolder(title="Fix", path="/srv/fix"),
+    ]
+    folders.stamp(source.id, stamped, max_folders=20)
+
+    clone = conversation_store.fork_conversation(source.id, copy_open_folders=True)
+    other_fork = conversation_store.fork_conversation(source.id)
+
+    assert folders.read(clone.id) == stamped
+    assert folders.read(other_fork.id) == []
+    assert folders.read(source.id) == stamped
+
+
 @pytest.mark.parametrize("closed_by", ["label", "legacy_title"])
 def test_fork_of_a_closed_child_is_open(
     conversation_store: SqlAlchemyConversationStore,

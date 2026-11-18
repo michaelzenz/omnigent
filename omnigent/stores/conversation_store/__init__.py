@@ -2249,6 +2249,7 @@ class ConversationStore(ABC):
         copy_model_settings: bool = True,
         copy_terminal_launch_args: bool = True,
         copy_inference_snapshot: bool = True,
+        copy_open_folders: bool = False,
         override_model_override: str | None = None,
         override_model_override_set: bool = False,
         override_reasoning_effort: str | None = None,
@@ -2319,6 +2320,9 @@ class ConversationStore(ABC):
             with none — used when the fork switches to a different CLI, where
             the source's flags are meaningless or rejected (e.g. Claude Code's
             ``--permission-mode`` would make ``pi`` exit at launch).
+        :param copy_open_folders: When ``True``, the fork keeps the folders
+            that the source's agent stamped for the user to open, e.g. for a
+            clone by the source's owner. ``False`` (default) starts with none.
         :param override_model_override: Explicit ``model_override`` for the
             fork, applied only when ``override_model_override_set`` — then it
             supersedes the ``copy_model_settings`` copy.

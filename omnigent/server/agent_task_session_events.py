@@ -10,7 +10,9 @@ sessions, sub-agents and side chats do not report, and a user without a
 GlobalHub host gets no turn reports. A worker's finished turn also counts as
 work on its tasks, which moves an active or idle task to the top of the board.
 A session started for a task reports when its first message could not be sent.
-A deleted session's subscriptions, and the subscriptions to it, go with it.
+A deleted session's subscriptions, and the subscriptions to it, go with it. A
+clone that its source's owner makes follows the sources that its source follows;
+a side chat and a continuation do not.
 """
 
 from __future__ import annotations
@@ -137,6 +139,11 @@ class SessionEventReporter:
         )
         self._board.subscriptions.delete_for_keys([conv.id], owner_user_id=owner)
 
+    def copy_subscriptions(self, source_id: str, fork_id: str) -> None:
+        """Make a fork follow the sources that its source session follows. Blocking."""
+        owner = self._sessions.conversation_store.get_session_owner(source_id, owner_only=True)
+        self._board.subscriptions.copy_session(source_id, fork_id, owner_user_id=owner)
+
     def report_start_failed(self, session_id: str, error: str) -> None:
         """Record that a started session did not get its first message. Blocking.
 
@@ -225,12 +232,12 @@ def _host_tags(conv: Conversation) -> list[EventTag]:
     return [EventTag(tag_type=HOST_TAG_TYPE, tag=conv.host_id)] if conv.host_id else []
 
 
-# The app's reporter, for sessions that main's routes delete.
+# The app's reporter, for sessions that main's routes delete or fork.
 _installed: SessionEventReporter | None = None
 
 
 def install_session_event_reporter(reporter: SessionEventReporter | None) -> None:
-    """Make ``reporter`` the one :func:`before_session_delete` uses; ``None`` uninstalls it."""
+    """Make ``reporter`` the one that the session hooks use; ``None`` uninstalls it."""
     global _installed
     _installed = reporter
 
@@ -243,3 +250,17 @@ async def before_session_delete(conv: Conversation) -> None:
         await asyncio.to_thread(_installed.report_session_deleted, conv)
     except Exception:
         _logger.exception("GlobalHub could not report the deletion of session %s", conv.id)
+
+
+async def after_session_fork(source_id: str, fork_id: str) -> None:
+    """Make a fork follow its source's sources; a failure is logged, not raised."""
+    if _installed is None:
+        return
+    try:
+        await asyncio.to_thread(_installed.copy_subscriptions, source_id, fork_id)
+    except Exception:
+        _logger.exception(
+            "GlobalHub could not copy the subscriptions of session %s to its fork %s",
+            source_id,
+            fork_id,
+        )

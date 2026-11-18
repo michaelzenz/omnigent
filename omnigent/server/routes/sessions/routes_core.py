@@ -5115,6 +5115,17 @@ def register_core_routes(
 
         if validate_only:
             return None
+        copies_follows_and_folders = (
+            not body.side_chat
+            and not continue_source
+            and await asyncio.to_thread(
+                _is_session_owner,
+                user_id,
+                source,
+                auth_provider=auth_provider,
+                permission_store=permission_store,
+            )
+        )
         # Copied last, after every validation above; the copy row itself is
         # inserted inside fork_conversation's transaction.
         fork_agent_id = base_agent.id
@@ -5147,6 +5158,7 @@ def register_core_routes(
                 cloned_agent_bundle_location=clone_location,
                 cloned_agent_description=base_agent.description if clone_location else None,
                 copy_model_settings=copy_model_settings,
+                copy_open_folders=copies_follows_and_folders,
                 # Explicit run-config picks from the fork dialog. Each rides a
                 # (value, set-flag) pair so the store can tell "override to
                 # None / clear" from "not chosen — inherit". When unset, the
@@ -5255,6 +5267,10 @@ def register_core_routes(
         if permission_store is not None and user_id is not None and not continue_source:
             await asyncio.to_thread(permission_store.ensure_user, user_id)
             await asyncio.to_thread(permission_store.grant, user_id, new_conv.id, LEVEL_OWNER)
+        if copies_follows_and_folders:
+            from omnigent.server.agent_task_session_events import after_session_fork
+
+            await after_session_fork(source_id, new_conv.id)
         from omnigent.server.managed_hosts import read_managed_repo_workspaces
 
         # Provision in the background with the caller's credentials. Use explicit

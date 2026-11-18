@@ -28,6 +28,7 @@ from omnigent.entities import (
 )
 from omnigent.errors import SESSION_AGENT_BUNDLE_MISSING_MESSAGE, OmnigentError
 from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
+from omnigent.server import agent_task_session_events
 from omnigent.server.auth import (
     LEVEL_EDIT,
     LEVEL_OWNER,
@@ -193,6 +194,7 @@ class _ConversationStore:
         cloned_agent_description: str | None = None,
         copy_model_settings: bool = True,
         copy_terminal_launch_args: bool = True,
+        copy_open_folders: bool = False,
         override_model_override: str | None = None,
         override_model_override_set: bool = False,
         override_reasoning_effort: str | None = None,
@@ -231,6 +233,8 @@ class _ConversationStore:
         :param copy_terminal_launch_args: Whether the source's launch args
             carry over (route passes ``False`` on any agent switch — launch
             flags are CLI-specific and would break a different target CLI).
+        :param copy_open_folders: Whether the source's stamped folders carry
+            over (route passes ``True`` for a clone by the source's owner).
         :param carry_history_into_native: Whether to mark the fork for
             native transcript rebuild (route passes ``True`` for any
             native target, regardless of family).
@@ -271,6 +275,7 @@ class _ConversationStore:
                 "cloned_agent_description": cloned_agent_description,
                 "copy_model_settings": copy_model_settings,
                 "copy_terminal_launch_args": copy_terminal_launch_args,
+                "copy_open_folders": copy_open_folders,
                 "override_model_override": override_model_override,
                 "override_model_override_set": override_model_override_set,
                 "override_reasoning_effort": override_reasoning_effort,
@@ -1278,6 +1283,29 @@ async def test_fork_session_run_config_overrides_pass_through(side_chat: bool) -
     assert "omnigent.claude_native.permission_mode" in fork_call["dropped_label_keys"]
     # The pick itself becomes the fork's recorded mode.
     assert fork_call["extra_labels"]["omnigent.claude_native.permission_mode"] == "auto"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("side_chat", [False, True])
+async def test_a_clone_keeps_its_sources_folders_and_follows_but_a_side_chat_does_not(
+    side_chat: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The owner's clone asks the store for the stamped folders and GlobalHub for the follows."""
+    copied: list[tuple[str, str]] = []
+
+    async def record_copy(source_id: str, fork_id: str) -> None:
+        copied.append((source_id, fork_id))
+
+    monkeypatch.setattr(agent_task_session_events, "after_session_fork", record_copy)
+    conv = _make_conversation()
+    conv_store = _ConversationStore(conversations={conv.id: conv})
+    client = TestClient(_build_app(conv_store))
+
+    resp = client.post(f"/v1/sessions/{conv.id}/fork", json={"side_chat": side_chat})
+
+    assert resp.status_code == 201, f"got {resp.status_code}: {resp.text}"
+    assert conv_store.fork_calls[0]["copy_open_folders"] is (not side_chat)
+    assert copied == ([] if side_chat else [(conv.id, resp.json()["id"])])
 
 
 @pytest.mark.asyncio

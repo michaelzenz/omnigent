@@ -279,6 +279,49 @@ class SqlAlchemySubscriptionStore(SubscriptionStore):
             for source_type in sorted(set(used) | set(assigned))
         ]
 
+    def copy_session(
+        self, source_session_id: str, target_session_id: str, *, owner_user_id: str | None
+    ) -> int:
+        """Make a session follow the sources that another session follows; return how many."""
+        source_uuid = normalize_uuid(source_session_id) or source_session_id
+        target_uuid = normalize_uuid(target_session_id) or target_session_id
+
+        def write(session: Session) -> int:
+            require_active_account(session, owner_user_id)
+            followed = set(
+                session.execute(
+                    select(SqlSubscription.source_key).where(
+                        _owned(owner_user_id), SqlSubscription.session_id == target_uuid
+                    )
+                ).scalars()
+            )
+            rows = session.execute(
+                select(SqlSubscription)
+                .where(
+                    _owned(owner_user_id),
+                    SqlSubscription.session_id == source_uuid,
+                    SqlSubscription.source_type.not_like(f"{RESERVED_SOURCE_TYPE_PREFIX}%"),
+                )
+                .order_by(*_OLDEST_FIRST)
+            ).scalars()
+            copies = [
+                SqlSubscription(
+                    id=uuid.uuid4().hex,
+                    owner_user_id=owner_user_id,
+                    session_id=target_uuid,
+                    source_type=row.source_type,
+                    source_key=row.source_key,
+                    note=row.note,
+                    created_at=row.created_at,
+                )
+                for row in rows
+                if row.source_key not in followed
+            ]
+            session.add_all(copies)
+            return len(copies)
+
+        return run_write_transaction(self._session_immediate, "copy_session_subscriptions", write)
+
     def delete_for_session(self, session_id: str, *, owner_user_id: str | None) -> int:
         """Delete every subscription of a session; return how many."""
         session_uuid = normalize_uuid(session_id) or session_id

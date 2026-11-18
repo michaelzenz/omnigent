@@ -11,7 +11,12 @@ from omnigent.agent_tasks.board_stores import open_board_stores
 from omnigent.agent_tasks.role_sessions import RoleSessionStores
 from omnigent.agent_tasks.session_labels import ROLE_LABEL
 from omnigent.entities import SESSION_EVENT_SOURCE, Conversation, EventTag, TaskEvent
-from omnigent.server.agent_task_session_events import SessionEventReporter, reports_to_globalhub
+from omnigent.server.agent_task_session_events import (
+    SessionEventReporter,
+    after_session_fork,
+    install_session_event_reporter,
+    reports_to_globalhub,
+)
 from omnigent.server.auth import LEVEL_OWNER
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.conversation_store.sqlalchemy_store import SqlAlchemyConversationStore
@@ -333,3 +338,32 @@ def test_deleting_a_role_session_drops_its_queue_items_subscriptions_and_frees_t
     assert freed is not None and freed.queue_item_id is None
     assert hub.deletions() == []
     assert hub.board.subscriptions.list_for_session(session_id, owner_user_id=ALICE) == []
+
+
+async def test_a_fork_follows_the_sources_its_source_follows_but_not_the_servers_own(
+    hub: _Hub,
+) -> None:
+    source, fork, worker = hub.session(), hub.session(), hub.session()
+    pull_request = "https://github.com/example-org/repo/pull/12"
+    hub.follow(source, worker)
+    hub.board.subscriptions.subscribe(
+        owner_user_id=ALICE,
+        session_id=source,
+        source_type="github.pull_request",
+        source_key=pull_request,
+        note="Read the review threads.",
+    )
+
+    await after_session_fork(source, fork)
+    without_reporter = hub.board.subscriptions.list_for_session(fork, owner_user_id=ALICE)
+    install_session_event_reporter(hub.reporter)
+    try:
+        await after_session_fork(source, fork)
+    finally:
+        install_session_event_reporter(None)
+
+    follows = hub.board.subscriptions.list_for_session(fork, owner_user_id=ALICE)
+    assert without_reporter == []
+    assert [(follow.source_type, follow.source_key, follow.note) for follow in follows] == [
+        ("github.pull_request", pull_request, "Read the review threads.")
+    ]

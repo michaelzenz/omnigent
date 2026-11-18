@@ -278,6 +278,33 @@ def test_assigning_a_type_replaces_its_watcher_until_the_type_goes_back_to_the_f
     assert store.source_watchers(owner_user_id=ALICE) == [issue]
 
 
+def test_a_copy_follows_the_sources_of_another_session_with_their_notes_and_start_times(
+    store: SqlAlchemySubscriptionStore,
+) -> None:
+    source, clone, worker = (uuid.uuid4().hex for _ in range(3))
+    reviewed = store.subscribe(
+        owner_user_id=ALICE,
+        session_id=source,
+        source_type=PULL_REQUEST,
+        source_key=PR,
+        note="Read the review threads, not only the checks.",
+    ).subscription
+    _follow(store, source, "jira.issue", TICKET)
+    _follow(store, source, SESSION_EVENT_SOURCE, worker)
+    _follow(store, source, "slack.thread", THREAD, owner=BOB)
+    _follow(store, clone, PULL_REQUEST, OTHER_PR)
+    _follow(store, clone, "jira.issue", TICKET)
+
+    copied = store.copy_session(source, clone, owner_user_id=ALICE)
+
+    follows = store.list_for_session(clone, owner_user_id=ALICE)
+    assert copied == 1
+    assert [subscription.source_key for subscription in follows] == [PR, OTHER_PR, TICKET]
+    assert (follows[0].note, follows[0].created_at) == (reviewed.note, reviewed.created_at)
+    assert store.list_for_session(clone, owner_user_id=BOB) == []
+    assert store.copy_session(source, clone, owner_user_id=ALICE) == 0
+
+
 def test_unsubscribe_and_the_deletes_by_session_or_key_are_owner_scoped(
     store: SqlAlchemySubscriptionStore,
 ) -> None:

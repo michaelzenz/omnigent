@@ -191,6 +191,17 @@ class SubscriptionStore(ABC):
         """
 
     @abstractmethod
+    def copy_session(
+        self, source_session_id: str, target_session_id: str, *, owner_user_id: str | None
+    ) -> int:
+        """Make a session follow the sources that another session follows; return how many.
+
+        Each copy keeps the note and the time the other session started to
+        follow the source. The server's own types and the sources that the
+        session already follows are left out.
+        """
+
+    @abstractmethod
     def delete_for_session(self, session_id: str, *, owner_user_id: str | None) -> int:
         """Delete every subscription of a session; return how many."""
 
