@@ -115,15 +115,19 @@ class TaskStore(ABC):
         manager_id: str | None = UNSET,
         state: str | None = None,
         priority: int | None = None,
+        has_update: bool | None = None,
     ) -> Task | None:
         """
         Change the given fields of the owner's task; ``None`` leaves a field as is.
 
         Entering ``agent-resolved`` records ``resolved_at``; leaving it clears
-        that. A change stamps ``updated_at``.
+        that. A change stamps ``updated_at``; a change of ``has_update`` does
+        not count as one.
 
         :param manager_id: The new manager, ``None`` to unassign, or
             :data:`UNSET` to leave it.
+        :param has_update: ``True`` flags news on the task for the user;
+            ``False`` clears the flag.
         :returns: The updated task, or ``None`` when missing or someone else's.
         """
 

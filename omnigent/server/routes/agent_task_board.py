@@ -414,6 +414,7 @@ def _card(
         queue_rank=task.queue_rank,
         created_at=task.created_at,
         updated_at=task.updated_at,
+        has_update=task.has_update,
         workers=sorted(workers, key=_worker_position),
         assets=[asset_response(asset) for asset in assets],
         match=(

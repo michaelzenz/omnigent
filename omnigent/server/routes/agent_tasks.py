@@ -160,6 +160,7 @@ def create_agent_tasks_router(
                 manager_id=body.manager_id if reassigns else UNSET,
                 state=body.state,
                 priority=body.priority,
+                has_update=body.has_update,
             )
             if task is not None and before is not None:
                 _move_worker_subscriptions(stores, before, task, user_id)
@@ -247,4 +248,5 @@ def _task_response(task: Task) -> AgentTaskResponse:
         queue_rank=task.queue_rank,
         created_at=task.created_at,
         updated_at=task.updated_at,
+        has_update=task.has_update,
     )

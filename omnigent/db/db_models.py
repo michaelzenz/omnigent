@@ -865,6 +865,8 @@ class SqlTask(OmnigentBase):
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last change, or ``None``.
     :param resolved_at: When the task entered ``agent-resolved``, or ``None``.
+    :param has_update: Whether the manager flagged news on the task for the
+        user; a click on the task's card clears it.
     """
 
     __tablename__ = "tasks"
@@ -889,6 +891,7 @@ class SqlTask(OmnigentBase):
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     resolved_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    has_update: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
 
     __table_args__ = (
         CheckConstraint("state IN (1, 3, 4, 5)", name="ck_tasks_state"),

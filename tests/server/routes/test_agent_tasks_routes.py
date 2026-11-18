@@ -141,6 +141,21 @@ async def test_state_changes_move_the_card_and_updates_stay_owner_scoped(
     assert by_bob.status_code == 404
 
 
+async def test_a_flag_of_news_is_no_change_of_the_task_and_stays_until_a_patch_clears_it(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    manager_id, _ = _manager(db_uri)
+    task = f"{ROUTE}/{await _create(auth_client, manager_id, 'one')}"
+
+    flagged = await auth_client.patch(task, json={"has_update": True}, headers=ALICE)
+    described = await auth_client.patch(task, json={"description": "Done."}, headers=ALICE)
+    cleared = await auth_client.patch(task, json={"has_update": False}, headers=ALICE)
+
+    assert (flagged.json()["has_update"], flagged.json()["updated_at"]) == (True, None)
+    assert described.json()["has_update"] is True
+    assert cleared.json()["has_update"] is False
+
+
 async def test_batch_get_skips_unknown_foreign_and_malformed_ids(
     auth_client: httpx.AsyncClient, db_uri: str
 ) -> None:

@@ -24,6 +24,8 @@ export interface AgentTask {
   /** Unix epoch seconds. */
   created_at: number;
   updated_at: number | null;
+  /** Whether the manager flagged news on the task; a click on its card clears it. */
+  has_update?: boolean;
 }
 
 /** A worker's or a role's session, with the title and live state the sidebar shows. */
@@ -127,6 +129,8 @@ export interface AgentTaskChanges {
   state?: AgentTaskState;
   /** 0 (P0, most urgent) to 3 (P3). */
   priority?: number;
+  /** ``false`` clears the manager's flag of news on the task. */
+  has_update?: boolean;
 }
 
 export const GLOBALHUB_TASKS_QUERY_KEY = ["globalhub-tasks"] as const;

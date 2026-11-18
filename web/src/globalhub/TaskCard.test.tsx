@@ -106,6 +106,29 @@ describe("TaskCard", () => {
     expect(screen.getByTestId("task-card-title-t2")).not.toHaveClass("ring-amber-400/50");
   });
 
+  it("shows Has update until a click on the card clears it", async () => {
+    renderCard(agentTask("t1", { has_update: true }));
+    renderCard(agentTask("t2"));
+
+    expect(within(screen.getByTestId("task-card-t1")).getByText("Has update")).toBeInTheDocument();
+    expect(within(screen.getByTestId("task-card-t2")).queryByText("Has update")).toBeNull();
+    fireEvent.click(screen.getByTestId("task-card-title-t2"));
+    fireEvent.click(screen.getByTestId("task-card-title-t1"));
+
+    expect(await sentRequest()).toEqual(["/v1/agent-tasks/t1", "PATCH", { has_update: false }]);
+  });
+
+  it("clears Has update when a button on the card is clicked, and the button still works", async () => {
+    renderCard(agentTask("t1", { has_update: true }));
+
+    fireEvent.click(screen.getByTestId("task-card-move-to-end-t1"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(
+      fetchMock.mock.calls.map(([path, init]) => `${init?.method} ${String(path)}`).sort(),
+    ).toEqual(["PATCH /v1/agent-tasks/t1", "POST /v1/agent-tasks/t1/move-to-queue-end"]);
+  });
+
   it("shows a resolved task without a manager, and the last card cannot move down", () => {
     renderCard(agentTask("t1", { state: "agent-resolved" }), { isLast: true });
 

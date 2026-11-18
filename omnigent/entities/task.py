@@ -60,6 +60,8 @@ class Task:
         first.
     :param updated_at: Unix epoch seconds of the last change, or ``None``.
     :param resolved_at: When the task entered ``agent-resolved``, or ``None``.
+    :param has_update: Whether the manager flagged news on the task for the
+        user; a click on the task's card clears it.
     """
 
     id: str
@@ -74,6 +76,7 @@ class Task:
     queue_rank: int = 0
     updated_at: int | None = None
     resolved_at: int | None = None
+    has_update: bool = False
 
 
 @dataclass

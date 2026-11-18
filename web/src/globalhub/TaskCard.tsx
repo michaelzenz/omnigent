@@ -79,8 +79,10 @@ export const TaskCard = memo(function TaskCard({
   const moveToEnd = useMoveTaskToQueueEnd(task.id);
   const resolve = usePatchAgentTask(task.id);
   const reprioritize = usePatchAgentTask(task.id);
+  const clearNews = usePatchAgentTask(task.id);
+  const hasUpdate = task.has_update === true && !clearNews.isPending;
   const resolved = task.state === "agent-resolved";
-  const failure = moveToEnd.error ?? resolve.error ?? reprioritize.error;
+  const failure = moveToEnd.error ?? resolve.error ?? reprioritize.error ?? clearNews.error;
   const priority = reprioritize.isPending
     ? (reprioritize.variables?.priority ?? task.priority)
     : task.priority;
@@ -92,6 +94,7 @@ export const TaskCard = memo(function TaskCard({
     <article
       className="@container flex min-w-0 flex-col rounded-xl border-2 border-border bg-card shadow-sm"
       data-testid={`task-card-${task.id}`}
+      onClickCapture={hasUpdate ? () => clearNews.mutate({ has_update: false }) : undefined}
     >
       <header className="space-y-2 border-b border-border px-4 py-3">
         <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
@@ -112,6 +115,15 @@ export const TaskCard = memo(function TaskCard({
             >
               {resolved ? "resolved" : task.state}
             </Badge>
+            {hasUpdate && (
+              <Badge
+                variant="outline"
+                title="The manager flagged news on this task. Click the card to clear it."
+                className="shrink-0 border-[1.5px] border-brand-accent/60 bg-brand-accent/10 text-brand-accent"
+              >
+                Has update
+              </Badge>
+            )}
             {task.manager_id === null && (
               <Badge
                 variant="outline"

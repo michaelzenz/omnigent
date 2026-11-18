@@ -187,6 +187,12 @@ do. The roster shows each task's state:
   review, a new request or a reply, also send `"state": "active"`.
 - The PATCH moves a revived task back to the top of the board.
 
+**Flag news for the user.** When the event gives the user something to see,
+also send `"has_update": true` in this PATCH, for example for a result to
+review, a question or a blocker for the user, or a task that is done. The task
+card then shows "Has update" until the user clicks the card. Do not flag
+routine progress, and do not clear the flag yourself.
+
 **Maintain the worker title.** When you assign a `session.turn.finished`
 event (Step 3), its session becomes the task's worker. Every worker lane has
 its own title (separate from the underlying session's title) shown on the task

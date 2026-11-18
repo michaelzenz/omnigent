@@ -329,6 +329,7 @@ async def test_a_card_lists_its_workers_busy_first_then_most_recent_and_its_asse
         (deleted_session, None),
     ]:
         _worker(db_uri, task_id, session_id, title)
+    SqlAlchemyTaskStore(db_uri).update(task_id, owner_user_id=ALICE_ID, has_update=True)
     monkeypatch.setitem(sessions._session_status_cache, busy, "running")
     # Alice saw the newer session at 1_500 and then marked it unread.
     monkeypatch.setitem(sessions._read_last_seen, ALICE_ID, {newer: 1_500})
@@ -360,6 +361,7 @@ async def test_a_card_lists_its_workers_busy_first_then_most_recent_and_its_asse
         (newer, "Fixing retries", "Wrote the fix", "idle", 1_500, True),
         (older, None, "Read the logs", "idle", None, False),
     ]
+    assert card["has_update"] is True
     assert [
         (asset["title"], asset["category"], asset["related_session_ids"])
         for asset in card["assets"]

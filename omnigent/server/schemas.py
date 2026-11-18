@@ -6300,7 +6300,9 @@ _AgentSystemNoticeControlId = Annotated[
 class AgentTaskResponse(BaseModel):
     """A task on the caller's GlobalHub board.
 
-    ``queue_rank`` orders the board: higher ranks list first.
+    ``queue_rank`` orders the board: higher ranks list first. ``has_update`` is
+    true while the manager's flag of news on the task waits for the user to
+    click the task's card.
     """
 
     object: Literal["agent.task"] = "agent.task"
@@ -6315,6 +6317,7 @@ class AgentTaskResponse(BaseModel):
     queue_rank: int
     created_at: int
     updated_at: int | None
+    has_update: bool
 
 
 class AgentTaskList(BaseModel):
@@ -6345,6 +6348,9 @@ class UpdateAgentTaskRequest(BaseModel):
 
     ``manager_id: null`` unassigns the task. Setting ``state`` also moves the
     task on the board: ``agent-resolved`` to the end, any other state to the top.
+    ``has_update: true`` flags news on the task, and its card shows a "Has
+    update" badge; ``false`` clears the flag, as a click on the card does.
+    Neither counts as a change of the task.
     """
 
     title: _AgentTaskTitle | None = None
@@ -6353,6 +6359,7 @@ class UpdateAgentTaskRequest(BaseModel):
     manager_id: str | None = None
     state: AgentTaskState | None = None
     priority: int | None = Field(default=None, ge=0, le=3)
+    has_update: bool | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -6914,7 +6921,8 @@ class AgentTaskBoardCard(BaseModel):
 
     The card leaves out the task's ``internal_note``, which only agents read.
     Workers whose session is busy come first, then the most recently active.
-    ``match`` is null unless the board read was a search.
+    ``match`` is null unless the board read was a search. The card shows a
+    "Has update" badge while ``has_update`` is true.
     """
 
     object: Literal["agent.task.card"] = "agent.task.card"
@@ -6927,6 +6935,7 @@ class AgentTaskBoardCard(BaseModel):
     queue_rank: int
     created_at: int
     updated_at: int | None
+    has_update: bool
     workers: list[AgentTaskBoardWorker]
     assets: list[AgentTaskAssetResponse]
     match: AgentTaskBoardMatch | None = None

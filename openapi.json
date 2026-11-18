@@ -1381,7 +1381,7 @@
         "type": "object"
       },
       "AgentTaskBoardCard": {
-        "description": "A live task on the caller's board, with the workers and assets its card shows.\n\nThe card leaves out the task's `internal_note`, which only agents read.\nWorkers whose session is busy come first, then the most recently active.\n`match` is null unless the board read was a search.",
+        "description": "A live task on the caller's board, with the workers and assets its card shows.\n\nThe card leaves out the task's `internal_note`, which only agents read.\nWorkers whose session is busy come first, then the most recently active.\n`match` is null unless the board read was a search. The card shows a\n\"Has update\" badge while `has_update` is true.",
         "properties": {
           "assets": {
             "items": {
@@ -1405,6 +1405,10 @@
               }
             ],
             "title": "Description"
+          },
+          "has_update": {
+            "title": "Has Update",
+            "type": "boolean"
           },
           "id": {
             "title": "Id",
@@ -1491,6 +1495,7 @@
           "queue_rank",
           "created_at",
           "updated_at",
+          "has_update",
           "workers",
           "assets"
         ],
@@ -2161,7 +2166,7 @@
         "type": "object"
       },
       "AgentTaskResponse": {
-        "description": "A task on the caller's GlobalHub board.\n\n`queue_rank` orders the board: higher ranks list first.",
+        "description": "A task on the caller's GlobalHub board.\n\n`queue_rank` orders the board: higher ranks list first. `has_update` is\ntrue while the manager's flag of news on the task waits for the user to\nclick the task's card.",
         "properties": {
           "created_at": {
             "format": "int64",
@@ -2178,6 +2183,10 @@
               }
             ],
             "title": "Description"
+          },
+          "has_update": {
+            "title": "Has Update",
+            "type": "boolean"
           },
           "id": {
             "title": "Id",
@@ -2270,7 +2279,8 @@
           "priority",
           "queue_rank",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "has_update"
         ],
         "title": "AgentTaskResponse",
         "type": "object"
@@ -17309,7 +17319,7 @@
       },
       "UpdateAgentTaskRequest": {
         "additionalProperties": false,
-        "description": "Change fields of one of the caller's tasks; omitted fields keep their value.\n\n`manager_id: null` unassigns the task. Setting `state` also moves the\ntask on the board: `agent-resolved` to the end, any other state to the top.",
+        "description": "Change fields of one of the caller's tasks; omitted fields keep their value.\n\n`manager_id: null` unassigns the task. Setting `state` also moves the\ntask on the board: `agent-resolved` to the end, any other state to the top.\n`has_update: true` flags news on the task, and its card shows a \"Has\nupdate\" badge; `false` clears the flag, as a click on the card does.\nNeither counts as a change of the task.",
         "properties": {
           "description": {
             "anyOf": [
@@ -17322,6 +17332,17 @@
               }
             ],
             "title": "Description"
+          },
+          "has_update": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Update"
           },
           "internal_note": {
             "anyOf": [

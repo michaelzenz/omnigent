@@ -46,6 +46,7 @@ def _to_entity(row: SqlTask) -> Task:
         queue_rank=row.queue_rank,
         updated_at=row.updated_at,
         resolved_at=row.resolved_at,
+        has_update=row.has_update,
     )
 
 
@@ -222,6 +223,7 @@ class SqlAlchemyTaskStore(TaskStore):
         manager_id: str | None = UNSET,
         state: str | None = None,
         priority: int | None = None,
+        has_update: bool | None = None,
     ) -> Task | None:
         """Change the given fields of the owner's task; ``None`` leaves a field as is."""
         changes: dict[str, Any] = {
@@ -255,6 +257,8 @@ class SqlAlchemyTaskStore(TaskStore):
                 changed = True
             if changed:
                 row.updated_at = now
+            if has_update is not None:
+                row.has_update = has_update
             return _to_entity(row)
 
         return run_write_transaction(self._session_immediate, "update_task", write)
