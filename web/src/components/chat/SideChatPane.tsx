@@ -67,6 +67,7 @@ import {
 import { conversationRegistry } from "@/store/conversationRegistry";
 import { QueuedMessagesStrip } from "@/pages/QueuedMessagesStrip";
 import { readAlwaysSteer } from "@/lib/alwaysSteerPreferences";
+import { readSubmitWithModEnter } from "@/lib/composerSendShortcutPreferences";
 import { shouldQueueSend } from "@/lib/messageQueue";
 import { attachmentAccept, clipboardFiles, validateAttachments } from "@/lib/attachments";
 import { insertPastedText } from "@/lib/composerText";
@@ -666,6 +667,7 @@ function SideChatComposer({
     [childId, updateComposer],
   );
   const [activeTextId, setActiveTextId] = useState<string | null>(null);
+  const [submitWithModEnter] = useState(readSubmitWithModEnter);
   const editText = useCallback(
     (id: string | null, next: string) =>
       updateComposer(childId, (current) =>
@@ -1085,7 +1087,7 @@ function SideChatComposer({
       <ChatComposer
         hasContent={!pending && files.length > 0}
         data-side-chat="true"
-        keyboard={{ submitWithModEnter: false, preventsKeyboardSubmit: false }}
+        keyboard={{ submitWithModEnter, preventsKeyboardSubmit: false }}
         input={{
           ref: tailTextareaRef,
           value: text,
@@ -1126,7 +1128,7 @@ function SideChatComposer({
               <ReplyDraftBlocks
                 quotes={quotes}
                 activeTextId={activeTextId}
-                keyboard={{ submitWithModEnter: false, preventsKeyboardSubmit: false }}
+                keyboard={{ submitWithModEnter, preventsKeyboardSubmit: false }}
                 disabled={!ready}
                 inputFor={(replyQuote) => ({
                   onChange: (event) => editText(replyQuote.id, event.target.value),

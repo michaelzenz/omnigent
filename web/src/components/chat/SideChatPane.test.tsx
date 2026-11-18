@@ -9,6 +9,7 @@ import type { ComposerMicButtonProps } from "@/components/ComposerMicButton";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { writeAlwaysSteer } from "@/lib/alwaysSteerPreferences";
+import { writeSubmitWithModEnter } from "@/lib/composerSendShortcutPreferences";
 import * as filesApi from "@/lib/filesApi";
 import { CapabilitiesProvider } from "@/lib/CapabilitiesContext";
 import { FALLBACK_SERVER_INFO } from "@/lib/capabilities";
@@ -1844,6 +1845,27 @@ describe("side-chat composer auto-grow", () => {
     // when scrollHeight is 0 (jsdom has no layout). A textarea that doesn't
     // have auto-grow wired up keeps style.height="" (the browser default).
     expect(input.style.height).toBe("auto");
+  });
+});
+
+describe("side-chat send shortcut", () => {
+  it("sends on Mod+Enter and not on Enter when the Mod+Enter setting is on", () => {
+    writeSubmitWithModEnter(true);
+    conversationRegistry.acquire(childId).setState({ sessionStatus: "idle" });
+    renderPane(<SideChatPane childId={childId} />);
+    const input = screen.getByTestId("side-chat-input");
+    fireEvent.change(input, { target: { value: "First line" } });
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(send).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+    expect(send).toHaveBeenCalledExactlyOnceWith(
+      "First line",
+      "agent_side",
+      undefined,
+      expect.objectContaining({ pinnedConversationId: childId }),
+    );
   });
 });
 
