@@ -1,4 +1,4 @@
-"""Tests for the GlobalHub worker routes: adoption, rosters and started sessions."""
+"""Tests for the GlobalHub worker routes: adoption, rosters, started sessions and messages."""
 
 from __future__ import annotations
 
@@ -166,6 +166,14 @@ async def _start(
     }
     return await client.post(
         f"/v1/agent-tasks/{task_id}/workers/start", json=body, headers=headers
+    )
+
+
+async def _message(
+    client: httpx.AsyncClient, worker_id: str, message: str, headers: dict[str, str] = ALICE
+) -> httpx.Response:
+    return await client.post(
+        f"/v1/task-workers/{worker_id}/messages", json={"message": message}, headers=headers
     )
 
 
@@ -358,3 +366,67 @@ async def test_starting_a_session_needs_the_callers_task_agent_and_host_and_a_pr
     assert statuses == [404, 404, 400, 400, 400, 400, 422, 403, 403]
     roster = await hub_client.get(f"/v1/agent-tasks/{task_id}/workers", headers=ALICE)
     assert roster.json()["data"] == []
+
+
+async def test_a_message_to_a_worker_goes_into_its_session_as_the_callers_message(
+    hub_app: FastAPI, hub_client: httpx.AsyncClient, db_uri: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _runner(hub_app, monkeypatch, SendResult("sent"))
+    task_id, session_id = _task(db_uri, "PR 12"), _session(db_uri)
+    worker_id = (await _adopt(hub_client, session_id, task_id)).json()["worker_id"]
+
+    sent = await _message(hub_client, worker_id, f"CI failed on {PR}. Fix it.")
+
+    assert (sent.status_code, sent.json()) == (
+        202,
+        {"object": "agent.task.worker_message", "worker_id": worker_id, "session_id": session_id},
+    )
+    assert runner.messages == [(session_id, f"CI failed on {PR}. Fix it.", ALICE_ID)]
+
+
+@pytest.mark.parametrize(
+    ("result", "status"),
+    [
+        (SendResult("busy"), 409),
+        (SendResult("gone"), 404),
+        (SendResult("unreachable", "no runner can be reached or woken"), 503),
+        (SendResult("failed", "the runner did not accept the message"), 500),
+    ],
+)
+async def test_a_message_that_the_workers_session_does_not_take_fails_with_the_reason(
+    hub_app: FastAPI,
+    hub_client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+    result: SendResult,
+    status: int,
+) -> None:
+    _runner(hub_app, monkeypatch, result)
+    task_id, session_id = _task(db_uri, "PR 12"), _session(db_uri)
+    worker_id = (await _adopt(hub_client, session_id, task_id)).json()["worker_id"]
+
+    failed = await _message(hub_client, worker_id, "Fix it.")
+
+    assert failed.status_code == status
+
+
+async def test_a_message_needs_the_callers_own_worker_some_text_and_a_private_caller(
+    hub_app: FastAPI, hub_client: httpx.AsyncClient, db_uri: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = _runner(hub_app, monkeypatch, SendResult("sent"))
+    task_id, session_id = _task(db_uri, "PR 12"), _session(db_uri)
+    worker_id = (await _adopt(hub_client, session_id, task_id)).json()["worker_id"]
+    shared_session_id, shared_runner = _calling_session(db_uri)
+    permissions = SqlAlchemyPermissionStore(db_uri)
+    permissions.ensure_user(BOB_ID)
+    permissions.grant(BOB_ID, shared_session_id, LEVEL_EDIT)
+
+    statuses = [
+        (await _message(hub_client, worker_id, "Fix it.", headers=BOB)).status_code,
+        (await _message(hub_client, uuid.uuid4().hex, "Fix it.")).status_code,
+        (await _message(hub_client, worker_id, "  ")).status_code,
+        (await _message(hub_client, worker_id, "Fix it.", headers=shared_runner)).status_code,
+    ]
+
+    assert statuses == [404, 404, 422, 403]
+    assert runner.messages == []

@@ -2511,6 +2511,47 @@
         "title": "AgentTaskWorkerList",
         "type": "object"
       },
+      "AgentTaskWorkerMessageRequest": {
+        "additionalProperties": false,
+        "description": "A message for the session of one of the caller's workers.",
+        "properties": {
+          "message": {
+            "maxLength": 8000,
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "AgentTaskWorkerMessageRequest",
+        "type": "object"
+      },
+      "AgentTaskWorkerMessageSent": {
+        "description": "A message that the session of one of the caller's workers took; it starts a turn.",
+        "properties": {
+          "object": {
+            "const": "agent.task.worker_message",
+            "default": "agent.task.worker_message",
+            "title": "Object",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "worker_id": {
+            "title": "Worker Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "worker_id",
+          "session_id"
+        ],
+        "title": "AgentTaskWorkerMessageSent",
+        "type": "object"
+      },
       "AgentTaskWorkerResponse": {
         "description": "A session working on one of the caller's tasks.\n\nThe session's own status is read from the session, not from the worker.",
         "properties": {
@@ -31408,6 +31449,59 @@
           }
         },
         "summary": "Dismiss Event",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/task-workers/{worker_id}/messages": {
+      "post": {
+        "description": "Send a message into the session of one of the caller's workers.\n\nThe message goes in as the caller's message and starts a turn. While the\nsession runs a turn it takes no message: the call fails with 409, and the\ncaller sends the message again after the turn ends.",
+        "operationId": "message_worker_v1_task_workers__worker_id__messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "worker_id",
+            "required": true,
+            "schema": {
+              "title": "Worker Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentTaskWorkerMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskWorkerMessageSent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Message Worker",
         "tags": [
           "agent-tasks"
         ]

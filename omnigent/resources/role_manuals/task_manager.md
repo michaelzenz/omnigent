@@ -249,6 +249,31 @@ pmv2_api(
 )
 ```
 
+## Message a worker
+
+When an event asks for more work on something that a worker already does,
+for example a failed check or a review comment on the pull request that the
+worker opened, send that worker a message. Do not start a new session for it.
+
+```
+pmv2_api(
+  method="POST",
+  path="/v1/task-workers/<worker_id>/messages",
+  body={"message": "<what changed, with its link, and what to do now>"}
+)
+```
+
+- **Find the worker.** The task's workers
+(`GET /v1/agent-tasks/<task_id>/workers`) give each worker's `id` and
+`session_id`. When the titles do not show which worker did the work, read
+the sessions with `sys_session_get_history`.
+- **The message.** It goes in as the user's message, and the session starts a
+turn for it. The session knows its work, so write only what changed and what
+to do now.
+- **Busy worker.** While the session runs a turn, the call fails with 409 and
+sends nothing. Send the message again when that worker's next
+`session.turn.finished` event comes to you.
+
 ## Start a worker session
 
 When a task needs work that no session does yet, for example a new pull
@@ -289,7 +314,7 @@ that exists, for example the branch of a pull request.
 - **First message.** The session knows nothing about the task. Write what the
 work should achieve (the Overview's Goal line), the links, and what done means.
 - **One session for each piece of work.** Do not start a second session for
-work that a worker already does.
+work that a worker already does; message that worker instead.
 - **Failures.** The first message goes out in the background. If it cannot be
 sent, a `session.start.failed` event tells you why.
 

@@ -6542,6 +6542,22 @@ class StartedAgentTaskWorker(BaseModel):
     project_id: str | None
 
 
+class AgentTaskWorkerMessageRequest(BaseModel):
+    """A message for the session of one of the caller's workers."""
+
+    message: _AgentTaskWorkerMessage
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentTaskWorkerMessageSent(BaseModel):
+    """A message that the session of one of the caller's workers took; it starts a turn."""
+
+    object: Literal["agent.task.worker_message"] = "agent.task.worker_message"
+    worker_id: str
+    session_id: str
+
+
 AgentTaskEventState = Literal["unrouted", "routed", "dismissed", "fyi"]
 
 

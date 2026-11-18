@@ -20,6 +20,8 @@ from omnigent.server.schemas import (
     AdoptAgentTaskSessionRequest,
     AgentTaskSessionAdoption,
     AgentTaskWorkerList,
+    AgentTaskWorkerMessageRequest,
+    AgentTaskWorkerMessageSent,
     AgentTaskWorkerResponse,
     StartAgentTaskWorkerRequest,
     StartedAgentTaskWorker,
@@ -46,8 +48,8 @@ def create_agent_task_workers_router(
     :param permission_store: Checks that the caller owns an adopted session;
         ``None`` on servers without permissions.
     :param auth_provider: Identifies the caller; ``None`` is single-user mode.
-    :param starter: Starts sessions for tasks; ``None`` on servers without
-        GlobalHub settings.
+    :param starter: Starts sessions for tasks and sends messages to workers;
+        ``None`` on servers without GlobalHub settings.
     :returns: A configured :class:`APIRouter`.
     """
     router = APIRouter()
@@ -115,6 +117,30 @@ def create_agent_task_workers_router(
                 code=ErrorCode.INVALID_INPUT,
             )
         return await starter.start(request, task_id, body, user_id=user_id)
+
+    @router.post(
+        "/task-workers/{worker_id}/messages",
+        status_code=202,
+        response_model=AgentTaskWorkerMessageSent,
+        dependencies=[Depends(require_json_content_type), Depends(require_trusted_origin)],
+    )
+    async def message_worker(
+        request: Request, worker_id: str, body: AgentTaskWorkerMessageRequest
+    ) -> AgentTaskWorkerMessageSent:
+        """Send a message into the session of one of the caller's workers.
+
+        The message goes in as the caller's message and starts a turn. While the
+        session runs a turn it takes no message: the call fails with 409, and the
+        caller sends the message again after the turn ends.
+        """
+        user_id = require_user(request, auth_provider)
+        if starter is None:
+            raise OmnigentError(
+                "Messaging workers needs GlobalHub settings on this server",
+                code=ErrorCode.INVALID_INPUT,
+            )
+        worker = await starter.send_message(request, worker_id, body.message, user_id=user_id)
+        return AgentTaskWorkerMessageSent(worker_id=worker.id, session_id=worker.session_id)
 
     @router.get("/agent-tasks/{task_id}/workers", response_model=AgentTaskWorkerList)
     async def list_task_workers(request: Request, task_id: str) -> AgentTaskWorkerList:
