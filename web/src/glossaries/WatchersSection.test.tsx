@@ -237,6 +237,7 @@ describe("WatchersSection", () => {
       "/c/s-w1",
     );
 
+    fireEvent.click(card.getByRole("button", { name: "PR watcher", expanded: false }));
     fireEvent.click(await card.findByRole("button", { name: "Reset to default" }));
     expect(card.getByLabelText("Manual")).toHaveValue(TEMPLATE);
     fireEvent.change(card.getByLabelText("Name"), { target: { value: "Release watcher" } });
@@ -302,6 +303,9 @@ describe("WatchersSection", () => {
     const merged = item("i0", { status: "done", title: "Merged PR" });
     serveWatchers([watcher("w1", { schedule: null })], [merged, ...tracked]);
     renderSection();
+    const card = within(await screen.findByTestId("watcher-card-w1"));
+    expect(screen.queryByTestId("watch-items-w1")).not.toBeInTheDocument();
+    fireEvent.click(card.getByRole("button", { name: "PR watcher", expanded: false }));
     const items = within(await screen.findByTestId("watch-items-w1"));
 
     const first = within(await items.findByTestId("watch-item-i1"));

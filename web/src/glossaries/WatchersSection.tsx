@@ -24,7 +24,13 @@ import {
 } from "@/hooks/useGlobalHubWatchers";
 import { absoluteTime, relativeTime } from "@/lib/relativeTime";
 import { localTimezone } from "@/lib/timezones";
-import { ManualRow, RoleModelSelect, SavedStatus, SettingRow } from "./RoleFields";
+import {
+  CollapsibleRoleCard,
+  ManualRow,
+  RoleModelSelect,
+  SavedStatus,
+  SettingRow,
+} from "./RoleFields";
 import {
   RoleScheduleField,
   type RoleScheduleDraft,
@@ -170,59 +176,52 @@ function NewWatcherForm({ defaults, onDone }: { defaults: WatcherDefaults; onDon
 }
 
 function WatcherCard({ watcher }: { watcher: Watcher }) {
-  const detail = useWatcher(watcher.id);
-  const save = useSaveWatcher(watcher.id);
   const remove = useDeleteWatcher();
-  // A new form starts from the saved watcher after each save or cancel.
-  const [formVersion, setFormVersion] = useState(0);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   return (
-    <section
-      className="space-y-4 rounded-xl border border-border bg-card p-4"
-      data-testid={`watcher-card-${watcher.id}`}
-    >
-      <div className="flex items-center gap-2">
-        <h3 className="min-w-0 truncate text-base font-semibold">{watcher.name}</h3>
-        {watcher.builtin && (
-          <Badge variant="secondary" title="Built in: checks the source types no watcher covers">
-            Built-in
-          </Badge>
-        )}
-        <span className="flex-1" />
-        {watcher.session_id && (
-          <OpenSessionLink
-            sessionId={watcher.session_id}
-            label={`Open the ${watcher.name} session`}
-          />
-        )}
-        {!watcher.builtin && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`Delete watcher ${watcher.name}`}
-            title="Delete the watcher and its session"
-            onClick={() => setConfirmingDelete(true)}
-          >
-            <Trash2Icon className="text-destructive" aria-hidden />
-          </Button>
-        )}
-      </div>
-      <SourceTypes watcher={watcher} />
-      {detail.data ? (
-        <WatcherForm
-          key={formVersion}
-          watcher={detail.data}
-          save={save}
-          onDone={() => setFormVersion((version) => version + 1)}
-        />
-      ) : detail.isError ? (
-        <p role="alert" className="text-sm text-destructive">
-          Could not load the watcher: {detail.error.message}
-        </p>
-      ) : (
-        <Spinner className="size-4 text-muted-foreground" aria-label="Loading the watcher" />
-      )}
-      <WatchItems watcherId={watcher.id} />
+    <>
+      <CollapsibleRoleCard
+        testId={`watcher-card-${watcher.id}`}
+        title={watcher.name}
+        badges={
+          watcher.builtin && (
+            <Badge variant="secondary" title="Built in: checks the source types no watcher covers">
+              Built-in
+            </Badge>
+          )
+        }
+        actions={
+          <>
+            {watcher.session_id && (
+              <OpenSessionLink
+                sessionId={watcher.session_id}
+                label={`Open the ${watcher.name} session`}
+              />
+            )}
+            {!watcher.builtin && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Delete watcher ${watcher.name}`}
+                title="Delete the watcher and its session"
+                onClick={() => setConfirmingDelete(true)}
+              >
+                <Trash2Icon className="text-destructive" aria-hidden />
+              </Button>
+            )}
+          </>
+        }
+        summary={
+          <>
+            {watcher.description && (
+              <p className="truncate text-sm text-muted-foreground">{watcher.description}</p>
+            )}
+            <SourceTypes watcher={watcher} />
+          </>
+        }
+      >
+        <WatcherSettings watcherId={watcher.id} />
+      </CollapsibleRoleCard>
       {confirmingDelete && (
         <ConfirmDialog
           open
@@ -240,7 +239,34 @@ function WatcherCard({ watcher }: { watcher: Watcher }) {
           }
         />
       )}
-    </section>
+    </>
+  );
+}
+
+/** The watcher's form and tracked items, loaded when its card first opens. */
+function WatcherSettings({ watcherId }: { watcherId: string }) {
+  const detail = useWatcher(watcherId);
+  const save = useSaveWatcher(watcherId);
+  // A new form starts from the saved watcher after each save or cancel.
+  const [formVersion, setFormVersion] = useState(0);
+  return (
+    <>
+      {detail.data ? (
+        <WatcherForm
+          key={formVersion}
+          watcher={detail.data}
+          save={save}
+          onDone={() => setFormVersion((version) => version + 1)}
+        />
+      ) : detail.isError ? (
+        <p role="alert" className="text-sm text-destructive">
+          Could not load the watcher: {detail.error.message}
+        </p>
+      ) : (
+        <Spinner className="size-4 text-muted-foreground" aria-label="Loading the watcher" />
+      )}
+      <WatchItems watcherId={watcherId} />
+    </>
   );
 }
 

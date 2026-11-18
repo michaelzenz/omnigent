@@ -139,8 +139,11 @@ function savedBodies(): unknown[] {
     .map(([, init]) => JSON.parse(String(init?.body)));
 }
 
+/** A role's card, opened: role cards start closed. */
 async function card(role: string) {
-  return within(await screen.findByTestId(`role-card-${role}`));
+  const section = within(await screen.findByTestId(`role-card-${role}`));
+  fireEvent.click(section.getByRole("button", { expanded: false }));
+  return section;
 }
 
 beforeEach(() => {
@@ -153,6 +156,27 @@ afterEach(() => {
 });
 
 describe("RolesTab", () => {
+  it("starts each role closed, and keeps an unsaved edit while the role is closed", async () => {
+    serveRoles([profile("broker")]);
+    renderTab();
+    const broker = within(await screen.findByTestId("role-card-broker"));
+    const toggle = broker.getByRole("button", { name: "Task broker" });
+
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(broker.getByText("Default description")).toBeInTheDocument();
+    expect(broker.queryByLabelText("Description")).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    fireEvent.change(await broker.findByLabelText("Description"), {
+      target: { value: "Routes events." },
+    });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(broker.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(broker.getByLabelText("Description")).toHaveValue("Routes events.");
+  });
+
   it("saves only the fields that changed, and Cancel puts back the saved values", async () => {
     serveRoles([profile("broker")]);
     renderTab();

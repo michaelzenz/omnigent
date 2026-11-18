@@ -11,7 +11,13 @@ import {
   useRoleProfiles,
   useSaveRoleProfile,
 } from "@/hooks/useGlobalHubRoleProfiles";
-import { ManualRow, RoleModelSelect, SavedStatus, SettingRow } from "./RoleFields";
+import {
+  CollapsibleRoleCard,
+  ManualRow,
+  RoleModelSelect,
+  SavedStatus,
+  SettingRow,
+} from "./RoleFields";
 import {
   RoleScheduleField,
   type RoleScheduleDraft,
@@ -58,31 +64,43 @@ function BuiltinRoles() {
 type RoleSave = ReturnType<typeof useSaveRoleProfile>;
 
 function RoleCard({ summary }: { summary: RoleProfileSummary }) {
-  const profile = useRoleProfile(summary.role);
-  const save = useSaveRoleProfile(summary.role);
+  return (
+    <CollapsibleRoleCard
+      testId={`role-card-${summary.role}`}
+      title={summary.title}
+      summary={
+        summary.description && (
+          <p className="truncate text-sm text-muted-foreground">{summary.description}</p>
+        )
+      }
+    >
+      <RoleSettings role={summary.role} />
+    </CollapsibleRoleCard>
+  );
+}
+
+/** The role's form, loaded when its card first opens. */
+function RoleSettings({ role }: { role: string }) {
+  const profile = useRoleProfile(role);
+  const save = useSaveRoleProfile(role);
   // A new form starts from the saved profile after each save or cancel.
   const [formVersion, setFormVersion] = useState(0);
-  return (
-    <section
-      className="space-y-4 rounded-xl border border-border bg-card p-4"
-      data-testid={`role-card-${summary.role}`}
-    >
-      <h3 className="text-base font-semibold">{summary.title}</h3>
-      {profile.data ? (
-        <RoleForm
-          key={formVersion}
-          profile={profile.data}
-          save={save}
-          onDone={() => setFormVersion((version) => version + 1)}
-        />
-      ) : profile.isError ? (
-        <p role="alert" className="text-sm text-destructive">
-          Could not load the role: {profile.error.message}
-        </p>
-      ) : (
-        <Spinner className="size-4 text-muted-foreground" aria-label="Loading the role" />
-      )}
-    </section>
+  if (profile.data) {
+    return (
+      <RoleForm
+        key={formVersion}
+        profile={profile.data}
+        save={save}
+        onDone={() => setFormVersion((version) => version + 1)}
+      />
+    );
+  }
+  return profile.isError ? (
+    <p role="alert" className="text-sm text-destructive">
+      Could not load the role: {profile.error.message}
+    </p>
+  ) : (
+    <Spinner className="size-4 text-muted-foreground" aria-label="Loading the role" />
   );
 }
 

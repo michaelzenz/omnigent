@@ -1,7 +1,9 @@
 import { type ReactNode, useState } from "react";
+import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Select,
   SelectContent,
@@ -17,6 +19,62 @@ import { nativeModelLabel } from "@/lib/composerModelLabel";
 // The harness that the GlobalHub role agents run.
 const ROLE_HARNESS = "pi";
 const ROLE_DEFAULT_MODEL = "__role_default__";
+
+/** A role's card: its title opens and closes the role's settings, which start closed. */
+export function CollapsibleRoleCard({
+  testId,
+  title,
+  badges,
+  actions,
+  summary,
+  children,
+}: {
+  testId: string;
+  title: string;
+  /** Shown after the title, e.g. a "Built-in" badge. */
+  badges?: ReactNode;
+  /** Shown at the end of the header, e.g. a delete button. */
+  actions?: ReactNode;
+  /** Shown under the header, also while the card is closed. */
+  summary?: ReactNode;
+  /** The settings: rendered when the card first opens, then kept while it is closed. */
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [opened, setOpened] = useState(false);
+  return (
+    <Collapsible
+      asChild
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) setOpened(true);
+      }}
+    >
+      <section className="rounded-xl border border-border bg-card p-4" data-testid={testId}>
+        <div className="flex items-center gap-2">
+          <h3 className="min-w-0 text-base font-semibold">
+            <CollapsibleTrigger className="flex max-w-full items-center gap-1.5 text-left">
+              {open ? (
+                <ChevronDownIcon className="size-4 shrink-0" aria-hidden />
+              ) : (
+                <ChevronRightIcon className="size-4 shrink-0" aria-hidden />
+              )}
+              <span className="truncate">{title}</span>
+            </CollapsibleTrigger>
+          </h3>
+          {badges}
+          <span className="flex-1" />
+          {actions}
+        </div>
+        {summary && <div className="mt-1.5 space-y-1.5 pl-5.5">{summary}</div>}
+        <CollapsibleContent forceMount hidden={!open} className="space-y-4 pt-4">
+          {opened && children}
+        </CollapsibleContent>
+      </section>
+    </Collapsible>
+  );
+}
 
 /** A labeled field of a role form, with an optional reset to its default. */
 export function SettingRow({
