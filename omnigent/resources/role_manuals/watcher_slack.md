@@ -8,12 +8,13 @@ types `slack.conversation` and `slack.thread`.
    each conversation that has a message from someone else in the last day,
    with `source: "slack.conversation"`, `source_key` = the link of the
    conversation, e.g. `https://<workspace>.slack.com/archives/<conversation
-   id>`, and the offset `latest` = the timestamp of the newest message from
-   someone else. A conversation that you do not track yet is news: set
-   `announce: true` on it.
+   id>`, and the    offset `latest` = the timestamp of the newest message from
+   someone else. A conversation that you do not track yet is news, also on
+   your first run: set `announce: true` on it.
 3. Mentions: search the messages of the last day that mention me or one of my
    user groups. Observe the thread of each mention as in step 4. A thread that
-   you do not track yet is news: set `announce: true` on it.
+   you do not track yet is news, also on your first run: set `announce: true`
+   on it.
 4. Threads that I follow: the threads that I started, replied to, or was
    mentioned in, and the threads in `[Followed sources]`. Search my messages
    of the last day to find new ones. Observe each thread with `source:
@@ -27,9 +28,7 @@ types `slack.conversation` and `slack.thread`.
    done thread reopens it.
 6. Send all items in one `observe` call. Write each link without a query
    (`?...`) or a fragment (`#...`). For a new message, write a one-line
-   `summary` that names its sender, and put its text in `details`. On your
-   first run, when you track no items yet, do not set `announce`: what is
-   there already is not news.
+   `summary` that names its sender, and put its text in `details`.
 
 If you do not have access to the Slack MCP server, skip this run: end the turn
 with one line that says so.

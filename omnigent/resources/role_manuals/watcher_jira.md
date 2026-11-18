@@ -6,11 +6,12 @@ that sessions follow. This watcher covers the source type `jira.issue`.
 2. Assigned tickets: search with the JQL `assignee = currentUser() AND
    resolution = Unresolved ORDER BY created DESC`. Observe each ticket with
    the offsets `status`, `assignee` and `comments` (the id of the newest
-   comment that is not mine). A ticket that you do not track yet is news: set
-   `announce: true` on it.
+   comment that is not mine). A ticket that you do not track yet is news, also
+   on your first run: set `announce: true` on it.
 3. Mentions: search the tickets updated in the last day whose description or
    comments mention me. Observe each with the offsets of step 2. A ticket that
-   you do not track yet is news: set `announce: true` on it.
+   you do not track yet is news, also on your first run: set `announce: true`
+   on it.
 4. Followed tickets: the tickets in `[Followed sources]`. Observe each new
    one with the offsets of step 2. For a done one, observe only its `status`
    offset, to see whether it was reopened.
@@ -22,8 +23,7 @@ that sessions follow. This watcher covers the source type `jira.issue`.
 6. Send all tickets in one `observe` call, with `source: "jira.issue"` and
    `source_key` = the ticket key. For a change, write a one-line `summary`
    that names who made the change, and put the summary of the ticket and the
-   text of a new comment in `details`. On your first run, when you track no
-   items yet, do not set `announce`: what is there already is not news.
+   text of a new comment in `details`.
 
 If you do not have access to the Jira MCP server, skip this run: end the turn
 with one line that says so.
