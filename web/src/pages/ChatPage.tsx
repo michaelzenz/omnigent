@@ -4458,8 +4458,8 @@ function ComposerImpl(
               onOpen={openComposerGithubTab}
               conversationId={composerSessionId ?? undefined}
             />
-            <OpenFoldersMenu conversationId={composerSessionId} hostId={hostMcpRoutingId} />
             <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
+              <OpenFoldersMenu conversationId={composerSessionId} hostId={hostMcpRoutingId} />
               <div
                 data-testid="composer-task-indicators"
                 className="flex items-center gap-0 empty:hidden"

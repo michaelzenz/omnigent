@@ -10,7 +10,12 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useHostSshTarget } from "@/hooks/useHostSshTarget";
+import { toast } from "sonner";
+import {
+  type HostSshTargetResolution,
+  useHostSshTarget,
+  useResolveHostSshTarget,
+} from "@/hooks/useHostSshTarget";
 import { useInstalledEditors } from "@/hooks/useInstalledEditors";
 import { useOpenFolders } from "@/hooks/useOpenFolders";
 import { CODE_EDITORS, type CodeEditor, editorLink, launchEditorLink } from "@/lib/editorLinks";
@@ -23,6 +28,15 @@ const EDITOR_LABELS = Object.fromEntries(
   CODE_EDITORS.map(({ id, label }) => [id, label]),
 ) as Record<CodeEditor, string>;
 
+const UNREACHABLE_REASONS: Record<
+  Extract<HostSshTargetResolution, { unreachable: string }>["unreachable"],
+  string
+> = {
+  offline: "The session's host is offline. Try again when it reconnects.",
+  no_address: "Omnigent knows no SSH address for the session's host.",
+  check_failed: "Omnigent could not check the session's host. Try again in a moment.",
+};
+
 function EditorIcon({ editor }: { editor: CodeEditor }) {
   return (
     <span aria-hidden="true" className="inline-flex size-4 shrink-0">
@@ -32,8 +46,9 @@ function EditorIcon({ editor }: { editor: CodeEditor }) {
 }
 
 /**
- * The Open button for the folders that the session's agent stamped. It shows only
- * where a folder can open: this desktop owns the session's host, or the host takes SSH.
+ * The Open button for the folders that the session's agent stamped. It shows whenever a
+ * folder is stamped. For a host on another machine, a click checks the host's SSH target
+ * again when it is not known yet, and says so when the host is not reachable.
  */
 export function OpenFoldersMenu({
   conversationId,
@@ -72,14 +87,27 @@ function OpenFoldersButton({
   const desktopHostId = useDesktopHostId();
   const mobile = isAndroidShell() || isIOSShell();
   const local = hostId !== null && hostId === desktopHostId;
-  const sshTarget = useHostSshTarget(
-    !mobile && !local ? hostId : null,
-    conversationId ?? undefined,
-  );
-  if (mobile || editors.length === 0 || (!local && !sshTarget)) return null;
-  const open = (editor: CodeEditor, path: string) => {
-    const url = editorLink(editor, path, local ? null : sshTarget, true);
+  const remoteHostId = !mobile && !local ? hostId : null;
+  const sshTarget = useHostSshTarget(remoteHostId, conversationId ?? undefined);
+  const resolveSshTarget = useResolveHostSshTarget(remoteHostId, conversationId ?? undefined);
+  if (mobile || editors.length === 0) return null;
+  const launch = (editor: CodeEditor, path: string, target: string | null) => {
+    const url = editorLink(editor, path, target, true);
     if (url) launchEditorLink(url);
+  };
+  const open = (editor: CodeEditor, path: string) => {
+    if (local || sshTarget) {
+      launch(editor, path, local ? null : sshTarget);
+      return;
+    }
+    void resolveSshTarget().then((resolution) => {
+      if ("target" in resolution) launch(editor, path, resolution.target);
+      else {
+        toast.error("Host not reachable", {
+          description: UNREACHABLE_REASONS[resolution.unreachable],
+        });
+      }
+    });
   };
   const onlyEditor = editors.length === 1 ? editors[0] : null;
   return (
@@ -97,7 +125,7 @@ function OpenFoldersButton({
           <span>Open</span>
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="start" className="min-w-44 max-w-80">
+      <DropdownMenuContent side="top" align="end" className="min-w-44 max-w-80">
         {folders.map((folder) =>
           onlyEditor ? (
             <DropdownMenuItem

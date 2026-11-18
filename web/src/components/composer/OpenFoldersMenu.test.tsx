@@ -13,6 +13,8 @@ const STAMPED: OpenFolder[] = [
   { title: "Repo", path: "/home/me/repo" },
   { title: "Fix worktree", path: "/home/me/repo-fix" },
 ];
+const LABELS_PATH =
+  "/v1/sessions/conv_1/resources/environments/default/filesystem/etc/metric_proxy/labels/default?base=host";
 
 function desktop(installed?: { vscode: boolean; cursor: boolean }) {
   vi.stubGlobal("omnigentDesktop", {
@@ -49,6 +51,7 @@ afterEach(() => {
   cleanup();
   client.clear();
   vi.doUnmock("@/hooks/useHostSshTarget");
+  vi.doUnmock("sonner");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -104,7 +107,10 @@ it("opens a folder at once when the OS has only one of the editors", async () =>
 
 it("offers both editors over SSH in a browser, which cannot tell what is installed", async () => {
   vi.stubGlobal("omnigentDesktop", undefined);
-  vi.doMock("@/hooks/useHostSshTarget", () => ({ useHostSshTarget: () => "devbox.ssh" }));
+  vi.doMock("@/hooks/useHostSshTarget", () => ({
+    useHostSshTarget: () => "devbox.ssh",
+    useResolveHostSshTarget: () => async () => ({ target: "devbox.ssh" }),
+  }));
   await renderMenu("remote");
   await settle();
   await openMenu();
@@ -115,8 +121,57 @@ it("offers both editors over SSH in a browser, which cannot tell what is install
   );
 });
 
+it("shows the button for an offline host, and a click says the host is not reachable", async () => {
+  const toastError = vi.fn();
+  vi.doMock("sonner", () => ({ toast: { error: toastError } }));
+  await renderMenu("remote");
+  await settle();
+  await openMenu();
+  fireEvent.keyDown(screen.getByRole("menuitem", { name: "Repo" }), { key: "ArrowRight" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Cursor" }));
+  await waitFor(() =>
+    expect(toastError).toHaveBeenCalledWith("Host not reachable", {
+      description: "The session's host is offline. Try again when it reconnects.",
+    }),
+  );
+  expect(desktopOpen).not.toHaveBeenCalled();
+});
+
+it("checks a host again on a click after a failed check, then opens the folder over SSH", async () => {
+  const route = fetchMock.getMockImplementation()!;
+  let labelReads = 0;
+  fetchMock.mockImplementation(async (input: string) => {
+    if (input === "/v1/hosts") {
+      const host = { host_id: "remote", name: "devbox", status: "online", sandbox_provider: null };
+      return new Response(JSON.stringify({ hosts: [host] }));
+    }
+    if (input !== LABELS_PATH) return route(input);
+    labelReads += 1;
+    if (labelReads === 1) return new Response("", { status: 502 });
+    const file = {
+      object: "session.environment.filesystem.file_content",
+      encoding: "utf-8",
+      truncated: false,
+      content: "arca_region us-west-2\narca_type arca\n",
+    };
+    return new Response(JSON.stringify(file));
+  });
+  await renderMenu("remote");
+  await settle();
+  await openMenu();
+  fireEvent.keyDown(screen.getByRole("menuitem", { name: "Repo" }), { key: "ArrowRight" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Cursor" }));
+  await waitFor(() =>
+    expect(desktopOpen).toHaveBeenCalledWith(
+      "cursor://vscode-remote/ssh-remote+arca.ssh/home/me/repo",
+      "_blank",
+      "noopener,noreferrer",
+    ),
+  );
+  expect(labelReads).toBe(2);
+});
+
 it.each<[string, () => void, string]>([
-  ["a host on another machine", () => {}, "remote"],
   [
     "no stamped folders",
     () => {
