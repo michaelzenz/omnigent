@@ -33,7 +33,10 @@ class EventSubscriptionsTool(Tool):
             "read, also say how to read it, e.g. the account, the access or the tool it needs. "
             "Changes come to this session later as [System: event] messages. 'list' shows "
             "what this session follows; 'unsubscribe' stops following a source that you no "
-            "longer need."
+            "longer need. "
+            "Use this instead of a loop that waits and checks the source again: a watcher "
+            "checks it for you, also after this turn ends. A watcher checks only on its "
+            "schedule, often every 30 minutes; for a wait of a few minutes, check in this turn."
         )
 
     def get_schema(self) -> dict[str, Any]:
