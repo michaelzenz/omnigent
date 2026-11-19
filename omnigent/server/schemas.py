@@ -6047,7 +6047,7 @@ class CreateGlobalHubWatcherRequest(BaseModel):
 
     A null or blank ``manual`` uses the packaged template, and a null or blank
     ``model`` the watcher agent's own model. Without ``schedule``, the watcher
-    runs every 30 minutes. Its session starts with its first run.
+    runs every 10 minutes. Its session starts with its first run.
     """
 
     name: _GlobalHubWatcherName

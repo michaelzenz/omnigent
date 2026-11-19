@@ -12,11 +12,13 @@ import {
   useSessionSubscriptions,
   useUnsubscribeSession,
 } from "@/hooks/useSessionSubscriptions";
+import { followLinkWithPopupFallback } from "@/lib/openLinkInApp";
 import { cn } from "@/lib/utils";
 
 /**
  * The sources that the session follows, e.g. the pull requests its agent opened. It shows
- * when the session follows at least one; the user can stop following each one.
+ * when the session follows at least one; the user can stop following each one. A source
+ * with a web address opens in the user's browser, outside the app.
  */
 export function WatchingMenu({
   conversationId,
@@ -73,19 +75,12 @@ function WatchingButton({
           Changes to these sources come to this session.
         </DropdownMenuLabel>
         {subscriptions.map((subscription) => (
-          <DropdownMenuItem
+          <div
             key={subscription.id}
-            title={subscription.note ?? subscription.source_key}
-            onSelect={(event) => event.preventDefault()}
-            className="flex items-center gap-2"
+            className="flex items-center gap-1 pr-1"
             data-testid={`composer-watching-${subscription.id}`}
           >
-            <span className="min-w-0 flex-1">
-              <span className="block truncate">{subscription.source_key}</span>
-              <span className="block truncate font-mono text-xs text-muted-foreground">
-                {subscription.source_type}
-              </span>
-            </span>
+            <WatchedSource subscription={subscription} />
             <button
               type="button"
               aria-label={`Stop watching ${subscription.source_key}`}
@@ -95,9 +90,48 @@ function WatchingButton({
             >
               <XIcon className="size-3.5" aria-hidden />
             </button>
-          </DropdownMenuItem>
+          </div>
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/** One followed source; a web address is a link that opens in the browser, outside the app. */
+function WatchedSource({ subscription }: { subscription: SessionSubscription }) {
+  const url = /^https?:\/\//i.test(subscription.source_key) ? subscription.source_key : null;
+  const title = subscription.note ?? subscription.source_key;
+  const label = (
+    <span className="min-w-0 flex-1">
+      <span className={cn("block truncate", url && "text-primary hover:underline")}>
+        {subscription.source_key}
+      </span>
+      <span className="block truncate font-mono text-xs text-muted-foreground">
+        {subscription.source_type}
+      </span>
+    </span>
+  );
+  if (url === null) {
+    return (
+      <DropdownMenuItem
+        title={title}
+        onSelect={(event) => event.preventDefault()}
+        className="min-w-0 flex-1"
+      >
+        {label}
+      </DropdownMenuItem>
+    );
+  }
+  return (
+    <DropdownMenuItem asChild title={title} className="min-w-0 flex-1 cursor-pointer">
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(event) => followLinkWithPopupFallback(event, url, undefined)}
+      >
+        {label}
+      </a>
+    </DropdownMenuItem>
   );
 }

@@ -94,9 +94,13 @@ it("lists the sources the session follows, then stops watching the chosen one", 
 
   await openMenu();
   const pullRequest = screen.getByTestId("composer-watching-sub_pr");
+  const ticket = screen.getByTestId("composer-watching-sub_ticket");
   expect(pullRequest).toHaveTextContent(PR);
   expect(pullRequest).toHaveTextContent("github.pull_request");
-  expect(screen.getByTestId("composer-watching-sub_ticket")).toHaveTextContent(TICKET);
+  expect(ticket).toHaveTextContent(TICKET);
+  const link = pullRequest.querySelector("a");
+  expect([link?.getAttribute("href"), link?.getAttribute("target")]).toEqual([PR, "_blank"]);
+  expect(ticket.querySelector("a")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: `Stop watching ${PR}` }));
 
   await waitFor(() =>

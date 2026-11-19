@@ -36,7 +36,7 @@ class EventSubscriptionsTool(Tool):
             "longer need. "
             "Use this instead of a loop that waits and checks the source again: a watcher "
             "checks it for you, also after this turn ends. A watcher checks only on its "
-            "schedule, often every 30 minutes; for a wait of a few minutes, check in this turn."
+            "schedule, often every 10 minutes; for a wait of a few minutes, check in this turn."
         )
 
     def get_schema(self) -> dict[str, Any]:

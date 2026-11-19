@@ -4277,7 +4277,7 @@
       },
       "CreateGlobalHubWatcherRequest": {
         "additionalProperties": false,
-        "description": "Create a watcher for the caller.\n\nA null or blank `manual` uses the packaged template, and a null or blank\n`model` the watcher agent's own model. Without `schedule`, the watcher\nruns every 30 minutes. Its session starts with its first run.",
+        "description": "Create a watcher for the caller.\n\nA null or blank `manual` uses the packaged template, and a null or blank\n`model` the watcher agent's own model. Without `schedule`, the watcher\nruns every 10 minutes. Its session starts with its first run.",
         "properties": {
           "description": {
             "default": "",

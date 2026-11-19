@@ -37,7 +37,7 @@ export interface WatcherDetail extends Watcher {
 /** What a new watcher starts from. */
 export interface WatcherDefaults {
   manual: string;
-  /** The schedule rule of a new watcher, e.g. ``"FREQ=MINUTELY;INTERVAL=30"``. */
+  /** The schedule rule of a new watcher, e.g. ``"FREQ=MINUTELY;INTERVAL=10"``. */
   rrule: string;
 }
 

@@ -240,19 +240,19 @@ async def test_the_first_placement_turns_on_the_custodians_sweep_and_adds_the_de
         (watcher["name"], watcher["schedule"]["next_run_at"])
         for watcher in watchers
         if watcher["builtin"]
-    ] == [("Fallback watcher", 1_800_001_800)]
+    ] == [("Fallback watcher", 1_800_000_600)]
     assert [
         (watcher["name"], watcher["customized"], watcher["schedule"]["rrule"])
         for watcher in default_watchers
     ] == [
-        ("GitHub watcher", ["manual"], "FREQ=MINUTELY;INTERVAL=30"),
-        ("Slack watcher", ["manual"], "FREQ=MINUTELY;INTERVAL=30"),
-        ("Jira watcher", ["manual"], "FREQ=MINUTELY;INTERVAL=30"),
+        ("GitHub watcher", ["manual"], "FREQ=MINUTELY;INTERVAL=10"),
+        ("Slack watcher", ["manual"], "FREQ=MINUTELY;INTERVAL=10"),
+        ("Jira watcher", ["manual"], "FREQ=MINUTELY;INTERVAL=10"),
     ]
     assert [watcher["schedule"]["next_run_at"] for watcher in default_watchers] == [
-        1_800_001_800,
-        1_800_001_800,
-        1_800_001_800,
+        1_800_000_600,
+        1_800_000_600,
+        1_800_000_600,
     ]
     assert [watcher["name"] for watcher in watchers_after_placing_again] == [
         "Slack watcher",

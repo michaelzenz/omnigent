@@ -28,7 +28,7 @@ PULL_REQUEST = "github.pull_request"
 TICKET = "jira.issue"
 # 08:00 UTC on 2027-01-15, a winter day, when Berlin is at UTC+1.
 NOW = 1_800_000_000
-HALF_HOURLY = "FREQ=MINUTELY;INTERVAL=30"
+EVERY_10_MINUTES = "FREQ=MINUTELY;INTERVAL=10"
 HOURLY = {"enabled": True, "rrule": "FREQ=HOURLY;BYMINUTE=30", "timezone": "Europe/Berlin"}
 
 
@@ -45,7 +45,7 @@ async def _create(
     return response.json()
 
 
-async def test_a_new_watcher_starts_from_the_template_and_runs_every_30_minutes(
+async def test_a_new_watcher_starts_from_the_template_and_runs_every_10_minutes(
     auth_client: httpx.AsyncClient,
 ) -> None:
     defaults = (await auth_client.get(f"{ROUTE}/defaults", headers=ALICE)).json()
@@ -54,7 +54,7 @@ async def test_a_new_watcher_starts_from_the_template_and_runs_every_30_minutes(
 
     template = WATCHER_ROLE.default_manual()
     assert template.startswith("# Watcher manual")
-    assert (defaults["manual"], defaults["rrule"]) == (template, HALF_HOURLY)
+    assert (defaults["manual"], defaults["rrule"]) == (template, EVERY_10_MINUTES)
     assert (watcher["name"], watcher["description"], watcher["manual"]) == (
         "PR watcher",
         "Pull requests on my tasks",
@@ -62,12 +62,12 @@ async def test_a_new_watcher_starts_from_the_template_and_runs_every_30_minutes(
     )
     assert (watcher["customized"], watcher["model"], watcher["session_id"]) == ([], None, None)
     assert (watcher["builtin"], watcher["source_types"]) == (False, [])
-    # Every 30 minutes from midnight, so the first run after 08:00 is 08:30.
+    # Every 10 minutes from midnight, so the first run after 08:00 is 08:10.
     assert watcher["schedule"] == {
         "enabled": True,
-        "rrule": HALF_HOURLY,
+        "rrule": EVERY_10_MINUTES,
         "timezone": "UTC",
-        "next_run_at": NOW + 1_800,
+        "next_run_at": NOW + 600,
     }
 
 
@@ -265,9 +265,9 @@ async def test_the_fallback_watcher_checks_the_types_no_watcher_covers_and_stays
     )
     assert fallback["schedule"] == {
         "enabled": True,
-        "rrule": HALF_HOURLY,
+        "rrule": EVERY_10_MINUTES,
         "timezone": "UTC",
-        "next_run_at": NOW + 1_800,
+        "next_run_at": NOW + 600,
     }
     assert {row["id"]: row["source_types"] for row in listed} == {
         fallback["id"]: [TICKET],

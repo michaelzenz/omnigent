@@ -16,7 +16,7 @@ from omnigent.server.scheduled.rrule import (
 from omnigent.stores.role_schedule_store import RoleScheduleStore
 
 #: How often a new watcher runs unless the user picks another schedule.
-DEFAULT_WATCHER_RRULE = "FREQ=MINUTELY;INTERVAL=30"
+DEFAULT_WATCHER_RRULE = "FREQ=MINUTELY;INTERVAL=10"
 #: When a new GlobalHub user's custodian sweeps sessions unless the user picks another time.
 DEFAULT_CUSTODIAN_RRULE = "FREQ=DAILY;BYHOUR=9;BYMINUTE=0"
 #: Parts that end a rule; a role schedule repeats until the user turns it off.
