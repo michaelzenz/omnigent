@@ -17,6 +17,7 @@ import {
 import {
   ArrowUpIcon,
   CheckIcon,
+  ChevronUpIcon,
   CopyIcon,
   CornerDownRightIcon,
   FileTextIcon,
@@ -102,6 +103,7 @@ import { copyMarkdown } from "@/lib/copyMarkdown";
 import { showToast } from "@/components/ui/toast";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useFoldAssistantNarration } from "@/lib/foldNarrationPreferences";
+import type { ChatTopButtonMode } from "@/lib/chatTopButtonPreferences";
 import type { BackgroundTaskInfo, PendingInput, SessionStatus } from "@/lib/types";
 import {
   TRANSCRIPT_SCROLLBAR_DRAG_EVENT,
@@ -2330,10 +2332,65 @@ export function ConversationScrollRefBridge({
   return null;
 }
 
+export interface UserTurnStart {
+  itemId: string;
+  start: number;
+}
+
+export function previousTurnIndex(turnStarts: readonly number[], roof: number): number {
+  const index = turnStarts.findLastIndex((start) => start <= roof + 1);
+  return index > 0 && Math.abs(turnStarts[index]! - roof) <= 1 ? index - 1 : index;
+}
+
+const TURN_JUMP_DURATION_MS = 600;
+const TURN_JUMP_MAX_SETTLE_FRAMES = 30;
+const turnJumpStops = new WeakMap<HTMLElement, () => void>();
+
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+function animateScrollTop(el: HTMLElement, targetTop: () => number): void {
+  turnJumpStops.get(el)?.();
+  const startTop = el.scrollTop;
+  const distance = targetTop() - startTop;
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+  const startedAt = performance.now();
+  let frame = 0;
+  let settleFrames = 0;
+  let stableFrames = 0;
+  const stop = () => {
+    cancelAnimationFrame(frame);
+    el.removeEventListener("wheel", stop);
+    el.removeEventListener("touchstart", stop);
+    if (turnJumpStops.get(el) === stop) turnJumpStops.delete(el);
+  };
+  const step = (now: number) => {
+    const progress = reduceMotion ? 1 : Math.min(1, (now - startedAt) / TURN_JUMP_DURATION_MS);
+    const top = targetTop() - distance * (1 - progress) ** 3;
+    if (progress === 1) {
+      stableFrames = Math.abs(el.scrollTop - top) <= 1 ? stableFrames + 1 : 0;
+      settleFrames += 1;
+      if (stableFrames >= 2 || settleFrames > TURN_JUMP_MAX_SETTLE_FRAMES) {
+        stop();
+        return;
+      }
+    }
+    el.scrollTop = top;
+    frame = requestAnimationFrame(step);
+  };
+  turnJumpStops.set(el, stop);
+  el.addEventListener("wheel", stop, { passive: true });
+  el.addEventListener("touchstart", stop, { passive: true });
+  step(startedAt);
+}
+
 /**
  * Hover-revealed "Jump to top" pill. Hovering near the top edge surfaces a pill
- * at the fade border; clicking it pages in every older history block and then
- * scrolls to the very first message.
+ * at the fade border; clicking it scrolls to the first message, or in previous-turn
+ * mode to the start of the turn above the pill, paging in older history as needed.
  *
  * @param containerEl - The conversation wrapper; hover/anchor reference.
  * @param scroller - Scroll container + lock controls (ConversationScrollRefBridge).
@@ -2343,14 +2400,19 @@ export function JumpToTopButton({
   containerEl,
   scroller,
   hasMoreHistory,
+  mode = "jump-to-top",
+  userTurnStarts,
 }: {
   containerEl: HTMLElement | null;
   scroller: ConversationScroller | null;
   hasMoreHistory: boolean;
+  mode?: ChatTopButtonMode;
+  userTurnStarts?: () => UserTurnStart[];
 }) {
   const [atTop, setAtTop] = useState(true);
   const [hovering, setHovering] = useState(false);
   const [jumping, setJumping] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   // Reveal the pill while the user is scrolling up, then fade it back out.
   const [scrolledUp, setScrolledUp] = useState(false);
 
@@ -2415,10 +2477,6 @@ export function JumpToTopButton({
   const jumpToTop = useCallback(async () => {
     if (!scroller) return;
     const { el, state, stopScroll } = scroller;
-    const nextFrame = () =>
-      new Promise<void>((resolve) => {
-        requestAnimationFrame(() => resolve());
-      });
     setJumping(true);
     try {
       // Release StickToBottom's bottom-lock so prepend-driven scrolls bail
@@ -2455,6 +2513,54 @@ export function JumpToTopButton({
     }
   }, [scroller]);
 
+  const jumpToPreviousTurn = useCallback(async () => {
+    if (!scroller || !userTurnStarts) return;
+    const { el, state, stopScroll } = scroller;
+    const roofOffset =
+      (buttonRef.current?.getBoundingClientRect().bottom ?? 0) - el.getBoundingClientRect().top;
+    const findTarget = () => {
+      const turns = userTurnStarts();
+      const roof = el.scrollTop + roofOffset;
+      const index = previousTurnIndex(
+        turns.map((turn) => turn.start),
+        roof,
+      );
+      const turn = turns[index];
+      if (!turn) return null;
+      return { itemId: turn.itemId, needsOlder: index === 0 && Math.abs(turn.start - roof) <= 1 };
+    };
+    setJumping(true);
+    try {
+      stopScroll();
+      state.isAtBottom = false;
+      state.escapedFromLock = true;
+      let target = findTarget();
+      /* oxlint-disable no-await-in-loop */
+      for (
+        let i = 0;
+        i < 1000 && (!target || target.needsOlder) && useChatStore.getState().hasMoreHistory;
+        i++
+      ) {
+        await useChatStore.getState().loadMoreHistory();
+        state.isAtBottom = false;
+        state.escapedFromLock = true;
+        await nextFrame();
+        target = findTarget();
+      }
+      /* oxlint-enable no-await-in-loop */
+      const itemId = target && !target.needsOlder ? target.itemId : null;
+      animateScrollTop(el, () => {
+        const start = userTurnStarts().find((turn) => turn.itemId === itemId)?.start;
+        const top = start === undefined ? 0 : start - roofOffset;
+        return Math.max(0, Math.min(top, el.scrollHeight - el.clientHeight));
+      });
+    } finally {
+      setJumping(false);
+    }
+  }, [scroller, userTurnStarts]);
+
+  const previousTurn = mode === "jump-to-previous-message";
+
   return (
     <div
       // top 50px centers the pill on the chat-scroll-fade border, just below the
@@ -2467,13 +2573,14 @@ export function JumpToTopButton({
       )}
     >
       <Button
+        ref={buttonRef}
         type="button"
         variant="outline"
         size="icon-sm"
         disabled={jumping}
-        onClick={() => void jumpToTop()}
-        aria-label="Jump to the first message"
-        componentId="chat.nav.jump_to_top"
+        onClick={() => void (previousTurn ? jumpToPreviousTurn() : jumpToTop())}
+        aria-label={previousTurn ? "Jump to the previous turn" : "Jump to the first message"}
+        componentId={previousTurn ? "chat.nav.jump_to_previous_turn" : "chat.nav.jump_to_top"}
         // When hidden keep the button out of the tab order and a11y tree.
         tabIndex={visible ? 0 : -1}
         aria-hidden={!visible}
@@ -2488,6 +2595,8 @@ export function JumpToTopButton({
       >
         {jumping ? (
           <Loader2Icon className="size-3.5 animate-spin" aria-hidden />
+        ) : previousTurn ? (
+          <ChevronUpIcon className="size-3.5" aria-hidden />
         ) : (
           <ArrowUpIcon className="size-3.5" aria-hidden />
         )}

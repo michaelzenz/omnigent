@@ -232,6 +232,7 @@ import {
 } from "@/lib/workspaceTabPreferences";
 import { readDefaultBaseBranch, writeDefaultBaseBranch } from "@/lib/baseBranchPreferences";
 import { readAlwaysSteer, writeAlwaysSteer } from "@/lib/alwaysSteerPreferences";
+import { useChatTopButtonMode, writeChatTopButtonMode } from "@/lib/chatTopButtonPreferences";
 import {
   readOpenSubagentsInPanel,
   writeOpenSubagentsInPanel,
@@ -1795,6 +1796,40 @@ function ComposerSendShortcutControl() {
   );
 }
 
+function JumpToPreviousTurnControl() {
+  const mode = useChatTopButtonMode();
+  const labelId = useId();
+  const descriptionId = useId();
+
+  return (
+    <div className="flex items-start justify-between gap-6">
+      <SettingsLabel
+        label="Jump to the previous turn"
+        labelId={labelId}
+        descriptionId={descriptionId}
+        className="flex-1"
+        description={
+          <>
+            <p>Off: the button at the top of a chat jumps to the first message.</p>
+            <p>On: it jumps up one turn at a time.</p>
+          </>
+        }
+      />
+      <Switch
+        aria-labelledby={labelId}
+        aria-describedby={descriptionId}
+        checked={mode === "jump-to-previous-message"}
+        onCheckedChange={(next) =>
+          writeChatTopButtonMode(next ? "jump-to-previous-message" : "jump-to-top")
+        }
+        data-testid="jump-to-previous-turn-toggle"
+        className="mt-0.5 shrink-0"
+        componentId="settings.general.jump_to_previous_turn"
+      />
+    </div>
+  );
+}
+
 /**
  * Where a plain click on a web link in chat content opens — desktop shells
  * with the embedded browser only. Off keeps the current behavior (the
@@ -1980,6 +2015,9 @@ function GeneralSection() {
           <div className="mt-4 border-t border-border pt-4">
             <AlwaysSteerControl />
           </div>
+        </SettingsGroup>
+        <SettingsGroup title="Chat navigation" testId="settings-group-chat-navigation">
+          <JumpToPreviousTurnControl />
         </SettingsGroup>
         <SettingsGroup title="Sessions" testId="settings-group-sessions">
           <BackgroundSessionTitlesControl />

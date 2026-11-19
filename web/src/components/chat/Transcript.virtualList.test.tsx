@@ -197,6 +197,43 @@ it("publishes navigation that distinguishes loaded and missing turns", async () 
   expect(geometry.scrollToItem("missing")).toBe(false);
 });
 
+it("publishes where each user turn starts, skipping system messages", async () => {
+  const timer: Bubble = {
+    kind: "user",
+    itemId: "timer",
+    content: [{ type: "input_text", text: "[System: timer reminder fired]" }],
+  };
+  const onGeometryChange = vi.fn<(geometry: TranscriptGeometry) => void>();
+  const bubbles = [bubble, assistantBubble, timer, { ...bubble, itemId: "user-2" }];
+
+  render(list(false, document.createElement("div"), onGeometryChange, false, bubbles));
+
+  await waitFor(() => expect(onGeometryChange).toHaveBeenCalled());
+  expect(onGeometryChange.mock.calls.at(-1)![0].userTurnStarts()).toEqual([
+    { itemId: "user-1", start: 0 },
+    { itemId: "user-2", start: 600 },
+  ]);
+});
+
+it("reads user turn starts from the rendered rows while native find is open", async () => {
+  const scrollEl = document.createElement("div");
+  Object.defineProperty(scrollEl, "scrollTop", { configurable: true, writable: true, value: 50 });
+  scrollEl.getBoundingClientRect = () => ({ top: 30 }) as DOMRect;
+  const onGeometryChange = vi.fn<(geometry: TranscriptGeometry) => void>();
+
+  const view = render(list(false, scrollEl, onGeometryChange, true), {
+    container: document.body.appendChild(scrollEl),
+  });
+  view.container.querySelector<HTMLElement>(
+    '[data-user-message-id="user-1"]',
+  )!.getBoundingClientRect = () => ({ top: 130 }) as DOMRect;
+
+  await waitFor(() => expect(onGeometryChange).toHaveBeenCalled());
+  expect(onGeometryChange.mock.calls.at(-1)![0].userTurnStarts()).toEqual([
+    { itemId: "user-1", start: 150 },
+  ]);
+});
+
 it("recognizes unhandled native find keyboard shortcuts", () => {
   expect(
     isNativeFindShortcut({

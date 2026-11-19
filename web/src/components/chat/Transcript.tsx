@@ -34,6 +34,7 @@ import { MESSAGE_QUERY_PARAM } from "@/lib/messageDeepLink";
 import { onFindOpened } from "@/lib/nativeBridge";
 import { useMessageDeepLink } from "@/hooks/useMessageDeepLink";
 import { useUserMessageNav } from "@/hooks/useUserMessageNav";
+import { useChatTopButtonMode } from "@/lib/chatTopButtonPreferences";
 import { ChatPlanAccordion } from "@/shell/ChatPlanAccordion";
 import {
   RunnerStartingIndicator,
@@ -43,6 +44,7 @@ import {
 import { CHAT_COLUMN_WIDTH } from "@/pages/chatLayout";
 import {
   type ConversationScroller,
+  type UserTurnStart,
   BubbleView,
   ConversationScrollRefBridge,
   HistoryAutoLoader,
@@ -286,10 +288,12 @@ function TranscriptImpl({
   // windowed DOM. `scrollToItem` is held in a ref so `ensureItemVisible` keeps a
   // stable identity; the reactive fields are lifted to state.
   const scrollToItemRef = useRef<((itemId: string) => boolean) | null>(null);
+  const userTurnStartsRef = useRef<(() => UserTurnStart[]) | null>(null);
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const [spacerMeasureNonce, setSpacerMeasureNonce] = useState(0);
   const onGeometryChange = useCallback((geometry: TranscriptGeometry) => {
     scrollToItemRef.current = geometry.scrollToItem;
+    userTurnStartsRef.current = geometry.userTurnStarts;
     setActiveTurnId(geometry.activeTurnId);
     setSpacerMeasureNonce(geometry.rangeNonce);
   }, []);
@@ -297,6 +301,8 @@ function TranscriptImpl({
     (itemId: string) => scrollToItemRef.current?.(itemId) ?? false,
     [],
   );
+  const userTurnStarts = useCallback(() => userTurnStartsRef.current?.() ?? [], []);
+  const chatTopButtonMode = useChatTopButtonMode();
 
   // Single nav instance shared by hotkey + buttons. System-message bubbles are
   // excluded — the hotkey is for navigating real user turns, not markers.
@@ -493,11 +499,13 @@ function TranscriptImpl({
         {/* Constant-height scrollbar. Sibling of Conversation so it escapes the
         chat-scroll-fade mask. */}
         <TranscriptScrollbar scroller={scroller} topInset={display.hasTasks ? 12 : undefined} />
-        {/* Hover the top edge to reveal a pill that loads all older history. */}
+        {/* Hover the top edge to reveal a pill that jumps to the first message or the previous turn. */}
         <JumpToTopButton
           containerEl={containerEl}
           scroller={scroller}
           hasMoreHistory={display.hasMoreHistory}
+          mode={chatTopButtonMode}
+          userTurnStarts={userTurnStarts}
         />
         {/* Too-many-tabs, dbcert, and sandbox-launch warnings, siblings of Conversation. */}
         <FloatingBannerStack>
@@ -561,6 +569,7 @@ export function activeTurnIdAtBubbleIndex(bubbles: Bubble[], midIndex: number): 
 export interface TranscriptGeometry {
   /** Pulls a turn's row into the mounted window; false if its id isn't found. */
   scrollToItem: (itemId: string) => boolean;
+  userTurnStarts: () => UserTurnStart[];
   /** itemId of the user turn owning the viewport midpoint, or null. */
   activeTurnId: string | null;
   /** Bumps whenever the mounted range changes, so the spacer can re-measure a
@@ -623,6 +632,19 @@ const ROW_GAP_PX = 16;
 const RESTORE_CANCEL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
 function isElAtBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.clientHeight - el.scrollTop <= BOTTOM_EPSILON_PX;
+}
+
+function renderedUserMessageStarts(scrollEl: HTMLElement | null): Map<string, number> {
+  const starts = new Map<string, number>();
+  if (!scrollEl) return starts;
+  const offset = scrollEl.scrollTop - scrollEl.getBoundingClientRect().top;
+  for (const message of scrollEl.querySelectorAll<HTMLElement>(
+    '[data-role="user"][data-user-message-id]',
+  )) {
+    const itemId = message.dataset.userMessageId;
+    if (itemId !== undefined) starts.set(itemId, message.getBoundingClientRect().top + offset);
+  }
+  return starts;
 }
 
 /**
@@ -1059,6 +1081,25 @@ export function VirtualBubbleList({
     return true;
   }, []);
 
+  const userTurns = useMemo(
+    () =>
+      bubbles.flatMap((bubble, index) =>
+        bubble.kind === "user" && !isSystemBubble(bubble) ? [{ itemId: bubble.itemId, index }] : [],
+      ),
+    [bubbles],
+  );
+  const userTurnsRef = useRef(userTurns);
+  userTurnsRef.current = userTurns;
+  const userTurnStarts = useCallback((): UserTurnStart[] => {
+    const rendered = disableVirtualization ? renderedUserMessageStarts(scrollEl) : null;
+    if (!rendered) virtualizerRef.current.getVirtualItems();
+    const measurements = virtualizerRef.current.measurementsCache;
+    return userTurnsRef.current.flatMap(({ itemId, index }) => {
+      const start = rendered ? rendered.get(itemId) : measurements[index]?.start;
+      return start === undefined ? [] : [{ itemId, start }];
+    });
+  }, [disableVirtualization, scrollEl]);
+
   const totalSize = virtualizer.getTotalSize();
   const range = virtualizer.range;
 
@@ -1162,8 +1203,8 @@ export function VirtualBubbleList({
   // spacer anchor that has remounted gets a fresh measure.
   const rangeNonce = (range?.startIndex ?? -1) * 100003 + (range?.endIndex ?? -1);
   useEffect(() => {
-    onGeometryChange({ scrollToItem, activeTurnId, rangeNonce });
-  }, [onGeometryChange, scrollToItem, activeTurnId, rangeNonce]);
+    onGeometryChange({ scrollToItem, userTurnStarts, activeTurnId, rangeNonce });
+  }, [onGeometryChange, scrollToItem, userTurnStarts, activeTurnId, rangeNonce]);
 
   if (disableVirtualization) {
     return (

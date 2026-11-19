@@ -22,6 +22,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Conversation } from "@/hooks/useConversations";
 import { BACKGROUND_SESSION_TITLES_STORAGE_KEY } from "@/lib/backgroundSessionTitlesPreferences";
+import { CHAT_TOP_BUTTON_STORAGE_KEY } from "@/lib/chatTopButtonPreferences";
 import { OPEN_SUBAGENTS_IN_PANEL_STORAGE_KEY } from "@/lib/subagentPanelPreferences";
 import {
   useProjectFolderCollapse,
@@ -377,6 +378,7 @@ describe("SettingsPage", () => {
   beforeEach(() => {
     localStorage.removeItem(BACKGROUND_SESSION_TITLES_STORAGE_KEY);
     localStorage.removeItem(OPEN_SUBAGENTS_IN_PANEL_STORAGE_KEY);
+    localStorage.removeItem(CHAT_TOP_BUTTON_STORAGE_KEY);
   });
 
   it("groups General settings into titled outlined cards and hides its description on mobile", () => {
@@ -386,6 +388,7 @@ describe("SettingsPage", () => {
 
     for (const testId of [
       "settings-group-composer",
+      "settings-group-chat-navigation",
       "settings-group-sessions",
       "settings-group-terminal",
     ]) {
@@ -429,6 +432,19 @@ describe("SettingsPage", () => {
     expect(
       await screen.findByRole("switch", { name: "Show Omnigent from anywhere" }),
     ).toBeInTheDocument();
+  });
+
+  it("switches the button at the top of a chat to previous-turn mode", async () => {
+    renderPage("/settings/general");
+    const toggle = await screen.findByTestId("jump-to-previous-turn-toggle");
+    expect(screen.getByTestId("settings-group-chat-navigation")).toContainElement(toggle);
+    expect(toggle).toHaveAccessibleName("Jump to the previous turn");
+    expect(toggle).not.toBeChecked();
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toBeChecked();
+    expect(localStorage.getItem(CHAT_TOP_BUTTON_STORAGE_KEY)).toBe("jump-to-previous-message");
   });
 
   it("renders session auto-rename enabled by default", async () => {

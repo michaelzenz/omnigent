@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react
 import { Profiler, useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UserMessageBlock } from "@/lib/blocks";
+import { previousTurnIndex } from "@/components/chat/chatBubbleParts";
 import { TRANSCRIPT_SCROLLBAR_DRAG_EVENT } from "@/pages/TranscriptScrollbar";
 import { useChatStore } from "@/store/chatStore";
 import {
@@ -1979,5 +1980,111 @@ describe("JumpToTopButton", () => {
     expect(scroller.stopScroll).toHaveBeenCalled();
     expect(scroller.state.isAtBottom).toBe(false);
     expect(loadMoreHistory).toHaveBeenCalledTimes(2);
+  });
+
+  describe("in previous-turn mode", () => {
+    const originalMatchMedia = window.matchMedia;
+    beforeEach(() => {
+      window.matchMedia = vi.fn(() => ({ matches: true })) as unknown as typeof window.matchMedia;
+    });
+    afterEach(() => {
+      window.matchMedia = originalMatchMedia;
+    });
+
+    const previousTurnPill = () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Jump to the previous turn"]')!;
+
+    it("jumps to the start of the turn above, then to the turn before it", () => {
+      const { container, scroll, scroller } = makeScroller({
+        scrollTop: 300,
+        scrollHeight: 1000,
+        clientHeight: 400,
+      });
+      const metrics = scroll as unknown as { scrollTop: number };
+      const turns = [
+        { itemId: "first", start: 100 },
+        { itemId: "second", start: 250 },
+      ];
+
+      render(
+        <JumpToTopButton
+          containerEl={container}
+          scroller={scroller}
+          hasMoreHistory={false}
+          mode="jump-to-previous-message"
+          userTurnStarts={() => turns}
+        />,
+      );
+      fireEvent.click(previousTurnPill());
+      expect(metrics.scrollTop).toBe(250);
+
+      fireEvent.click(previousTurnPill());
+      expect(metrics.scrollTop).toBe(100);
+      expect(scroller.state).toEqual({ isAtBottom: false, escapedFromLock: true });
+    });
+
+    it("pages in older history when the first loaded turn is already at the pill", async () => {
+      const { container, scroll, scroller } = makeScroller({
+        scrollTop: 300,
+        scrollHeight: 1000,
+        clientHeight: 400,
+      });
+      const metrics = scroll as unknown as { scrollTop: number };
+      let turns = [{ itemId: "current", start: 300 }];
+      const loadMoreHistory = vi.fn(async () => {
+        scroller.state.isAtBottom = true;
+        turns = [{ itemId: "older", start: 120 }, ...turns];
+        useChatStore.setState({ hasMoreHistory: false });
+      });
+      useChatStore.setState({ hasMoreHistory: true, loadMoreHistory });
+
+      render(
+        <JumpToTopButton
+          containerEl={container}
+          scroller={scroller}
+          hasMoreHistory
+          mode="jump-to-previous-message"
+          userTurnStarts={() => turns}
+        />,
+      );
+      fireEvent.click(previousTurnPill());
+
+      await waitFor(() => expect(metrics.scrollTop).toBe(120));
+      expect(loadMoreHistory).toHaveBeenCalledTimes(1);
+      expect(scroller.state).toEqual({ isAtBottom: false, escapedFromLock: true });
+    });
+
+    it("scrolls to the top when no loaded turn starts above the pill", () => {
+      const { container, scroll, scroller } = makeScroller({
+        scrollTop: 300,
+        scrollHeight: 1000,
+        clientHeight: 400,
+      });
+      const metrics = scroll as unknown as { scrollTop: number };
+
+      render(
+        <JumpToTopButton
+          containerEl={container}
+          scroller={scroller}
+          hasMoreHistory={false}
+          mode="jump-to-previous-message"
+          userTurnStarts={() => [{ itemId: "below", start: 500 }]}
+        />,
+      );
+      fireEvent.click(previousTurnPill());
+
+      expect(metrics.scrollTop).toBe(0);
+    });
+  });
+});
+
+describe("previousTurnIndex", () => {
+  it("picks the turn above the roof, or the one before it when a turn sits at the roof", () => {
+    expect(previousTurnIndex([], 100)).toBe(-1);
+    expect(previousTurnIndex([200, 400], 100)).toBe(-1);
+    expect(previousTurnIndex([0, 200, 400], 300)).toBe(1);
+    expect(previousTurnIndex([0, 200, 400], 400.5)).toBe(1);
+    expect(previousTurnIndex([0, 200, 400], 401.5)).toBe(2);
+    expect(previousTurnIndex([200], 200)).toBe(0);
   });
 });
