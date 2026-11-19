@@ -157,6 +157,7 @@ class SqlAlchemyTaskStore(TaskStore):
                 created_at=now,
                 updated_at=None,
                 resolved_at=now if state == _RESOLVED else None,
+                has_update=False,
             )
             session.add(row)
             return _to_entity(row)
