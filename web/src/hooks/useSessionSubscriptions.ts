@@ -12,6 +12,8 @@ export interface SessionSubscription {
   source_key: string;
   /** Why the session follows it, and how to read a source that is hard to read. */
   note: string | null;
+  /** Where a person opens the source when its key is not a web address. */
+  url: string | null;
   created_at: number;
 }
 

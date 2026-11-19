@@ -12,6 +12,7 @@ from omnigent.entities import SESSION_EVENT_SOURCE, Subscription
 from omnigent.stores.subscription_store import (
     MAX_SOURCE_KEY_CHARS,
     MAX_SOURCE_TYPE_CHARS,
+    MAX_SOURCE_URL_CHARS,
     MAX_SUBSCRIPTION_NOTE_CHARS,
     MAX_SUBSCRIPTION_NOTE_WORDS,
     SourceError,
@@ -143,6 +144,34 @@ def test_a_note_has_at_most_300_words(store: SqlAlchemySubscriptionStore) -> Non
         with pytest.raises(SourceError):
             subscribe(too_long)
     assert store.list_for_session(session_id, owner_user_id=ALICE)[0].note == longest
+
+
+def test_a_link_is_a_web_address_that_a_subscribe_keeps_replaces_or_clears(
+    store: SqlAlchemySubscriptionStore,
+) -> None:
+    session_id = uuid.uuid4().hex
+
+    def subscribe(url: str | None) -> str | None:
+        return store.subscribe(
+            owner_user_id=ALICE,
+            session_id=session_id,
+            source_type="jira.issue",
+            source_key="STORAGE-7",
+            url=url,
+        ).subscription.url
+
+    assert subscribe(f"  {TICKET} ") == TICKET
+    assert subscribe(None) == TICKET
+    assert subscribe(" ") is None
+    for unusable in (
+        "javascript:alert(1)",
+        "example.com/browse/STORAGE-7",
+        "https://",
+        f"https://example.com/{'p' * MAX_SOURCE_URL_CHARS}",
+    ):
+        with pytest.raises(SourceError):
+            subscribe(unusable)
+    assert store.list_for_session(session_id, owner_user_id=ALICE)[0].url is None
 
 
 def test_a_type_is_new_until_one_of_the_owners_subscriptions_or_assignments_has_it(
@@ -288,6 +317,7 @@ def test_a_copy_follows_the_sources_of_another_session_with_their_notes_and_star
         source_type=PULL_REQUEST,
         source_key=PR,
         note="Read the review threads, not only the checks.",
+        url=f"{PR}/files",
     ).subscription
     _follow(store, source, "jira.issue", TICKET)
     _follow(store, source, SESSION_EVENT_SOURCE, worker)
@@ -300,7 +330,11 @@ def test_a_copy_follows_the_sources_of_another_session_with_their_notes_and_star
     follows = store.list_for_session(clone, owner_user_id=ALICE)
     assert copied == 1
     assert [subscription.source_key for subscription in follows] == [PR, OTHER_PR, TICKET]
-    assert (follows[0].note, follows[0].created_at) == (reviewed.note, reviewed.created_at)
+    assert (follows[0].note, follows[0].url, follows[0].created_at) == (
+        reviewed.note,
+        f"{PR}/files",
+        reviewed.created_at,
+    )
     assert store.list_for_session(clone, owner_user_id=BOB) == []
     assert store.copy_session(source, clone, owner_user_id=ALICE) == 0
 

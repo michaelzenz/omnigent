@@ -39,6 +39,7 @@ PULL_REQUEST = "github.pull_request"
 TICKET = "jira.issue"
 PR = "https://github.com/example-org/repo/pull/12"
 OTHER_PR = "https://github.com/example-org/repo/pull/13"
+TICKET_PAGE = "https://example.com/browse/PROJ-12"
 
 
 def _session(
@@ -85,7 +86,9 @@ async def test_a_session_follows_a_source_once_and_stops_following_it(
         headers=ALICE,
     )
     await auth_client.post(
-        path, json={"source_type": TICKET, "source_key": "PROJ-12"}, headers=ALICE
+        path,
+        json={"source_type": TICKET, "source_key": "PROJ-12", "url": TICKET_PAGE},
+        headers=ALICE,
     )
     listed = (await auth_client.get(path, headers=ALICE)).json()["data"]
     removed = await auth_client.post(
@@ -104,9 +107,9 @@ async def test_a_session_follows_a_source_once_and_stops_following_it(
         PR,
     )
     assert (again.json()["id"], again.json()["note"]) == (body["id"], "Reviewing")
-    assert sorted((row["source_type"], row["source_key"]) for row in listed) == [
-        (PULL_REQUEST, PR),
-        (TICKET, "PROJ-12"),
+    assert sorted((row["source_type"], row["source_key"], row["url"]) for row in listed) == [
+        (PULL_REQUEST, PR, None),
+        (TICKET, "PROJ-12", TICKET_PAGE),
     ]
     assert (removed.json()["removed"], removed_again.json()["removed"]) == (True, False)
     assert [row["source_key"] for row in after] == ["PROJ-12"]
@@ -130,6 +133,11 @@ async def test_following_needs_edit_access_a_live_session_and_a_type_the_server_
     responses = [
         await auth_client.post(path, json=follow(SESSION_EVENT_SOURCE, bobs_id), headers=ALICE),
         await auth_client.post(path, json=follow("github"), headers=ALICE),
+        await auth_client.post(
+            path,
+            json={**follow(TICKET, "PROJ-12"), "url": "javascript:alert(1)"},
+            headers=ALICE,
+        ),
         await auth_client.post(path, json=follow(PULL_REQUEST, "k" * 600), headers=ALICE),
         await auth_client.post(
             _subscriptions(archived_id), json=follow(PULL_REQUEST), headers=ALICE
@@ -144,6 +152,7 @@ async def test_following_needs_edit_access_a_live_session_and_a_type_the_server_
     ]
 
     assert [response.status_code for response in responses] == [
+        400,
         400,
         400,
         422,

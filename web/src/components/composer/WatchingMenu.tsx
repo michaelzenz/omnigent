@@ -12,13 +12,14 @@ import {
   useSessionSubscriptions,
   useUnsubscribeSession,
 } from "@/hooks/useSessionSubscriptions";
+import { copyText } from "@/lib/clipboard";
 import { followLinkWithPopupFallback } from "@/lib/openLinkInApp";
 import { cn } from "@/lib/utils";
 
 /**
  * The sources that the session follows, e.g. the pull requests its agent opened. It shows
  * when the session follows at least one; the user can stop following each one. A source
- * with a web address opens in the user's browser, outside the app.
+ * with a web address opens in the user's browser, outside the app; another key copies.
  */
 export function WatchingMenu({
   conversationId,
@@ -97,9 +98,12 @@ function WatchingButton({
   );
 }
 
-/** One followed source; a web address is a link that opens in the browser, outside the app. */
+/** One followed source; its link opens in the browser, outside the app, and a bare key copies. */
 function WatchedSource({ subscription }: { subscription: SessionSubscription }) {
-  const url = /^https?:\/\//i.test(subscription.source_key) ? subscription.source_key : null;
+  const url =
+    [subscription.url, subscription.source_key].find(
+      (candidate): candidate is string => !!candidate && /^https?:\/\//i.test(candidate),
+    ) ?? null;
   const title = subscription.note ?? subscription.source_key;
   const label = (
     <span className="min-w-0 flex-1">
@@ -115,8 +119,13 @@ function WatchedSource({ subscription }: { subscription: SessionSubscription }) 
     return (
       <DropdownMenuItem
         title={title}
-        onSelect={(event) => event.preventDefault()}
-        className="min-w-0 flex-1"
+        onSelect={() =>
+          void copyText(subscription.source_key).then(
+            () => toast.success(`Copied ${subscription.source_key}`),
+            () => toast.error("Could not copy the source key"),
+          )
+        }
+        className="min-w-0 flex-1 cursor-pointer"
       >
         {label}
       </DropdownMenuItem>

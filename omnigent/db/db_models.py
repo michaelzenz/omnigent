@@ -1511,6 +1511,8 @@ class SqlSubscription(OmnigentBase):
     :param source_key: The source, e.g. a pull request URL, matched exactly.
     :param note: Why the session follows it and, for a source that is hard to
         read, how a watcher reads it; or ``None``.
+    :param url: Where a person opens the source when its key is not a web address;
+        or ``None``.
     :param created_at: Unix epoch seconds at row creation.
     """
 
@@ -1529,6 +1531,7 @@ class SqlSubscription(OmnigentBase):
     source_type: Mapped[str] = mapped_column(String(64), nullable=False)
     source_key: Mapped[str] = mapped_column(String(512), nullable=False)
     note: Mapped[str | None] = mapped_column(String(3000), nullable=True)
+    url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
 
     __table_args__ = (

@@ -118,6 +118,7 @@ def create_agent_task_subscriptions_router(
                     source_type=source_type,
                     source_key=body.source_key,
                     note=body.note,
+                    url=body.url,
                 )
             except SourceError as exc:
                 raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
@@ -270,5 +271,6 @@ def subscription_response(subscription: Subscription) -> SessionSubscriptionResp
         source_type=subscription.source_type,
         source_key=subscription.source_key,
         note=subscription.note,
+        url=subscription.url,
         created_at=subscription.created_at,
     )

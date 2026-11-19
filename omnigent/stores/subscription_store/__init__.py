@@ -29,6 +29,8 @@ MAX_SOURCE_KEY_CHARS = 512
 MAX_SUBSCRIPTION_NOTE_WORDS = 300
 #: The most characters that a note stores, about ten for each word.
 MAX_SUBSCRIPTION_NOTE_CHARS = 3000
+#: The longest link that a subscription stores.
+MAX_SOURCE_URL_CHARS = 2048
 _SOURCE_TYPE = re.compile(r"[a-z0-9][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)+")
 
 
@@ -89,6 +91,26 @@ def normalize_note(note: str) -> str:
     return cleaned
 
 
+def normalize_source_url(url: str) -> str:
+    """
+    Return a link to a source without the spaces around it; a blank link is ``""``.
+
+    :param url: Where a person opens the source, e.g. ``"https://example.com/browse/PROJ-12"``.
+    :returns: The link.
+    :raises SourceError: When the link is not an http or https address with a host, or is
+        longer than :data:`MAX_SOURCE_URL_CHARS` characters.
+    """
+    cleaned = url.strip()
+    if not cleaned:
+        return ""
+    parts = urlsplit(cleaned)
+    if parts.scheme.lower() not in ("http", "https") or not parts.netloc:
+        raise SourceError("a link is an http or https address, e.g. https://example.com/PROJ-12")
+    if len(cleaned) > MAX_SOURCE_URL_CHARS:
+        raise SourceError(f"a link has at most {MAX_SOURCE_URL_CHARS} characters")
+    return cleaned
+
+
 def is_reserved_source_type(source_type: str) -> bool:
     """Whether only the server records events for the type, e.g. ``"omnigent.session"``."""
     return source_type.startswith(RESERVED_SOURCE_TYPE_PREFIX)
@@ -142,9 +164,10 @@ class SubscriptionStore(ABC):
         source_type: str,
         source_key: str,
         note: str | None = None,
+        url: str | None = None,
     ) -> SubscribeResult:
         """
-        Make a session follow a source, or update the type and note of the one it has.
+        Make a session follow a source, or update the type, note and link of the one it has.
 
         :param owner_user_id: The session's owner, or ``None`` in single-user mode.
         :param session_id: The session that follows the source.
@@ -152,8 +175,10 @@ class SubscriptionStore(ABC):
         :param source_key: The source key; :func:`normalize_source_key` spells it.
         :param note: Why the session follows it and, for a source that is hard to
             read, how a watcher reads it; ``None`` keeps the saved note.
+        :param url: Where a person opens the source, for a key that is not a web
+            address; ``None`` keeps the saved link, and a blank link removes it.
         :returns: The subscription, and whether its type is new to the owner.
-        :raises SourceError: When the type, the key or the note is not valid.
+        :raises SourceError: When the type, the key, the note or the link is not valid.
         """
 
     @abstractmethod

@@ -28,6 +28,9 @@ class EventSubscriptionsTool(Tool):
             "only when none fits, name a new type as the system and the kind of source in "
             "lowercase words joined by dots. Then call 'subscribe' with the type, the "
             "source's canonical key (its URL, or a ticket key) and a note of at most 300 words. "
+            "When the key is not a web address, also pass url: the https address where a person "
+            "opens the source, e.g. the ticket's page, so the user can open it in one click. "
+            "Keep the key canonical: events match the key, not the url. "
             "A watcher checks the source on a schedule and reads the note on each run. In the "
             "note, say why this session follows the source. Only when the source is hard to "
             "read, also say how to read it, e.g. the account, the access or the tool it needs. "
@@ -83,6 +86,15 @@ class EventSubscriptionsTool(Tool):
                                 "follows the source. Only when the source is hard to read, "
                                 'also how a watcher reads it, e.g. "Private repository: read '
                                 'it with the GitHub MCP server of the work account."'
+                            ),
+                        },
+                        "url": {
+                            "type": "string",
+                            "maxLength": 2048,
+                            "description": (
+                                "For 'subscribe', when source_key is not a web address: the "
+                                "http or https address where a person opens the source, e.g. "
+                                "the ticket's page. The user sees it as a link."
                             ),
                         },
                     },

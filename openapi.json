@@ -4571,7 +4571,7 @@
       },
       "CreateSessionSubscriptionRequest": {
         "additionalProperties": false,
-        "description": "Make a session follow a source, e.g. a pull request.\n\n`source_type` names the system and the kind of source in lowercase words\njoined by dots, e.g. `github.pull_request`; reuse a type that is in use\nwhen one fits. `source_key` names the source, e.g. its URL; the server\nnormalizes it, so keys match exactly. `note`, at most 300 words, says why\nthe session follows it and, only for a source that is hard to read, how a\nwatcher reads it, e.g. a permission or an account it needs; the watcher\nsees it on each run. Following a source again keeps one subscription and\nreplaces its type and note.",
+        "description": "Make a session follow a source, e.g. a pull request.\n\n`source_type` names the system and the kind of source in lowercase words\njoined by dots, e.g. `github.pull_request`; reuse a type that is in use\nwhen one fits. `source_key` names the source, e.g. its URL; the server\nnormalizes it, so keys match exactly. `note`, at most 300 words, says why\nthe session follows it and, only for a source that is hard to read, how a\nwatcher reads it, e.g. a permission or an account it needs; the watcher\nsees it on each run. `url` is an http or https address where a person\nopens the source when the key is not one, e.g. a ticket's page; events\nstill match the key. Following a source again keeps one subscription and\nreplaces its type, and each of the note and the link that the request gives.",
         "properties": {
           "note": {
             "anyOf": [
@@ -4594,6 +4594,18 @@
             "maxLength": 64,
             "title": "Source Type",
             "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
           }
         },
         "required": [
@@ -15047,6 +15059,17 @@
           "source_type": {
             "title": "Source Type",
             "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
           }
         },
         "required": [
@@ -15055,6 +15078,7 @@
           "source_type",
           "source_key",
           "note",
+          "url",
           "created_at"
         ],
         "title": "SessionSubscriptionResponse",

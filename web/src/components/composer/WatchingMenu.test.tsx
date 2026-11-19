@@ -11,14 +11,21 @@ const SUBSCRIPTIONS_PATH = "/v1/sessions/conv_1/subscriptions";
 const REMOVE_PATH = `${SUBSCRIPTIONS_PATH}/remove`;
 const PR = "https://github.com/example-org/repo/pull/12";
 const TICKET = "PROJ-12";
+const TICKET_PAGE = "https://example.com/browse/PROJ-12";
 
-function subscription(id: string, sourceType: string, sourceKey: string): SessionSubscription {
+function subscription(
+  id: string,
+  sourceType: string,
+  sourceKey: string,
+  url: string | null = null,
+): SessionSubscription {
   return {
     id,
     session_id: "conv_1",
     source_type: sourceType,
     source_key: sourceKey,
     note: null,
+    url,
     created_at: 1,
   };
 }
@@ -55,6 +62,7 @@ afterEach(() => {
   cleanup();
   client.clear();
   vi.doUnmock("sonner");
+  vi.doUnmock("@/lib/clipboard");
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -108,6 +116,35 @@ it("lists the sources the session follows, then stops watching the chosen one", 
   );
   expect(removedKeys()).toEqual([{ source_key: PR }]);
   expect(screen.queryByTestId("composer-watching-sub_pr")).toBeNull();
+});
+
+it("opens the link of a source whose key is not a web address", async () => {
+  subscriptions = [subscription("sub_ticket", "jira.issue", TICKET, TICKET_PAGE)];
+  await renderMenu();
+  await settle();
+  await openMenu();
+
+  const link = screen.getByTestId("composer-watching-sub_ticket").querySelector("a");
+  expect([link?.getAttribute("href"), link?.getAttribute("target")]).toEqual([
+    TICKET_PAGE,
+    "_blank",
+  ]);
+  expect(link).toHaveTextContent(TICKET);
+});
+
+it("copies a source key that is not a web address", async () => {
+  const copyText = vi.fn(async () => {});
+  const toastSuccess = vi.fn();
+  vi.doMock("@/lib/clipboard", () => ({ copyText }));
+  vi.doMock("sonner", () => ({ toast: { success: toastSuccess, error: vi.fn() } }));
+  await renderMenu();
+  await settle();
+  await openMenu();
+
+  fireEvent.click(screen.getByText(TICKET));
+
+  await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(`Copied ${TICKET}`));
+  expect(copyText).toHaveBeenCalledWith(TICKET);
 });
 
 it("stays hidden while the session follows nothing", async () => {

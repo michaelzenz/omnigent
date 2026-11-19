@@ -31,6 +31,7 @@ from omnigent.stores.subscription_store import (
     normalize_note,
     normalize_source_key,
     normalize_source_type,
+    normalize_source_url,
 )
 from omnigent.util.uuid import normalize_uuid
 
@@ -44,6 +45,7 @@ def _to_entity(row: SqlSubscription) -> Subscription:
         source_key=row.source_key,
         created_at=row.created_at,
         note=row.note,
+        url=row.url,
     )
 
 
@@ -128,11 +130,13 @@ class SqlAlchemySubscriptionStore(SubscriptionStore):
         source_type: str,
         source_key: str,
         note: str | None = None,
+        url: str | None = None,
     ) -> SubscribeResult:
-        """Make a session follow a source, or update the type and note of the one it has."""
+        """Make a session follow a source, or update the type, note and link of the one it has."""
         kind = normalize_source_type(source_type)
         key = normalize_source_key(source_key)
         cleaned_note = normalize_note(note) if note is not None else None
+        cleaned_url = normalize_source_url(url) if url is not None else None
         session_uuid = normalize_uuid(session_id) or session_id
         now = now_epoch()
 
@@ -168,6 +172,7 @@ class SqlAlchemySubscriptionStore(SubscriptionStore):
                     source_type=kind,
                     source_key=key,
                     note=cleaned_note or None,
+                    url=cleaned_url or None,
                     created_at=now,
                 )
                 session.add(row)
@@ -175,6 +180,8 @@ class SqlAlchemySubscriptionStore(SubscriptionStore):
                 row.source_type = kind
                 if cleaned_note is not None:
                     row.note = cleaned_note or None
+                if cleaned_url is not None:
+                    row.url = cleaned_url or None
             return SubscribeResult(subscription=_to_entity(row), new_type=not known)
 
         try:
@@ -312,6 +319,7 @@ class SqlAlchemySubscriptionStore(SubscriptionStore):
                     source_type=row.source_type,
                     source_key=row.source_key,
                     note=row.note,
+                    url=row.url,
                     created_at=row.created_at,
                 )
                 for row in rows

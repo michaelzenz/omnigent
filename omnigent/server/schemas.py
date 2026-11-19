@@ -6800,13 +6800,16 @@ class CreateSessionSubscriptionRequest(BaseModel):
     normalizes it, so keys match exactly. ``note``, at most 300 words, says why
     the session follows it and, only for a source that is hard to read, how a
     watcher reads it, e.g. a permission or an account it needs; the watcher
-    sees it on each run. Following a source again keeps one subscription and
-    replaces its type and note.
+    sees it on each run. ``url`` is an http or https address where a person
+    opens the source when the key is not one, e.g. a ticket's page; events
+    still match the key. Following a source again keeps one subscription and
+    replaces its type, and each of the note and the link that the request gives.
     """
 
     source_type: _SourceType
     source_key: _SourceKey
     note: str | None = Field(default=None, max_length=3000)
+    url: str | None = Field(default=None, max_length=2048)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -6820,6 +6823,7 @@ class SessionSubscriptionResponse(BaseModel):
     source_type: str
     source_key: str
     note: str | None
+    url: str | None
     created_at: int
 
 

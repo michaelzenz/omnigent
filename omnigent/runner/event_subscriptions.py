@@ -18,8 +18,8 @@ async def execute_event_subscriptions(
     """
     List the source types, or follow, stop following or list the calling session's sources.
 
-    :param args: Tool arguments: ``action``; ``source_type``, ``source_key`` and
-        ``note`` for ``subscribe``; ``source_key`` for ``unsubscribe``.
+    :param args: Tool arguments: ``action``; ``source_type``, ``source_key``,
+        ``note`` and ``url`` for ``subscribe``; ``source_key`` for ``unsubscribe``.
     :param client: HTTP client pointed at the Omnigent server.
     :param source_id: The calling session.
     :returns: The server's JSON response, or JSON with an ``error``.
@@ -54,8 +54,9 @@ async def execute_event_subscriptions(
     if not isinstance(source_type, str) or not source_type.strip():
         return json.dumps({"error": "subscribe needs a source_type; call 'types' first"})
     body: dict[str, Any] = {"source_type": source_type, "source_key": source_key}
-    if isinstance(args.get("note"), str):
-        body["note"] = args["note"]
+    for field in ("note", "url"):
+        if isinstance(args.get(field), str):
+            body[field] = args[field]
     return await send_board_request(
         client, "POST", route, source_id, tool_name=_TOOL_NAME, json_body=body
     )

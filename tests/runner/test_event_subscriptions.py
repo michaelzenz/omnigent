@@ -42,6 +42,7 @@ async def test_each_action_calls_its_route_as_the_calling_session() -> None:
                 "source_type": "github.pull_request",
                 "source_key": PR,
                 "note": "Opened it",
+                "url": f"{PR}/files",
             },
             client,
             SOURCE_ID,
@@ -64,6 +65,7 @@ async def test_each_action_calls_its_route_as_the_calling_session() -> None:
         "source_type": "github.pull_request",
         "source_key": PR,
         "note": "Opened it",
+        "url": f"{PR}/files",
     }
     assert json.loads(requests[3].content) == {"source_key": PR}
     assert {request.headers[ORCHESTRATION_SOURCE_HEADER] for request in requests} == {SOURCE_ID}
@@ -117,6 +119,7 @@ async def test_every_session_can_follow_sources_through_native_and_local_dispatc
         "source_type",
         "source_key",
         "note",
+        "url",
     }
     assert schema["parameters"]["required"] == ["action"]
     assert should_dispatch_locally("event_subscriptions")

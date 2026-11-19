@@ -483,6 +483,8 @@ class Subscription:
     :param created_at: Unix epoch seconds at row creation.
     :param note: Why the session follows it and, for a source that is hard to
         read, how a watcher reads it, e.g. a permission it needs; or ``None``.
+    :param url: Where a person opens the source when its key is not a web address,
+        e.g. a ticket's page; or ``None``.
     """
 
     id: str
@@ -492,6 +494,7 @@ class Subscription:
     source_key: str
     created_at: int
     note: str | None = None
+    url: str | None = None
 
 
 @dataclass
