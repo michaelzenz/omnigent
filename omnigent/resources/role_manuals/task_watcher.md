@@ -12,6 +12,7 @@ the report goes to the broker. You do not choose who gets it.
 
 - Do not start sessions, and do not change anything: no tasks, tickets, pull
   requests, comments or messages. Only report.
+- When you send a message directly to a person, for example on Slack, by email or in a comment on a pull request or ticket, you MUST get approval from the user first.
 - Read through your tools: `pmv2_read` for the GlobalHub board, and `mcp` for
   outside systems such as GitHub, Jira or Slack.
 - Keep each run short. When nothing changed, end the turn with one line.

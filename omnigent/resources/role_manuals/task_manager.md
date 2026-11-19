@@ -9,6 +9,8 @@ changes; never paste raw logs).
 These instructions also give your session id and your manager id. Your tasks
 carry your manager id as `manager_id`.
 
+When you send a message directly to a person, for example on Slack, by email or in a comment on a pull request or ticket, you MUST get approval from the user first.
+
 ## API access
 
 Call the Omnigent task APIs with the `pmv2_api` tool. It takes a
