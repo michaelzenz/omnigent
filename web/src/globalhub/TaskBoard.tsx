@@ -12,6 +12,7 @@ import { BOARD_COLUMN_CLASS } from "./boardLayout";
 import { TaskCard } from "./TaskCard";
 import { UnmanagedTasksLine } from "./UnmanagedTasksLine";
 import { BOARD_SEARCH_HIGHLIGHT_CSS, useBoardSearchHighlight } from "./useBoardSearchHighlight";
+import { useCardAnchor } from "./useCardAnchor";
 import { usePageReadAnchor } from "./usePageReadAnchor";
 import { useBoardReadState } from "./useWorkerUpdates";
 
@@ -35,7 +36,8 @@ function boardCards(pages: AgentTaskBoard[]): AgentTaskCard[] {
  * view. While some live tasks have no manager, a line above the cards says so.
  * A search shows only the matching cards, best match first, with their matches
  * marked. A priority filter shows only the cards of that priority. A worker
- * whose session finished a turn that the user has not seen has a dot.
+ * whose session finished a turn that the user has not seen has a dot. When the
+ * order of the cards changes, the card that the user looks at stays in place.
  *
  * @param scrollRoot - The element the board scrolls in.
  * @param query - The search, or an empty string to show the whole board.
@@ -73,6 +75,10 @@ export function TaskBoard({
   const listRef = useRef<HTMLDivElement>(null);
   useBoardSearchHighlight(listRef, words, (cards?.length ?? 0) > 0);
   useBoardReadState(cards);
+  const scope = `${query}:${priority ?? "all"}`;
+  const order = useMemo(() => (cards ?? []).map((card) => card.id), [cards]);
+  const anchorScope = board.isPlaceholderData ? `${scope}:placeholder` : scope;
+  const markMoveDown = useCardAnchor(scrollRoot, order, anchorScope);
 
   if (board.data === undefined || cards === undefined) {
     return board.isError ? (
@@ -90,7 +96,6 @@ export function TaskBoard({
   const hasMore = Boolean(shownPages[shownPages.length - 1]?.next_cursor);
   const unmanagedCount = shownPages[0]?.unmanaged_count ?? 0;
   const searching = words.length > 0;
-  const scope = `${query}:${priority ?? "all"}`;
   if (cards.length === 0) {
     const tasks = priority === null ? "tasks" : `P${priority} tasks`;
     return searching ? (
@@ -140,6 +145,7 @@ export function TaskBoard({
               }
               // A search or a priority filter shows part of the board, so none is known to be last.
               isLast={!searching && priority === null && !hasMore && index === cards.length - 1}
+              onMoveDown={markMoveDown}
             />
           );
         })}

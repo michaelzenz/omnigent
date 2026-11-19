@@ -45,6 +45,11 @@ interface TaskCardProps {
   managerSessionId: string | null;
   /** Whether this is the board's last card, which cannot move further down. */
   isLast: boolean;
+  /**
+   * Called when the user moves the card down the board, before the move; the
+   * board calls the returned function if the move fails.
+   */
+  onMoveDown?: (taskId: string) => () => void;
 }
 
 /** One task on the Global Hub board: its header, overview, details, assets and workers. */
@@ -53,6 +58,7 @@ export const TaskCard = memo(function TaskCard({
   managerTitle,
   managerSessionId,
   isLast,
+  onMoveDown,
 }: TaskCardProps) {
   const moveToEnd = useMoveTaskToQueueEnd(task.id);
   const resolve = usePatchAgentTask(task.id);
@@ -70,8 +76,10 @@ export const TaskCard = memo(function TaskCard({
 
   return (
     <article
-      className="@container flex min-w-0 flex-col rounded-xl border-2 border-border bg-card shadow-sm"
+      className="@container flex min-w-0 flex-col rounded-xl border-2 border-border bg-card shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
       data-testid={`task-card-${task.id}`}
+      data-task-id={task.id}
+      tabIndex={-1}
       onClickCapture={hasUpdate ? () => clearNews.mutate({ has_update: false }) : undefined}
     >
       <header className="space-y-2 border-b border-border px-4 py-3">
@@ -134,7 +142,10 @@ export const TaskCard = memo(function TaskCard({
                     ? "Move the task to the end of the board"
                     : "Move the task below the other open tasks"
               }
-              onClick={() => moveToEnd.mutate()}
+              onClick={() => {
+                const cancelMove = onMoveDown?.(task.id);
+                moveToEnd.mutate(undefined, { onError: () => cancelMove?.() });
+              }}
               data-testid={`task-card-move-to-end-${task.id}`}
             >
               {moveToEnd.isPending ? "Moving…" : "Move to queue end"}
@@ -146,7 +157,10 @@ export const TaskCard = memo(function TaskCard({
                 disabled={resolve.isPending}
                 aria-label="Mark task resolved"
                 title="Mark task resolved"
-                onClick={() => resolve.mutate({ state: "agent-resolved" })}
+                onClick={() => {
+                  const cancelMove = onMoveDown?.(task.id);
+                  resolve.mutate({ state: "agent-resolved" }, { onError: () => cancelMove?.() });
+                }}
                 data-testid={`task-card-resolve-${task.id}`}
               >
                 <CheckIcon className="size-4 text-[#15803d] dark:text-[#4ade80]" aria-hidden />

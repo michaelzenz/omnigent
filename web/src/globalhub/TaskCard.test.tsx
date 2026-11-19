@@ -23,7 +23,12 @@ function renderCard(
   {
     isLast = false,
     managerSessionId = "s-m1",
-  }: { isLast?: boolean; managerSessionId?: string | null } = {},
+    onMoveDown,
+  }: {
+    isLast?: boolean;
+    managerSessionId?: string | null;
+    onMoveDown?: (taskId: string) => () => void;
+  } = {},
 ): void {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
   render(
@@ -36,6 +41,7 @@ function renderCard(
               managerTitle="Storage"
               managerSessionId={managerSessionId}
               isLast={isLast}
+              onMoveDown={onMoveDown}
             />
           </GlobalHubChatProvider>
         </TooltipProvider>
@@ -169,6 +175,21 @@ describe("TaskCard", () => {
 
     expect(await sentRequest()).toEqual(expected);
   });
+
+  it.each(["task-card-move-to-end-t1", "task-card-resolve-t1"])(
+    "%s tells the board of the move, and undoes that when the move fails",
+    async (button) => {
+      const undo = vi.fn();
+      const onMoveDown = vi.fn(() => undo);
+      fetchMock.mockImplementation(async () => jsonResponse({ detail: "unavailable" }, 503));
+      renderCard(agentTask("t1"), { onMoveDown });
+
+      fireEvent.click(screen.getByTestId(button));
+
+      expect(onMoveDown).toHaveBeenCalledWith("t1");
+      await waitFor(() => expect(undo).toHaveBeenCalledTimes(1));
+    },
+  );
 
   it("saves the priority picked from the colored menu", async () => {
     renderCard(agentTask("t1", { priority: 2 }));
