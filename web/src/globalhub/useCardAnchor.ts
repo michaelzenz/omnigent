@@ -92,6 +92,25 @@ export function useCardAnchor(
     };
   }, [capture, scrollRoot]);
 
+  useEffect(() => {
+    const root = scrollRoot.current;
+    if (root === null || typeof ResizeObserver === "undefined") return;
+    const resizes = new ResizeObserver(() => capture());
+    const observeChildren = () => {
+      for (const child of root.children) resizes.observe(child);
+    };
+    observeChildren();
+    const mutations = new MutationObserver(() => {
+      observeChildren();
+      capture();
+    });
+    mutations.observe(root, { childList: true });
+    return () => {
+      mutations.disconnect();
+      resizes.disconnect();
+    };
+  }, [capture, scrollRoot]);
+
   useLayoutEffect(() => {
     const root = scrollRoot.current;
     const before = shown.current;

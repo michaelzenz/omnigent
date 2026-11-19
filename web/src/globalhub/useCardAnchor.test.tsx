@@ -7,6 +7,7 @@ import { useCardAnchor } from "./useCardAnchor";
 const CARD_HEIGHT = 100;
 
 let markMoveDown: (taskId: string) => () => void = () => () => {};
+let heightAboveCards = 0;
 
 function Board({ order, scope = "board" }: { order: string[]; scope?: string }) {
   const root = useRef<HTMLDivElement>(null);
@@ -34,7 +35,8 @@ function layOut(root: HTMLElement): void {
     this: HTMLElement,
   ) {
     const cards = [...root.querySelectorAll<HTMLElement>("[data-task-id]")];
-    const top = this === root ? 0 : cards.indexOf(this) * CARD_HEIGHT - scrollTop;
+    const top =
+      this === root ? 0 : heightAboveCards + cards.indexOf(this) * CARD_HEIGHT - scrollTop;
     const height = this === root ? 3 * CARD_HEIGHT : CARD_HEIGHT;
     return {
       top,
@@ -66,12 +68,14 @@ function renderBoard(): { root: HTMLElement; rerender: (board: ReactElement) => 
 }
 
 beforeEach(() => {
+  heightAboveCards = 0;
   vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
 });
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
@@ -83,6 +87,32 @@ it("keeps the card at the top of the view in place when a card comes in above it
   rerender(<Board order={["b", "new", "a", "c", "d"]} />);
 
   expect([afterNewCard, root.scrollTop]).toEqual([250, 50]);
+});
+
+it("keeps the top card in place after what shows above it changed height without a scroll", () => {
+  const resized: ResizeObserverCallback[] = [];
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        resized.push(callback);
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  heightAboveCards = 100;
+  const { rerender } = render(<Board order={["a", "b", "c", "d"]} />);
+  const root = screen.getByTestId("root");
+  layOut(root);
+  scrollTo(root, 0);
+
+  heightAboveCards = 0;
+  act(() => resized.at(-1)?.([], {} as ResizeObserver));
+  rerender(<Board order={["new", "a", "b", "c", "d"]} />);
+
+  expect(root.scrollTop).toBe(CARD_HEIGHT);
 });
 
 it("puts the next card in place of a card that the user moves down, and focuses it", () => {
