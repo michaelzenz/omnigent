@@ -1717,6 +1717,7 @@ def test_ensure_default_agents_seeds_onih_role_profiles(
     assert spec.instructions and spec.instructions.strip()
     assert spec.executor.model
     assert spec.executor.config.get("history_window_turns") == 5
+    assert spec.executor.config.get("context_files") is False
     assert spec.allowed_builtin_tools is not None
     assert not {"bash", "edit", "write"} & set(spec.allowed_builtin_tools)
     assert "mcp" in spec.allowed_builtin_tools

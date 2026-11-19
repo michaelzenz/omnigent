@@ -12,6 +12,7 @@ executor:
     harness: pi
     system_prompt_mode: replace
     history_window_turns: 5
+    context_files: false
 
 skills: none
 
