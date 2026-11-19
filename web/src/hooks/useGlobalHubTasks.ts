@@ -107,6 +107,14 @@ export interface AgentTaskBoard {
   unmanaged_count: number;
   /** How many live tasks on the whole board have each priority, P0 first. */
   priority_counts?: number[];
+  /** How many of those tasks have news flagged at each priority, P0 first. */
+  priority_update_counts?: number[];
+}
+
+/** How many live tasks on the whole board have each priority, P0 first, and how many have news. */
+export interface BoardPriorityCounts {
+  tasks: readonly number[];
+  updates: readonly number[];
 }
 
 /** A board page read: after a page's ``next_cursor``, before its ``prev_cursor``, or the first page. */
@@ -207,14 +215,17 @@ export function useGlobalHubBoard(query = "", priority: number | null = null) {
 }
 
 /**
- * How many live tasks on the whole board have each priority, P0 first, from
- * the board read that the cards use; ``undefined`` until that read loads.
+ * How many live tasks on the whole board have each priority, and how many of
+ * them have news, from the board read that the cards use; ``undefined`` until
+ * that read loads.
  */
 export function useBoardPriorityCounts(
   query = "",
   priority: number | null = null,
-): readonly number[] | undefined {
-  return useGlobalHubBoard(query, priority).data?.pages[0]?.priority_counts;
+): BoardPriorityCounts | undefined {
+  const page = useGlobalHubBoard(query, priority).data?.pages[0];
+  if (page?.priority_counts === undefined) return undefined;
+  return { tasks: page.priority_counts, updates: page.priority_update_counts ?? [] };
 }
 
 /** The user's managers, for the names on the task cards. */

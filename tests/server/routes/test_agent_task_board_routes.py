@@ -215,9 +215,11 @@ async def test_a_priority_filter_keeps_one_prioritys_cards_and_the_counts_cover_
     fix_docs = _task(db_uri, "Fix the docs", priority=1)
     _task(db_uri, "Fix the logs", priority=0)
     resolved = _task(db_uri, "Retries", state="agent-resolved", priority=1)
-    _task(db_uri, "Archived", state="archived", priority=3)
+    archived = _task(db_uri, "Archived", state="archived", priority=3)
     _task(db_uri, "Bob's", owner=BOB_ID, priority=3)
     newest = _task(db_uri, "Cache", priority=1)
+    for flagged in (fix_docs, archived):
+        SqlAlchemyTaskStore(db_uri).update(flagged, owner_user_id=ALICE_ID, has_update=True)
 
     first = await _board(auth_client, priority=1, limit=2)
     rest = await _board(auth_client, priority=1, limit=2, after=first["next_cursor"])
@@ -233,6 +235,7 @@ async def test_a_priority_filter_keeps_one_prioritys_cards_and_the_counts_cover_
     assert ([card["id"] for card in rest["data"]], rest["has_more"]) == ([fix_docs], False)
     assert [card["id"] for card in found["data"]] == [fix_docs]
     assert [read["priority_counts"] for read in (first, rest, found)] == [[1, 3, 0, 0]] * 3
+    assert [read["priority_update_counts"] for read in (first, rest, found)] == [[0, 1, 0, 0]] * 3
     assert out_of_range.status_code == 422
 
 

@@ -216,7 +216,11 @@ class SqlAlchemyTaskStore(TaskStore):
             return int(session.scalar(stmt) or 0)
 
     def count_by_priority(
-        self, *, owner_user_id: str | None, states: Collection[str] | None = None
+        self,
+        *,
+        owner_user_id: str | None,
+        states: Collection[str] | None = None,
+        has_update: bool | None = None,
     ) -> dict[int, int]:
         """Count the owner's tasks at each priority."""
         stmt = (
@@ -224,6 +228,8 @@ class SqlAlchemyTaskStore(TaskStore):
             .where(*_matching(owner_user_id, states, unmanaged=False))
             .group_by(SqlTask.priority)
         )
+        if has_update is not None:
+            stmt = stmt.where(SqlTask.has_update.is_(has_update))
         with self._session("count_tasks_by_priority") as session:
             return {int(priority): int(count) for priority, count in session.execute(stmt).all()}
 

@@ -107,13 +107,18 @@ class TaskStore(ABC):
 
     @abstractmethod
     def count_by_priority(
-        self, *, owner_user_id: str | None, states: Collection[str] | None = None
+        self,
+        *,
+        owner_user_id: str | None,
+        states: Collection[str] | None = None,
+        has_update: bool | None = None,
     ) -> dict[int, int]:
         """
         Count the owner's tasks at each priority.
 
         :param owner_user_id: The owner whose board to read.
         :param states: Only tasks in these states, or every state when ``None``.
+        :param has_update: Only tasks whose news flag has this value, when set.
         :returns: How many tasks have each priority; a priority with no task is left out.
         """
 

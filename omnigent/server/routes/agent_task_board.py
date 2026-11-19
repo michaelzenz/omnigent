@@ -116,7 +116,8 @@ def create_agent_task_board_router(
         tasks near the query in meaning, all in one ranking. ``priority``
         keeps only the tasks of that priority, also in a search. A worker whose
         session no longer exists is left off its card. The count of tasks
-        without a manager and the counts at each priority cover the whole board.
+        without a manager and the counts at each priority, of all tasks and of
+        the ones with news, cover the whole board.
         """
         user_id = require_user(request, auth_provider)
         if after is not None and before is not None:
@@ -156,7 +157,7 @@ def create_agent_task_board_router(
                 priority,
             )
         task_ids = [task.id for task in tasks]
-        workers, assets, unmanaged_count, priority_counts = await asyncio.gather(
+        workers, assets, unmanaged_count, priority_counts, update_counts = await asyncio.gather(
             asyncio.to_thread(board.workers.list_for_tasks, task_ids, owner_user_id=user_id),
             asyncio.to_thread(board.assets.list_for_tasks, task_ids, owner_user_id=user_id),
             asyncio.to_thread(
@@ -164,6 +165,12 @@ def create_agent_task_board_router(
             ),
             asyncio.to_thread(
                 board.tasks.count_by_priority, owner_user_id=user_id, states=LIVE_TASK_STATES
+            ),
+            asyncio.to_thread(
+                board.tasks.count_by_priority,
+                owner_user_id=user_id,
+                states=LIVE_TASK_STATES,
+                has_update=True,
             ),
         )
         worker_sessions = await read_sessions(workers, user_id)
@@ -189,6 +196,7 @@ def create_agent_task_board_router(
             prev_cursor=prev_cursor,
             unmanaged_count=unmanaged_count,
             priority_counts=[priority_counts.get(priority, 0) for priority in _PRIORITIES],
+            priority_update_counts=[update_counts.get(priority, 0) for priority in _PRIORITIES],
         )
 
     @router.get("/agent-tasks/worker-sessions", response_model=AgentTaskBoardWorkerSessions)

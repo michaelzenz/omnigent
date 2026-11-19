@@ -12,7 +12,7 @@ vi.mock("@/lib/identity", async (importOriginal) => ({
 }));
 vi.mock("@/hooks/useGlobalHubTasks", async (importOriginal) => ({
   ...(await importOriginal<typeof TasksModule>()),
-  useBoardPriorityCounts: () => [2, 5, 1, 0],
+  useBoardPriorityCounts: () => ({ tasks: [2, 5, 1, 0], updates: [1, 0, 0, 0] }),
 }));
 vi.mock("@/hooks/useGlobalHubSettings", () => ({ useGlobalHubSettings: vi.fn() }));
 vi.mock("@/globalhub/GlobalHubSettingsDialog", () => ({
@@ -100,19 +100,24 @@ describe("GlobalHubPage", () => {
     expect(screen.getByTestId("globalhub-fyi-stream")).toBeInTheDocument();
   });
 
-  it("shows how many live tasks have each priority, and in all", () => {
+  it("shows how many live tasks have each priority, and in all, with a dot where one has news", () => {
     renderPage({ host_id: "host_laptop", workspace: "/srv", report_new_sessions: true });
 
     const filter = screen.getByTestId("globalhub-priority-filter");
     const chips = Array.from(filter.querySelectorAll("button"));
     expect(chips.map((chip) => chip.getAttribute("aria-label"))).toEqual([
-      "P0, 2 tasks",
+      "P0, 2 tasks, 1 with an update",
       "P1, 5 tasks",
       "P2, 1 task",
       "P3, 0 tasks",
-      "All, 8 tasks",
+      "All, 8 tasks, 1 with an update",
     ]);
     expect(chips.map((chip) => chip.textContent)).toEqual(["P02", "P15", "P21", "P30", "All8"]);
+    expect(
+      chips.map(
+        (chip) => chip.querySelector('[data-testid="globalhub-priority-update-dot"]') !== null,
+      ),
+    ).toEqual([true, false, false, false, true]);
   });
 
   it("filters the board by one priority, remembers it, and All or a second click clears it", () => {

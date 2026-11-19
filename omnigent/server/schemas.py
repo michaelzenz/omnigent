@@ -6949,8 +6949,9 @@ class AgentTaskBoard(BaseModel):
     one, and is null on the last page. ``prev_cursor`` reads the page before,
     and is null on the first page. ``unmanaged_count`` counts the live tasks
     on the whole board that have no manager. ``priority_counts`` counts the
-    live tasks on the whole board at each priority, P0 first; a search and a
-    priority filter do not change it.
+    live tasks on the whole board at each priority, P0 first, and
+    ``priority_update_counts`` counts the ones among them with ``has_update``;
+    a search and a priority filter do not change them.
     """
 
     object: Literal["agent.task.board.cards"] = "agent.task.board.cards"
@@ -6960,6 +6961,7 @@ class AgentTaskBoard(BaseModel):
     prev_cursor: str | None = None
     unmanaged_count: int
     priority_counts: list[int]
+    priority_update_counts: list[int]
 
 
 class AgentTaskBoardWorkerSession(BaseModel):
