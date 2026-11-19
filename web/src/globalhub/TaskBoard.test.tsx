@@ -65,14 +65,14 @@ function serveBoard(page: (read: BoardRead) => AgentTaskBoard): void {
   });
 }
 
-function renderBoard(query?: string): QueryClient {
+function renderBoard(query?: string, priority: number | null = null): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <TooltipProvider>
           <GlobalHubChatProvider>
-            <TaskBoard scrollRoot={{ current: null }} query={query} />
+            <TaskBoard scrollRoot={{ current: null }} query={query} priority={priority} />
           </GlobalHubChatProvider>
         </TooltipProvider>
       </MemoryRouter>
@@ -307,11 +307,34 @@ describe("TaskBoard", () => {
     );
   });
 
-  it("says so when no task is live", async () => {
-    serveBoard(() => ({ data: [], has_more: false, unmanaged_count: 0 }));
+  it.each([
+    { priority: null, text: "No tasks yet.", sent: null },
+    { priority: 1, text: "No P1 tasks.", sent: "1" },
+  ])(
+    "reads the tasks of priority $priority, and says so when none is live",
+    async ({ priority, text, sent }) => {
+      serveBoard(() => ({ data: [], has_more: false, unmanaged_count: 0 }));
 
-    renderBoard();
+      renderBoard(undefined, priority);
 
-    expect(await screen.findByTestId("globalhub-no-tasks")).toBeInTheDocument();
+      expect(await screen.findByTestId("globalhub-no-tasks")).toHaveTextContent(text);
+      const priorities = fetchMock.mock.calls
+        .map(([input]) => String(input))
+        .filter((path) => path.startsWith(BOARD_PATH))
+        .map((path) => new URL(path, "http://board.example.com").searchParams.get("priority"));
+      expect(priorities).toEqual([sent]);
+    },
+  );
+
+  it("lets the last card of a filtered board move down, since the board goes on past it", async () => {
+    serveBoard(() => ({
+      data: [agentTask("t1", { priority: 1 })],
+      has_more: false,
+      unmanaged_count: 0,
+    }));
+
+    renderBoard(undefined, 1);
+
+    expect(await screen.findByTestId("task-card-move-to-end-t1")).toBeEnabled();
   });
 });

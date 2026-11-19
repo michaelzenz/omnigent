@@ -179,11 +179,14 @@ class SqlAlchemyTaskStore(TaskStore):
         limit: int | None = None,
         after: tuple[int, str] | None = None,
         before: tuple[int, str] | None = None,
+        priority: int | None = None,
     ) -> builtins.list[Task]:
         """List the owner's tasks in board order (highest rank first)."""
         stmt = select(SqlTask).where(*_matching(owner_user_id, states, unmanaged))
         if manager_id is not None:
             stmt = stmt.where(SqlTask.manager_id == manager_id)
+        if priority is not None:
+            stmt = stmt.where(SqlTask.priority == priority)
         if after is not None:
             stmt = stmt.where(_below(after))
         if before is not None:
@@ -211,6 +214,18 @@ class SqlAlchemyTaskStore(TaskStore):
         )
         with self._session("count_tasks") as session:
             return int(session.scalar(stmt) or 0)
+
+    def count_by_priority(
+        self, *, owner_user_id: str | None, states: Collection[str] | None = None
+    ) -> dict[int, int]:
+        """Count the owner's tasks at each priority."""
+        stmt = (
+            select(SqlTask.priority, func.count())
+            .where(*_matching(owner_user_id, states, unmanaged=False))
+            .group_by(SqlTask.priority)
+        )
+        with self._session("count_tasks_by_priority") as session:
+            return {int(priority): int(count) for priority, count in session.execute(stmt).all()}
 
     def update(
         self,

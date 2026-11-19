@@ -45,6 +45,7 @@ def _task(
     state: str = "active",
     owner: str = ALICE_ID,
     manager_id: str | None = None,
+    priority: int = 2,
 ) -> str:
     task_id = uuid.uuid4().hex
     SqlAlchemyTaskStore(db_uri).create(
@@ -53,6 +54,7 @@ def _task(
         title=title,
         state=state,
         manager_id=manager_id,
+        priority=priority,
     )
     return task_id
 
@@ -205,6 +207,33 @@ async def test_a_search_returns_the_cards_that_hold_the_most_words_first_a_page_
     # The manager's name is not searched.
     assert by_manager_name["data"] == []
     assert {card["match"] is None for card in plain["data"]} == {True}
+
+
+async def test_a_priority_filter_keeps_one_prioritys_cards_and_the_counts_cover_the_board(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    fix_docs = _task(db_uri, "Fix the docs", priority=1)
+    _task(db_uri, "Fix the logs", priority=0)
+    resolved = _task(db_uri, "Retries", state="agent-resolved", priority=1)
+    _task(db_uri, "Archived", state="archived", priority=3)
+    _task(db_uri, "Bob's", owner=BOB_ID, priority=3)
+    newest = _task(db_uri, "Cache", priority=1)
+
+    first = await _board(auth_client, priority=1, limit=2)
+    rest = await _board(auth_client, priority=1, limit=2, after=first["next_cursor"])
+    found = await _board(auth_client, priority=1, q="fix")
+    out_of_range = await auth_client.get(
+        "/v1/agent-tasks/board", params={"priority": 4}, headers=ALICE
+    )
+
+    assert ([card["id"] for card in first["data"]], first["has_more"]) == (
+        [newest, resolved],
+        True,
+    )
+    assert ([card["id"] for card in rest["data"]], rest["has_more"]) == ([fix_docs], False)
+    assert [card["id"] for card in found["data"]] == [fix_docs]
+    assert [read["priority_counts"] for read in (first, rest, found)] == [[1, 3, 0, 0]] * 3
+    assert out_of_range.status_code == 422
 
 
 class _DirectionEmbedder:

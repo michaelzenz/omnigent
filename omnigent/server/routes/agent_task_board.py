@@ -57,6 +57,7 @@ QUEUE_RANK_RANGE = range(-(2**63), 2**63)
 MAX_BOARD_QUERY_CHARS = 200
 #: The longest cursor a board read takes.
 MAX_BOARD_CURSOR_CHARS = 80
+_PRIORITIES = range(4)
 
 
 def create_agent_task_board_router(
@@ -102,6 +103,7 @@ def create_agent_task_board_router(
         q: str = Query(default="", max_length=MAX_BOARD_QUERY_CHARS),
         after: str | None = Query(default=None, max_length=MAX_BOARD_CURSOR_CHARS),
         before: str | None = Query(default=None, max_length=MAX_BOARD_CURSOR_CHARS),
+        priority: int | None = Query(default=None, ge=0, le=3),
     ) -> AgentTaskBoard:
         """Read a page of ``limit`` live tasks on the caller's board as cards, in board order.
 
@@ -111,9 +113,10 @@ def create_agent_task_board_router(
         page at that end. With a query ``q``, the pages hold the live tasks
         whose cards hold any of its words instead, best match first, as
         ``board_search`` ranks them. With vector search, they also hold the
-        tasks near the query in meaning, all in one ranking. A worker whose
+        tasks near the query in meaning, all in one ranking. ``priority``
+        keeps only the tasks of that priority, also in a search. A worker whose
         session no longer exists is left off its card. The count of tasks
-        without a manager covers the whole board.
+        without a manager and the counts at each priority cover the whole board.
         """
         user_id = require_user(request, auth_provider)
         if after is not None and before is not None:
@@ -138,6 +141,7 @@ def create_agent_task_board_router(
                 before_offset,
                 search_index,
                 query_vector,
+                priority,
             )
             tasks = [match.task for match in found]
             matches = {match.task.id: match for match in found}
@@ -149,13 +153,17 @@ def create_agent_task_board_router(
                 limit,
                 _board_cursor_position(after),
                 _board_cursor_position(before),
+                priority,
             )
         task_ids = [task.id for task in tasks]
-        workers, assets, unmanaged_count = await asyncio.gather(
+        workers, assets, unmanaged_count, priority_counts = await asyncio.gather(
             asyncio.to_thread(board.workers.list_for_tasks, task_ids, owner_user_id=user_id),
             asyncio.to_thread(board.assets.list_for_tasks, task_ids, owner_user_id=user_id),
             asyncio.to_thread(
                 board.tasks.count, owner_user_id=user_id, states=LIVE_TASK_STATES, unmanaged=True
+            ),
+            asyncio.to_thread(
+                board.tasks.count_by_priority, owner_user_id=user_id, states=LIVE_TASK_STATES
             ),
         )
         worker_sessions = await read_sessions(workers, user_id)
@@ -180,6 +188,7 @@ def create_agent_task_board_router(
             next_cursor=next_cursor,
             prev_cursor=prev_cursor,
             unmanaged_count=unmanaged_count,
+            priority_counts=[priority_counts.get(priority, 0) for priority in _PRIORITIES],
         )
 
     @router.get("/agent-tasks/worker-sessions", response_model=AgentTaskBoardWorkerSessions)
@@ -218,15 +227,19 @@ def _search(
     before: int | None,
     search_index: TaskSearchIndex | None = None,
     query_vector: list[float] | None = None,
+    priority: int | None = None,
 ) -> tuple[list[BoardMatch], str | None, str | None]:
     """
     Return a page of the live tasks that match a query, and its two cursors.
 
     With a query vector, the keyword matches and the tasks near the query in
     meaning share one ranking. When the vectors cannot be read, the search
-    keeps the keyword matches in their own order.
+    keeps the keyword matches in their own order. ``priority`` keeps only the
+    tasks of that priority.
     """
-    tasks = board.tasks.list(owner_user_id=owner_user_id, states=LIVE_TASK_STATES)
+    tasks = board.tasks.list(
+        owner_user_id=owner_user_id, states=LIVE_TASK_STATES, priority=priority
+    )
     task_ids = [task.id for task in tasks]
     workers = board.workers.list_for_tasks(task_ids, owner_user_id=owner_user_id)
     sessions = conversations.get_conversations(
@@ -315,30 +328,42 @@ def _live_tasks(
     limit: int,
     after: tuple[int, str] | None,
     before: tuple[int, str] | None,
+    priority: int | None = None,
 ) -> tuple[list[Task], str | None, str | None]:
     """Return a page of the owner's live tasks in board order, and its two cursors.
 
     A ``before`` read that reaches the top of the board returns the first page,
     and an ``after`` read with no task after its cursor returns the page before
     the cursor, so a page read again after the board changed is not empty.
+    ``priority`` keeps only the tasks of that priority.
     """
     if before is not None:
-        nearest = _live_tasks_beside(tasks, owner_user_id, limit + 1, before=before)[-limit - 1 :]
+        nearest = _live_tasks_beside(
+            tasks, owner_user_id, limit + 1, before=before, priority=priority
+        )[-limit - 1 :]
         if len(nearest) <= limit:
-            return _live_tasks(tasks, owner_user_id, limit, None, None)
+            return _live_tasks(tasks, owner_user_id, limit, None, None, priority)
         page = nearest[-limit:]
         more_after = bool(
-            _live_tasks_beside(tasks, owner_user_id, 1, after=_board_position(page[-1]))
+            _live_tasks_beside(
+                tasks, owner_user_id, 1, after=_board_position(page[-1]), priority=priority
+            )
         )
         return page, _board_cursor(page[-1]) if more_after else None, _board_cursor(page[0])
-    nearest = _live_tasks_beside(tasks, owner_user_id, limit + 1, after=after)[: limit + 1]
+    nearest = _live_tasks_beside(tasks, owner_user_id, limit + 1, after=after, priority=priority)[
+        : limit + 1
+    ]
     if not nearest and after is not None:
-        return _live_tasks(tasks, owner_user_id, limit, None, after)
+        return _live_tasks(tasks, owner_user_id, limit, None, after, priority)
     page = nearest[:limit]
     more_before = (
         after is not None
         and bool(page)
-        and bool(_live_tasks_beside(tasks, owner_user_id, 1, before=_board_position(page[0])))
+        and bool(
+            _live_tasks_beside(
+                tasks, owner_user_id, 1, before=_board_position(page[0]), priority=priority
+            )
+        )
     )
     return (
         page,
@@ -354,12 +379,18 @@ def _live_tasks_beside(
     *,
     after: tuple[int, str] | None = None,
     before: tuple[int, str] | None = None,
+    priority: int | None = None,
 ) -> list[Task]:
     """Return each live state's ``limit`` tasks nearest to a board position, in board order."""
     # The board index orders one state at a time, so read each state and merge.
     per_state = [
         tasks.list(
-            owner_user_id=owner_user_id, states=[state], limit=limit, after=after, before=before
+            owner_user_id=owner_user_id,
+            states=[state],
+            limit=limit,
+            after=after,
+            before=before,
+            priority=priority,
         )
         for state in LIVE_TASK_STATES
     ]

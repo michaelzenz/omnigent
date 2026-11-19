@@ -69,6 +69,7 @@ class TaskStore(ABC):
         limit: int | None = None,
         after: tuple[int, str] | None = None,
         before: tuple[int, str] | None = None,
+        priority: int | None = None,
     ) -> builtins.list[Task]:
         """
         List the owner's tasks in board order (highest rank first).
@@ -77,6 +78,7 @@ class TaskStore(ABC):
         :param states: Only tasks in these states, or every state when ``None``.
         :param manager_id: Only this manager's tasks, when set.
         :param unmanaged: Only tasks without a manager, when true.
+        :param priority: Only tasks of this priority, from 0 to 3, when set.
         :param limit: At most this many tasks, or all when ``None``.
         :param after: Only tasks that come after this board position, a
             ``(queue_rank, id)`` pair, so that a board reads a page at a time.
@@ -101,6 +103,18 @@ class TaskStore(ABC):
         :param states: Only tasks in these states, or every state when ``None``.
         :param unmanaged: Only tasks without a manager, when true.
         :returns: How many tasks match.
+        """
+
+    @abstractmethod
+    def count_by_priority(
+        self, *, owner_user_id: str | None, states: Collection[str] | None = None
+    ) -> dict[int, int]:
+        """
+        Count the owner's tasks at each priority.
+
+        :param owner_user_id: The owner whose board to read.
+        :param states: Only tasks in these states, or every state when ``None``.
+        :returns: How many tasks have each priority; a priority with no task is left out.
         """
 
     @abstractmethod

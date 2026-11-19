@@ -34,20 +34,23 @@ function boardCards(pages: AgentTaskBoard[]): AgentTaskCard[] {
  * the other, and the board reads that page again when its end scrolls into
  * view. While some live tasks have no manager, a line above the cards says so.
  * A search shows only the matching cards, best match first, with their matches
- * marked. A worker whose session finished a turn that the user has not seen
- * has a dot.
+ * marked. A priority filter shows only the cards of that priority. A worker
+ * whose session finished a turn that the user has not seen has a dot.
  *
  * @param scrollRoot - The element the board scrolls in.
  * @param query - The search, or an empty string to show the whole board.
+ * @param priority - The one priority to show, from 0 to 3, or ``null`` for all.
  */
 export function TaskBoard({
   scrollRoot,
   query = "",
+  priority = null,
 }: {
   scrollRoot: RefObject<HTMLElement | null>;
   query?: string;
+  priority?: number | null;
 }) {
-  const board = useGlobalHubBoard(query);
+  const board = useGlobalHubBoard(query, priority);
   const managers = useAgentManagers();
   const cardsRef = useRef<HTMLDivElement>(null);
   const markAnchor = usePageReadAnchor(
@@ -87,17 +90,19 @@ export function TaskBoard({
   const hasMore = Boolean(shownPages[shownPages.length - 1]?.next_cursor);
   const unmanagedCount = shownPages[0]?.unmanaged_count ?? 0;
   const searching = words.length > 0;
+  const scope = `${query}:${priority ?? "all"}`;
   if (cards.length === 0) {
+    const tasks = priority === null ? "tasks" : `P${priority} tasks`;
     return searching ? (
       <p
         className="p-8 text-center text-sm text-muted-foreground"
         data-testid="globalhub-no-matches"
       >
-        No tasks match "{query}".
+        No {tasks} match "{query}".
       </p>
     ) : (
       <p className="p-8 text-center text-sm text-muted-foreground" data-testid="globalhub-no-tasks">
-        No tasks yet.
+        {priority === null ? "No tasks yet." : `No ${tasks}.`}
       </p>
     );
   }
@@ -119,7 +124,7 @@ export function TaskBoard({
         isFetching={board.isFetchingPreviousPage || board.isPlaceholderData}
         fetchMore={readEarlier}
         scrollRoot={scrollRoot}
-        scopeKey={`globalhub-board-earlier:${query}`}
+        scopeKey={`globalhub-board-earlier:${scope}`}
         maxAutoLoads={Number.POSITIVE_INFINITY}
       />
       <div ref={cardsRef} className="flex flex-col gap-4">
@@ -133,8 +138,8 @@ export function TaskBoard({
               managerSessionId={
                 manager === undefined || manager.session_missing ? null : manager.conversation_id
               }
-              // Search results are not in board order, so none is known to be last.
-              isLast={!searching && !hasMore && index === cards.length - 1}
+              // A search or a priority filter shows part of the board, so none is known to be last.
+              isLast={!searching && priority === null && !hasMore && index === cards.length - 1}
             />
           );
         })}
@@ -144,7 +149,7 @@ export function TaskBoard({
         isFetching={board.isFetchingNextPage || board.isPlaceholderData}
         fetchMore={readMore}
         scrollRoot={scrollRoot}
-        scopeKey={`globalhub-board:${query}`}
+        scopeKey={`globalhub-board:${scope}`}
         maxAutoLoads={Number.POSITIVE_INFINITY}
       />
     </div>

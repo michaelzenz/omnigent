@@ -3,15 +3,29 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 
 import { GlobalHubPage } from "./GlobalHubPage";
 import { type GlobalHubSettings, useGlobalHubSettings } from "@/hooks/useGlobalHubSettings";
+import type * as TasksModule from "@/hooks/useGlobalHubTasks";
+import type * as IdentityModule from "@/lib/identity";
 
+vi.mock("@/lib/identity", async (importOriginal) => ({
+  ...(await importOriginal<typeof IdentityModule>()),
+  getCurrentUserId: () => "alice@example.com",
+}));
+vi.mock("@/hooks/useGlobalHubTasks", async (importOriginal) => ({
+  ...(await importOriginal<typeof TasksModule>()),
+  useBoardPriorityCounts: () => [2, 5, 1, 0],
+}));
 vi.mock("@/hooks/useGlobalHubSettings", () => ({ useGlobalHubSettings: vi.fn() }));
 vi.mock("@/globalhub/GlobalHubSettingsDialog", () => ({
   GlobalHubSettingsDialog: ({ open }: { open: boolean }) =>
     open ? <div data-testid="globalhub-settings-dialog" /> : null,
 }));
 vi.mock("@/globalhub/TaskBoard", () => ({
-  TaskBoard: ({ query }: { query?: string }) => (
-    <div data-testid="globalhub-task-board" data-query={query ?? ""} />
+  TaskBoard: ({ query, priority }: { query?: string; priority?: number | null }) => (
+    <div
+      data-testid="globalhub-task-board"
+      data-query={query ?? ""}
+      data-priority={priority ?? "all"}
+    />
   ),
 }));
 vi.mock("@/globalhub/SystemNoticeCard", () => ({
@@ -35,6 +49,7 @@ function renderPage(data: GlobalHubSettings) {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  localStorage.clear();
 });
 
 describe("GlobalHubPage", () => {
@@ -83,5 +98,42 @@ describe("GlobalHubPage", () => {
     await waitFor(() => expect(board.dataset.query).toBe(""));
     expect(screen.getByTestId("globalhub-system-notice")).toBeInTheDocument();
     expect(screen.getByTestId("globalhub-fyi-stream")).toBeInTheDocument();
+  });
+
+  it("shows how many live tasks have each priority, and in all", () => {
+    renderPage({ host_id: "host_laptop", workspace: "/srv", report_new_sessions: true });
+
+    const filter = screen.getByTestId("globalhub-priority-filter");
+    const chips = Array.from(filter.querySelectorAll("button"));
+    expect(chips.map((chip) => chip.getAttribute("aria-label"))).toEqual([
+      "P0, 2 tasks",
+      "P1, 5 tasks",
+      "P2, 1 task",
+      "P3, 0 tasks",
+      "All, 8 tasks",
+    ]);
+    expect(chips.map((chip) => chip.textContent)).toEqual(["P02", "P15", "P21", "P30", "All8"]);
+  });
+
+  it("filters the board by one priority, remembers it, and All or a second click clears it", () => {
+    const settings = { host_id: "host_laptop", workspace: "/srv", report_new_sessions: true };
+    const shown = () => screen.getByTestId("globalhub-task-board").dataset.priority;
+    const chip = (name: string) => screen.getByRole("button", { name: new RegExp(`^${name}, `) });
+    renderPage(settings);
+
+    fireEvent.click(chip("P1"));
+    const picked = [shown(), chip("P1").getAttribute("aria-pressed")];
+    cleanup();
+    renderPage(settings);
+    const remembered = shown();
+    fireEvent.click(chip("P1"));
+    const clickedAgain = shown();
+    fireEvent.click(chip("P0"));
+    const switched = shown();
+    fireEvent.click(chip("All"));
+
+    expect(picked).toEqual(["1", "true"]);
+    expect([remembered, clickedAgain, switched, shown()]).toEqual(["1", "all", "0", "all"]);
+    expect(chip("All")).toHaveAttribute("aria-pressed", "true");
   });
 });

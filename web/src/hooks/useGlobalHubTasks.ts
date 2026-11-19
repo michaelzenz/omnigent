@@ -105,6 +105,8 @@ export interface AgentTaskBoard {
   prev_cursor?: string | null;
   /** How many live tasks on the whole board have no manager. */
   unmanaged_count: number;
+  /** How many live tasks on the whole board have each priority, P0 first. */
+  priority_counts?: number[];
 }
 
 /** A board page read: after a page's ``next_cursor``, before its ``prev_cursor``, or the first page. */
@@ -153,9 +155,14 @@ export function boardSearchWords(query: string): string[] {
   return [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))];
 }
 
-async function fetchBoard(page: BoardPageParam, query: string): Promise<AgentTaskBoard> {
+async function fetchBoard(
+  page: BoardPageParam,
+  query: string,
+  priority: number | null,
+): Promise<AgentTaskBoard> {
   const params = new URLSearchParams({ limit: String(BOARD_PAGE_SIZE) });
   if (query) params.set("q", query);
+  if (priority !== null) params.set("priority", String(priority));
   if (page && "after" in page) params.set("after", page.after);
   if (page && "before" in page) params.set("before", page.before);
   return readJson(await authenticatedFetch(`/v1/agent-tasks/board?${params}`));
@@ -175,16 +182,17 @@ async function fetchManagers(after: string | null = null): Promise<AgentManager[
 
 /**
  * The live tasks (active, idle or resolved) as cards, in board order, a page at
- * a time; with a ``query``, the tasks that match it, best match first. The
+ * a time; with a ``query``, the tasks that match it, best match first. A
+ * ``priority`` from 0 to 3 keeps only the tasks of that priority. The
  * board holds at most ``BOARD_MAX_PAGES`` pages, and reads a dropped page
  * again when the user scrolls back to it. A refresh reads the held pages
  * again, from the first. The pages drop when the board closes, so it opens at
  * its top.
  */
-export function useGlobalHubBoard(query = "") {
+export function useGlobalHubBoard(query = "", priority: number | null = null) {
   return useInfiniteQuery({
-    queryKey: [...GLOBALHUB_TASKS_QUERY_KEY, "board", query],
-    queryFn: ({ pageParam }) => fetchBoard(pageParam, query),
+    queryKey: [...GLOBALHUB_TASKS_QUERY_KEY, "board", query, priority],
+    queryFn: ({ pageParam }) => fetchBoard(pageParam, query, priority),
     initialPageParam: null as BoardPageParam,
     getNextPageParam: (page): BoardPageParam | undefined =>
       page.next_cursor ? { after: page.next_cursor } : undefined,
@@ -196,6 +204,17 @@ export function useGlobalHubBoard(query = "") {
     // A new search keeps the cards on screen until its first page loads.
     placeholderData: keepPreviousData,
   });
+}
+
+/**
+ * How many live tasks on the whole board have each priority, P0 first, from
+ * the board read that the cards use; ``undefined`` until that read loads.
+ */
+export function useBoardPriorityCounts(
+  query = "",
+  priority: number | null = null,
+): readonly number[] | undefined {
+  return useGlobalHubBoard(query, priority).data?.pages[0]?.priority_counts;
 }
 
 /** The user's managers, for the names on the task cards. */

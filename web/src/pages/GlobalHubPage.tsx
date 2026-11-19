@@ -8,23 +8,29 @@ import { FyiStream } from "@/globalhub/FyiStream";
 import { GlobalHubChatProvider } from "@/globalhub/GlobalHubChat";
 import { GlobalHubChatPanel } from "@/globalhub/GlobalHubChatPanel";
 import { GlobalHubSettingsDialog } from "@/globalhub/GlobalHubSettingsDialog";
+import { PriorityFilter } from "@/globalhub/PriorityFilter";
 import { SystemNoticeCard } from "@/globalhub/SystemNoticeCard";
 import { TaskBoard } from "@/globalhub/TaskBoard";
+import { usePriorityFilter } from "@/globalhub/usePriorityFilter";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useGlobalHubSettings } from "@/hooks/useGlobalHubSettings";
+import { useBoardPriorityCounts } from "@/hooks/useGlobalHubTasks";
 
 // The search waits for a pause in typing before it asks the server.
 const SEARCH_DELAY_MS = 300;
 
 /**
- * The Global Hub board, with its search and settings in the header. A
- * manager's or worker's chat opens in a panel over the right side of the board.
+ * The Global Hub board, with its priority filter, search and settings in the
+ * header. A manager's or worker's chat opens in a panel over the right side of
+ * the board.
  */
 export function GlobalHubPage() {
   const settings = useGlobalHubSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const query = useDebouncedValue(search.trim(), SEARCH_DELAY_MS);
+  const [priority, setPriority] = usePriorityFilter();
+  const priorityCounts = useBoardPriorityCounts(query, priority);
   const boardRef = useRef<HTMLDivElement>(null);
   const openSettings = () => setSettingsOpen(true);
 
@@ -35,7 +41,10 @@ export function GlobalHubPage() {
         data-testid="globalhub-page"
       >
         <div className="globalhub-header flex h-12 items-center justify-between gap-3 border-b px-4">
-          <h1 className="text-lg font-semibold">Global Hub</h1>
+          <div className="flex min-w-0 items-center gap-3">
+            <h1 className="shrink-0 text-lg font-semibold">Global Hub</h1>
+            <PriorityFilter value={priority} counts={priorityCounts} onChange={setPriority} />
+          </div>
           <div className="flex min-w-0 items-center gap-1">
             <div className="relative w-64 min-w-0">
               <SearchIcon
@@ -108,7 +117,7 @@ export function GlobalHubPage() {
                     <FyiStream />
                   </>
                 )}
-                <TaskBoard scrollRoot={boardRef} query={query} />
+                <TaskBoard scrollRoot={boardRef} query={query} priority={priority} />
               </>
             )}
           </div>
