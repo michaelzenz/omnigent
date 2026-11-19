@@ -269,28 +269,16 @@ pmv2_api(
 )
 ```
 
-## Message a worker
+## Messages to workers
+
+Send a worker only one message: its first message, which the start route
+below sends. Do not send it any later message. Do not answer its questions
+and do not pass on new work; the user talks to the worker.
 
 When an event asks for more work on something that a worker already does,
 for example a failed check or a review comment on the pull request that the
-worker opened, send that worker a message. Do not start a new session for it.
-
-```
-pmv2_api(
-  method="POST",
-  path="/v1/task-workers/<worker_id>/messages",
-  body={"message": "<what changed, with its link, and what to do now>"}
-)
-```
-
-- **Find the worker.** The task's workers
-(`GET /v1/agent-tasks/<task_id>/workers`) give each worker's `id` and
-`session_id`. When the titles do not show which worker did the work, read
-the sessions with `sys_session_get_history`.
-- **The message.** The server queues it and sends it as the user's message
-when the session is free, so a busy worker gets it after its current turn.
-Messages to one worker go in one at a time, in order, and each starts a turn.
-The session knows its work, so write only what changed and what to do now.
+worker opened, fold it into the task (Step 2) and send `"has_update": true`,
+so the user sees it. Do not start a new session for it.
 
 ## Start a worker session
 
@@ -329,14 +317,16 @@ does not change the user's checkout. Use
 `{"branch_name": "<new branch>", "base_branch": "main"}` for a new branch, or
 `{"branch_name": "<existing branch>", "existing_branch": true}` for a branch
 that exists, for example the branch of a pull request.
-- **First message.** The session knows nothing about the task. Write what the
-work should achieve (the Overview's Goal line), the links, and what done means.
-Ask it to follow the sources of its work with `event_subscriptions`: the ticket
-or thread that it works from, the pull request that it opens, and each change
-that it must wait for, e.g. a CI run, a review, a reply or a rollout. Their
-events then go to it and not to the broker. Ask this only in the first message.
+- **First message.** It is the only message that the worker gets from you, so
+give the complete work order. The session knows nothing about the task. Write
+what the work should achieve (the Overview's Goal line), the links, and what
+done means. Ask it to follow the sources of its work with `event_subscriptions`:
+the ticket or thread that it works from, the pull request that it opens, and
+each change that it must wait for, e.g. a CI run, a review, a reply or a
+rollout. Their events then go to it and not to the broker.
 - **One session for each piece of work.** Do not start a second session for
-work that a worker already does; message that worker instead.
+work that a worker already does, and do not message that worker (see
+**Messages to workers**).
 - **Failures.** The first message goes out in the background. If it cannot be
 sent, a `session.start.failed` event tells you why.
 
