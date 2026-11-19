@@ -15,6 +15,7 @@ vi.mock("@/components/chat/SideChatPane", () => ({
   SideChatPane: (props: {
     childId: string;
     fullSession?: boolean;
+    queueWhileBusy?: boolean;
     readOnly?: boolean;
     messagePrefix?: string;
   }) => (
@@ -22,6 +23,7 @@ vi.mock("@/components/chat/SideChatPane", () => ({
       data-testid="side-chat"
       data-session={props.childId}
       data-full-session={String(props.fullSession)}
+      data-queue-while-busy={String(props.queueWhileBusy)}
       data-read-only={String(props.readOnly)}
       data-message-prefix={props.messagePrefix ?? ""}
     />
@@ -93,9 +95,10 @@ describe("GlobalHubChatPanel", () => {
     expect([
       chat.dataset.session,
       chat.dataset.fullSession,
+      chat.dataset.queueWhileBusy,
       chat.dataset.readOnly,
       chat.dataset.messagePrefix,
-    ]).toEqual(["s-m1", "true", "false", ""]);
+    ]).toEqual(["s-m1", "true", "true", "false", ""]);
     expect(screen.getByRole("link", { name: "Open Session s-m1 full screen" })).toHaveAttribute(
       "href",
       "/c/s-m1",

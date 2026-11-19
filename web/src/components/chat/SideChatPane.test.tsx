@@ -1182,35 +1182,59 @@ describe("side-chat interrupt", () => {
     expect(sessionsApi.interrupt).toHaveBeenLastCalledWith(childId, "codex_turn_side");
   });
 
-  it("queues a follow-up while the side chat runs and sends it when the turn ends", async () => {
-    writeAlwaysSteer(false);
-    renderPane(<SideChatPane childId={childId} />);
-    const input = screen.getByTestId("side-chat-input");
-    expect(screen.queryByTestId("side-chat-send")).toBeNull();
-    fireEvent.change(input, { target: { value: "Also check the tests" } });
-    expect(screen.queryByTestId("side-chat-interrupt")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Send side question" }));
+  it.each([
+    {
+      name: "side chat",
+      fullSession: false,
+      queueWhileBusy: false,
+      sendLabel: "Send side question",
+      interruptLabel: "Interrupt side chat",
+    },
+    {
+      name: "GlobalHub chat panel",
+      fullSession: true,
+      queueWhileBusy: true,
+      sendLabel: "Send message",
+      interruptLabel: "Interrupt session",
+    },
+  ])(
+    "queues a follow-up while the $name runs and sends it when the turn ends",
+    async ({ fullSession, queueWhileBusy, sendLabel, interruptLabel }) => {
+      writeAlwaysSteer(false);
+      renderPane(
+        <SideChatPane
+          childId={childId}
+          fullSession={fullSession}
+          queueWhileBusy={queueWhileBusy}
+        />,
+      );
+      const input = screen.getByTestId("side-chat-input");
+      expect(screen.queryByTestId("side-chat-send")).toBeNull();
+      fireEvent.change(input, { target: { value: "Also check the tests" } });
+      expect(screen.queryByTestId("side-chat-interrupt")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: sendLabel }));
 
-    expect(send).not.toHaveBeenCalled();
-    expect(input).toHaveValue("");
-    expect(screen.getByRole("list", { name: "Queued messages" })).toHaveTextContent(
-      "Also check the tests",
-    );
-    expect(screen.getByRole("button", { name: "Interrupt side chat" })).toBeEnabled();
-    expect(useChatStore.getState().queuedMessages).toEqual([
-      expect.objectContaining({ conversationId: childId, agentId: "agent_side" }),
-    ]);
+      expect(send).not.toHaveBeenCalled();
+      expect(input).toHaveValue("");
+      expect(screen.getByRole("list", { name: "Queued messages" })).toHaveTextContent(
+        "Also check the tests",
+      );
+      expect(screen.getByRole("button", { name: interruptLabel })).toBeEnabled();
+      expect(useChatStore.getState().queuedMessages).toEqual([
+        expect.objectContaining({ conversationId: childId, agentId: "agent_side" }),
+      ]);
 
-    act(() => conversationRegistry.acquire(childId).setState({ sessionStatus: "idle" }));
-    await waitFor(() => expect(send).toHaveBeenCalledOnce());
-    expect(send).toHaveBeenCalledWith(
-      "Also check the tests",
-      "agent_side",
-      undefined,
-      expect.objectContaining({ pinnedConversationId: childId }),
-    );
-    expect(screen.queryByRole("list", { name: "Queued messages" })).toBeNull();
-  });
+      act(() => conversationRegistry.acquire(childId).setState({ sessionStatus: "idle" }));
+      await waitFor(() => expect(send).toHaveBeenCalledOnce());
+      expect(send).toHaveBeenCalledWith(
+        "Also check the tests",
+        "agent_side",
+        undefined,
+        expect.objectContaining({ pinnedConversationId: childId }),
+      );
+      expect(screen.queryByRole("list", { name: "Queued messages" })).toBeNull();
+    },
+  );
 
   it("drains a queued follow-up after its side-chat tab unmounts", async () => {
     writeAlwaysSteer(false);

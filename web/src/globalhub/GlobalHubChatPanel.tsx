@@ -75,6 +75,7 @@ function ChatPanelBody({ target }: { target: ChatTarget }) {
           key={target.sessionId}
           childId={target.sessionId}
           fullSession
+          queueWhileBusy
           readOnly={readOnly}
           messagePrefix={target.taskId ? `taskid: ${target.taskId}\n` : undefined}
         />

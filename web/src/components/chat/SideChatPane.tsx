@@ -171,6 +171,7 @@ export function SideChatPane({
   onStart,
   readOnly: restoredReadOnly = false,
   fullSession = false,
+  queueWhileBusy = false,
   messagePrefix,
 }: {
   childId: string;
@@ -180,6 +181,7 @@ export function SideChatPane({
   readOnly?: boolean;
   /** Display an existing session with its complete history and scoped composer. */
   fullSession?: boolean;
+  queueWhileBusy?: boolean;
   /** Text put before each ordinary message, such as a task reference; slash commands go as typed. */
   messagePrefix?: string;
 }) {
@@ -517,6 +519,7 @@ export function SideChatPane({
             ) : (
               <SideChatComposer
                 fullSession={fullSession}
+                queueWhileBusy={queueWhileBusy}
                 childId={childId}
                 harness={sessionHarness}
                 session={session}
@@ -548,6 +551,7 @@ export function SideChatPane({
  */
 function SideChatComposer({
   fullSession,
+  queueWhileBusy,
   childId,
   harness,
   session,
@@ -563,6 +567,7 @@ function SideChatComposer({
   messagePrefix,
 }: {
   fullSession: boolean;
+  queueWhileBusy: boolean;
   childId: string;
   harness: string | null | undefined;
   session: Session | null | undefined;
@@ -604,8 +609,9 @@ function SideChatComposer({
     () => allQueuedMessages.filter((message) => message.conversationId === childId),
     [allQueuedMessages, childId],
   );
-  // Grid sessions keep waiting for the turn to end; side chats queue like the main composer.
-  const queues = !pending && !fullSession;
+  // Grid sessions keep waiting for the turn to end; side chats and the GlobalHub
+  // chat panel queue like the main composer.
+  const queues = !pending && (!fullSession || queueWhileBusy);
   useEffect(() => {
     if (queues && queuedMessages.length > 0 && !settingsSaving) maybeFlushQueuedHead(childId);
   }, [queues, queuedMessages, busy, agentId, childId, maybeFlushQueuedHead, settingsSaving]);
@@ -922,7 +928,7 @@ function SideChatComposer({
     clearText: () => setText(""),
   });
   // Like the main composer, a draft turns Interrupt into Send.
-  const showInterrupt = !pending && busy && (fullSession || !canSend);
+  const showInterrupt = !pending && busy && (!queues || !canSend);
 
   const interruptSideChat = () => {
     if (interrupting || !interruptReady) return;
@@ -941,7 +947,7 @@ function SideChatComposer({
       void onStart(serializeReplyDraft({ quotes, text: trimmed }));
       return;
     }
-    if ((busy && fullSession) || !canSend || agentId === null) return;
+    if ((busy && !queues) || !canSend || agentId === null) return;
     // On in-process harnesses /help and skills resolve locally; native TUIs
     // (claude-native, codex-native) read the text themselves, and a quote or
     // attachment is always an ordinary message.
@@ -1021,7 +1027,7 @@ function SideChatComposer({
     }
     if (slashCompletion.handleKey(event, intent)) return;
     // A grid pane is a whole session, so only side chats let Escape stop the turn.
-    if (event.key === "Escape" && queues && busy) {
+    if (event.key === "Escape" && queues && !fullSession && busy) {
       event.preventDefault();
       interruptSideChat();
       return;
