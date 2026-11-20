@@ -18,6 +18,7 @@ import pkgutil
 
 import omnigent.tools.builtins as _builtins_pkg
 from omnigent.tools.base import Tool
+from omnigent.tools.browser_agent_tools import ADVANCED_BROWSER_TOOL_NAMES
 from omnigent.tools.builtins import (
     BUILTIN_NAMES,
     INSTANTIABLE_BUILTINS,
@@ -170,6 +171,7 @@ def test_builtin_names_size_matches_registry() -> None:
                 "ui_stamp_folders",
                 "event_subscriptions",
             }
+            | ADVANCED_BROWSER_TOOL_NAMES
         )
         == BUILTIN_NAMES
     )

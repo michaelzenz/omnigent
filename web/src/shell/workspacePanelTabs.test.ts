@@ -12,6 +12,7 @@ const READY: WorkspacePanelTabContext = {
   pending: false,
   showFilesPanel: true,
   showGithubTab: true,
+  showTasksTab: true,
   showContentSearch: true,
   changedCount: 0,
   agentCount: 0,
@@ -34,6 +35,7 @@ describe("workspacePanelTabPresentation", () => {
       "files",
       "changes",
       "github",
+      "tasks",
       "subagents",
       "comments",
     ]);
@@ -41,12 +43,20 @@ describe("workspacePanelTabPresentation", () => {
 
   it("keeps Files, Changes and Pull Requests drawn but not Content search while pending", () => {
     const pending = { ...READY, pending: true, showFilesPanel: false, showGithubTab: false };
-    expect(shownTabs(pending)).toEqual(["files", "changes", "github", "subagents", "comments"]);
+    expect(shownTabs(pending)).toEqual([
+      "files",
+      "changes",
+      "github",
+      "tasks",
+      "subagents",
+      "comments",
+    ]);
   });
 
   it("hides file-backed tabs without a files panel, and Pull Requests without GitHub", () => {
     expect(shownTabs({ ...READY, showFilesPanel: false })).toEqual([
       "github",
+      "tasks",
       "subagents",
       "comments",
     ]);
@@ -54,6 +64,7 @@ describe("workspacePanelTabPresentation", () => {
       "content-search",
       "files",
       "changes",
+      "tasks",
       "subagents",
       "comments",
     ]);
@@ -61,9 +72,26 @@ describe("workspacePanelTabPresentation", () => {
       "files",
       "changes",
       "github",
+      "tasks",
       "subagents",
       "comments",
     ]);
+  });
+
+  it("draws Tasks only for a session with a Tasks tab", () => {
+    expect(shownTabs({ ...READY, showTasksTab: false })).toEqual([
+      "content-search",
+      "files",
+      "changes",
+      "github",
+      "subagents",
+      "comments",
+    ]);
+    expect(workspacePanelTabPresentation(WORKSPACE_PANEL_TABS.tasks, READY)).toMatchObject({
+      label: "Tasks",
+      ariaLabel: "Tasks",
+      badge: null,
+    });
   });
 
   it("defaults the aria-label to the label and the shortcuts to the tab's digit", () => {

@@ -14,6 +14,7 @@ const WORKSPACE_PANEL_TABS: readonly DefaultWorkspaceTab[] = [
   "files",
   "changes",
   "github",
+  "tasks",
   "subagents",
   "comments",
 ];

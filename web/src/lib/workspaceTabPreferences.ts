@@ -14,6 +14,7 @@ export const defaultWorkspaceTabs = [
   "changes",
   "github",
   "subagents",
+  "tasks",
   "comments",
 ] as const;
 export type DefaultWorkspaceTab = (typeof defaultWorkspaceTabs)[number];

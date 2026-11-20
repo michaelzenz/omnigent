@@ -1,6 +1,6 @@
 /**
  * Labels, icons and trigger presentation for the Workspace rail's fixed panel
- * tabs (Files, Changes, Pull Requests, Agents, Comments, Content search).
+ * tabs (Files, Changes, Pull Requests, Agents, Tasks, Comments, Content search).
  * `WorkspacePanel` draws every trigger from these descriptors with one
  * tab-agnostic renderer.
  */
@@ -10,6 +10,7 @@ import {
   FileDiffIcon,
   FolderTreeIcon,
   GitPullRequestIcon,
+  ListChecksIcon,
   type LucideIcon,
   MessageSquareTextIcon,
   SearchIcon,
@@ -26,6 +27,8 @@ export interface WorkspacePanelTabContext {
   pending: boolean;
   showFilesPanel: boolean;
   showGithubTab: boolean;
+  /** Whether the session has a Tasks tab. */
+  showTasksTab: boolean;
   showContentSearch: boolean;
   changedCount: number;
   agentCount: number;
@@ -85,6 +88,11 @@ export const WORKSPACE_PANEL_TABS: Record<WorkspacePanelTab, WorkspacePanelTabDe
     label: "Pull Requests",
     icon: GitPullRequestIcon,
     shown: ({ pending, showGithubTab }) => pending || showGithubTab,
+  },
+  tasks: {
+    label: "Tasks",
+    icon: ListChecksIcon,
+    shown: ({ showTasksTab }) => showTasksTab,
   },
   subagents: {
     label: "Agents",

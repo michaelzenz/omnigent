@@ -18,11 +18,11 @@ import {
 } from "@/hooks/useHostSshTarget";
 import { useInstalledEditors } from "@/hooks/useInstalledEditors";
 import { useOpenFolders } from "@/hooks/useOpenFolders";
+import { useDesktopHostId } from "@/lib/desktopHostId";
 import { CODE_EDITORS, type CodeEditor, editorLink, launchEditorLink } from "@/lib/editorLinks";
 import type { OpenFolder } from "@/lib/events";
 import { isAndroidShell, isIOSShell } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
-import { useDesktopHostId } from "@/shell/RevealInFileManager";
 
 const EDITOR_LABELS = Object.fromEntries(
   CODE_EDITORS.map(({ id, label }) => [id, label]),

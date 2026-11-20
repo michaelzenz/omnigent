@@ -73,7 +73,7 @@ class MemoryWriteTarget(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class MemoryWriteRequest(BaseModel):
+class MemorySyncWriteRequest(BaseModel):
     """New ``~/AGENTS.md`` text and the hosts to write it to."""
 
     content: str = Field(max_length=MAX_MEMORY_CHARS)
@@ -196,7 +196,7 @@ def create_memory_sync_router(
         )
 
     @router.post("/memory-sync/write", response_model=MemoryWriteResult)
-    async def write_memory(request: Request, body: MemoryWriteRequest) -> MemoryWriteResult:
+    async def write_memory(request: Request, body: MemorySyncWriteRequest) -> MemoryWriteResult:
         """Write new ``~/AGENTS.md`` text to the target hosts.
 
         A host takes the text only while its file still has ``expected_sha256``;

@@ -24,13 +24,24 @@ import type { Conversation } from "@/hooks/useConversations";
 import { BACKGROUND_SESSION_TITLES_STORAGE_KEY } from "@/lib/backgroundSessionTitlesPreferences";
 import { CHAT_TOP_BUTTON_STORAGE_KEY } from "@/lib/chatTopButtonPreferences";
 import { OPEN_SUBAGENTS_IN_PANEL_STORAGE_KEY } from "@/lib/subagentPanelPreferences";
+import { fetchDatabricksStatus } from "@/lib/databricksIntegration";
+import { fetchGithubStatus } from "@/lib/githubIntegration";
 import {
   useProjectFolderCollapse,
   useProjectFolderPageSize,
 } from "@/lib/projectFolderPaginationPreferences";
 import { readSessionWorkspaceState, writeSessionWorkspaceState } from "@/lib/sessionWorkspaceState";
 import * as host from "@/lib/host";
+import * as adminView from "@/lib/adminView";
+import { SERVER_INFO_OFFLINE_FALLBACK } from "@/lib/bootCapabilities";
+import { UPDATE_MODE_ENTRY } from "@/pages/settings/search/catalog/updates";
+import { settingsDescriptionId } from "@/pages/settings/search/settingsControl";
 import { UI_FONT_SIZE_MOBILE_QUERY } from "@/lib/uiFontPreferences";
+import {
+  CODE_BLOCK_WORD_WRAP_STORAGE_KEY,
+  useCodeBlockWordWrap,
+  writeCodeBlockWordWrap,
+} from "@/lib/codeWrapPreferences";
 import {
   readTerminalClipboardPreference,
   writeTerminalClipboardPreference,
@@ -48,17 +59,23 @@ const mocks = vi.hoisted(() => ({
   accountsEnabled: true,
   importSessionsPanel: vi.fn(() => null),
   enabledConnections: [] as string[],
+  archiveWorktreeCleanup: false,
   // login_url: non-null for any sign-in mode (accounts OR OIDC), null in
   // header mode. Gates the Account section.
   loginUrl: "/login" as string | null,
   // single_user: explicit single-user marker; false for accounts/OIDC/
   // multi-user-header. Gates the settings-route single-user redirect.
   singleUser: false,
+  adminViewSupported: true as boolean | undefined,
+  bootFallback: false,
   sessionTitleInstructions: false,
   nestedAgents: false,
+  advisorAvailable: false,
+  authenticatedFetch: vi.fn(),
   // Identity from the mode-agnostic `/v1/me` probe (resolveIdentity returns
   // the id, getCurrentIsAdmin the flag). null → unauthenticated.
   me: { id: "alice", is_admin: false } as { id: string; is_admin: boolean } | null,
+  effectiveAdmin: undefined as boolean | undefined,
   conversations: [] as Conversation[],
   conversationQuery: vi.fn(),
   // Optional multi-page dataset (array of per-page row arrays) for pagination
@@ -80,14 +97,35 @@ vi.mock("next-themes", () => ({
   }),
 }));
 vi.mock("@/lib/CapabilitiesContext", () => ({
-  useServerInfo: () => ({
-    accounts_enabled: mocks.accountsEnabled,
-    login_url: mocks.loginUrl,
-    single_user: mocks.singleUser,
-    sibling_sessions: mocks.nestedAgents,
-    enabled_connections: mocks.enabledConnections,
-    session_title_instructions: mocks.sessionTitleInstructions,
-  }),
+  useServerInfo: () =>
+    mocks.bootFallback
+      ? SERVER_INFO_OFFLINE_FALLBACK
+      : {
+          accounts_enabled: mocks.accountsEnabled,
+          login_url: mocks.loginUrl,
+          single_user: mocks.singleUser,
+          admin_view: mocks.adminViewSupported,
+          sibling_sessions: mocks.nestedAgents,
+          enabled_connections: mocks.enabledConnections,
+          archive_worktree_cleanup: mocks.archiveWorktreeCleanup,
+          session_title_instructions: mocks.sessionTitleInstructions,
+          proactive_agent_available: mocks.advisorAvailable,
+        },
+}));
+vi.mock("@/lib/githubIntegration", () => ({
+  fetchGithubStatus: vi.fn(async () => ({ connected: false, login: null, install_url: null })),
+  beginGithubConnect: vi.fn(),
+  disconnectGithub: vi.fn(),
+}));
+vi.mock("@/lib/databricksIntegration", () => ({
+  fetchDatabricksStatus: vi.fn(async () => ({
+    enabled: true,
+    connected: false,
+    workspace_host: null,
+    databricks_user: null,
+  })),
+  beginDatabricksConnect: vi.fn(),
+  disconnectDatabricks: vi.fn(),
 }));
 vi.mock("@/components/SessionTitleInstructionsControl", () => ({
   SessionTitleInstructionsControl: () => <div data-testid="mock-session-title-instructions" />,
@@ -100,8 +138,10 @@ vi.mock("@/lib/accountsApi", () => ({
   changePassword: vi.fn(),
 }));
 vi.mock("@/lib/identity", () => ({
+  authenticatedFetch: (...args: unknown[]) => mocks.authenticatedFetch(...args),
   resolveIdentity: () => Promise.resolve(mocks.me?.id ?? null),
-  getCurrentIsAdmin: () => mocks.me?.is_admin ?? false,
+  getCurrentIsAdmin: () => mocks.effectiveAdmin ?? mocks.me?.is_admin ?? false,
+  getCurrentAdminEligibility: () => mocks.me?.is_admin ?? false,
   getCurrentUserId: () => mocks.me?.id ?? null,
   subscribeIdentity: () => () => {},
 }));
@@ -187,13 +227,17 @@ vi.mock("@/components/ui/select", async () => {
   }) => {
     const kids = Children.toArray(children);
     const trigger = kids.find((c) => isValidElement(c) && c.type === SelectTrigger);
-    const testId =
+    const triggerProps: Record<string, unknown> =
       isValidElement(trigger) && trigger.props && typeof trigger.props === "object"
-        ? (trigger.props as Record<string, unknown>)["data-testid"]
-        : undefined;
+        ? (trigger.props as Record<string, unknown>)
+        : {};
+    const stringProp = (name: string) =>
+      typeof triggerProps[name] === "string" ? triggerProps[name] : undefined;
     return (
       <select
-        data-testid={typeof testId === "string" ? testId : undefined}
+        data-testid={stringProp("data-testid")}
+        aria-label={stringProp("aria-label")}
+        aria-labelledby={stringProp("aria-labelledby")}
         value={value}
         disabled={disabled}
         onChange={(e) => onValueChange(e.target.value)}
@@ -281,12 +325,18 @@ beforeEach(() => {
   mocks.theme = "system";
   mocks.isEmbedded = false;
   mocks.accountsEnabled = true;
+  mocks.adminViewSupported = true;
+  mocks.bootFallback = false;
   mocks.sessionTitleInstructions = false;
   mocks.nestedAgents = false;
+  mocks.advisorAvailable = false;
+  mocks.authenticatedFetch.mockReset();
   mocks.importSessionsPanel.mockClear();
   mocks.enabledConnections = [];
+  mocks.archiveWorktreeCleanup = false;
   mocks.loginUrl = "/login";
   mocks.me = { id: "alice", is_admin: false };
+  mocks.effectiveAdmin = undefined;
   mocks.conversations = [];
   mocks.pages = undefined;
   mocks.projectNames = [];
@@ -317,6 +367,34 @@ describe("Import sessions", () => {
     expect(screen.getByRole("heading", { name: "Import from a machine" })).toBeTruthy();
     expect(mocks.importSessionsPanel).toHaveBeenCalled();
     expect(screen.queryByRole("heading", { name: "Harness imports" })).toBeNull();
+  });
+});
+
+describe("Omni Advisor", () => {
+  it("shows a settings load failure with a retry instead of dropping the switch", async () => {
+    mocks.advisorAvailable = true;
+    mocks.authenticatedFetch.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          workspace_enabled: true,
+          user_enabled: true,
+          enabled: true,
+          can_manage_workspace: false,
+        }),
+        { status: 200 },
+      ),
+    );
+    renderPage();
+
+    const group = await screen.findByTestId("settings-group-proactive-agent");
+    expect(await within(group).findByRole("alert")).toHaveTextContent(
+      "Couldn’t load Omni Advisor settings.",
+    );
+    expect(within(group).queryByRole("switch")).toBeNull();
+
+    fireEvent.click(within(group).getByRole("button", { name: "Retry" }));
+    expect(await within(group).findByRole("switch", { name: "Omni Advisor" })).toBeChecked();
+    expect(mocks.authenticatedFetch).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -375,6 +453,61 @@ function installUpdateBridge(config: UpdateConfig = DEFAULT_UPDATE_CONFIG) {
 }
 
 describe("SettingsPage", () => {
+  it.each([
+    { supported: false, enabled: true, bootFallback: false },
+    { supported: false, enabled: false, bootFallback: false },
+    { supported: undefined, enabled: true, bootFallback: false },
+    { supported: undefined, enabled: false, bootFallback: true },
+  ])(
+    "hides admin view with support=$supported, preference=$enabled, boot=$bootFallback",
+    ({ supported, enabled, bootFallback }) => {
+      mocks.me = { id: "admin", is_admin: true };
+      mocks.adminViewSupported = supported;
+      mocks.bootFallback = bootFallback;
+      if (!enabled) document.cookie = "omnigent_admin_view=off; Path=/";
+      try {
+        renderPage("/settings/general");
+        expect(screen.queryByRole("switch", { name: "Admin view" })).toBeNull();
+      } finally {
+        document.cookie = "omnigent_admin_view=; Max-Age=0; Path=/";
+      }
+    },
+  );
+
+  it("hides admin view in a workspace while on", () => {
+    mocks.me = { id: "admin", is_admin: true };
+    vi.spyOn(host, "isDatabricksWorkspace").mockReturnValue(true);
+    renderPage("/settings/general");
+    expect(screen.queryByRole("switch", { name: "Admin view" })).toBeNull();
+  });
+
+  it.each([
+    { workspace: false, supported: true, enabled: true },
+    { workspace: false, supported: true, enabled: false },
+    { workspace: true, supported: true, enabled: false },
+    { workspace: false, supported: undefined, enabled: false },
+  ])(
+    "changes admin view from $enabled (workspace=$workspace, support=$supported)",
+    ({ workspace, supported, enabled }) => {
+      mocks.me = { id: "admin", is_admin: true };
+      mocks.effectiveAdmin = enabled;
+      mocks.adminViewSupported = supported;
+      mocks.singleUser = false;
+      vi.spyOn(host, "isDatabricksWorkspace").mockReturnValue(workspace);
+      if (!enabled) document.cookie = "omnigent_admin_view=off; Path=/";
+      const update = vi.spyOn(adminView, "setAdminViewEnabled").mockImplementation(() => {});
+      try {
+        renderPage("/settings/general");
+        const control = screen.getByRole("switch", { name: "Admin view" });
+        expect(control).toHaveAttribute("aria-checked", String(enabled));
+        fireEvent.click(control);
+        expect(update).toHaveBeenCalledWith(!enabled);
+      } finally {
+        document.cookie = "omnigent_admin_view=; Max-Age=0; Path=/";
+      }
+    },
+  );
+
   beforeEach(() => {
     localStorage.removeItem(BACKGROUND_SESSION_TITLES_STORAGE_KEY);
     localStorage.removeItem(OPEN_SUBAGENTS_IN_PANEL_STORAGE_KEY);
@@ -385,6 +518,7 @@ describe("SettingsPage", () => {
     renderPage("/settings/general");
 
     expect(screen.getByText("Configure general Omnigent behavior.")).toHaveClass("max-md:hidden");
+    expect(screen.queryByRole("switch", { name: "Admin view" })).toBeNull();
 
     for (const testId of [
       "settings-group-composer",
@@ -785,8 +919,8 @@ describe("SettingsPage", () => {
 
     const group = screen.getByRole("radiogroup", { name: "Default Workspace tab" });
     const options = within(group).getAllByRole("radio");
-    expect(options).toHaveLength(5);
-    ["Files", "Changes", "Pull Requests", "Agents", "Comments"].forEach((label, index) => {
+    expect(options).toHaveLength(6);
+    ["Files", "Changes", "Pull Requests", "Agents", "Tasks", "Comments"].forEach((label, index) => {
       expect(options[index]).toHaveAccessibleName(label);
     });
     expect(screen.getByTestId("workspace-tab-default-files")).toHaveAttribute(
@@ -802,7 +936,7 @@ describe("SettingsPage", () => {
     );
     expect(
       screen.getByRole("img", {
-        name: "Sidebar preview: Agents, Files, Changes, Pull Requests, Comments pinned.",
+        name: "Sidebar preview: Agents, Files, Changes, Pull Requests, Tasks, Comments pinned.",
       }),
     ).toBeInTheDocument();
     expect(localStorage.getItem("omnigent:default-workspace-tab")).toBe("subagents");
@@ -818,7 +952,7 @@ describe("SettingsPage", () => {
     );
     expect(
       screen.getByRole("img", {
-        name: "Sidebar preview: Changes, Files, Pull Requests, Agents, Comments pinned.",
+        name: "Sidebar preview: Changes, Files, Pull Requests, Agents, Tasks, Comments pinned.",
       }),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Pin Changes" }));
@@ -846,7 +980,7 @@ describe("SettingsPage", () => {
       selectedBrowserId: "one",
     });
     const page = renderPage("/settings/appearance");
-    for (const label of ["Files", "Changes", "Pull Requests", "Agents", "Comments"]) {
+    for (const label of ["Files", "Changes", "Pull Requests", "Tasks", "Agents", "Comments"]) {
       const toggle = screen.getByRole("button", { name: `Pin ${label}` });
       expect(toggle).toHaveAttribute("aria-pressed", "true");
       fireEvent.click(toggle);
@@ -1234,6 +1368,10 @@ describe("SettingsPage", () => {
     });
     fireEvent.click(screen.getByTestId("heavier-code-text-toggle"));
     localStorage.setItem("omnigent:hidden-picker-agents", '["polly"]');
+    // Code block wrap is toggled from a code block, not this page.
+    act(() => writeCodeBlockWordWrap(false));
+    const codeWrap = renderHook(() => useCodeBlockWordWrap());
+    expect(codeWrap.result.current).toBe(false);
 
     // Sanity: the non-default choices were persisted.
     expect(localStorage.getItem("omnigent:terminal-theme")).toBe("dark");
@@ -1272,6 +1410,8 @@ describe("SettingsPage", () => {
     expect(localStorage.getItem("omnigent:ui-font-size")).toBeNull();
     expect(localStorage.getItem("omnigent:code-font-size")).toBeNull();
     expect(localStorage.getItem("omnigent:code-font-weight")).toBeNull();
+    expect(localStorage.getItem(CODE_BLOCK_WORD_WRAP_STORAGE_KEY)).toBeNull();
+    expect(codeWrap.result.current).toBe(true);
 
     // Color theme is back to Omnigent.
     expect((screen.getByTestId("color-theme-select") as HTMLSelectElement).value).toBe("omni");
@@ -1563,6 +1703,23 @@ describe("SettingsPage", () => {
     });
   });
 
+  it("renders each Updates row from its Settings catalog entry", async () => {
+    installUpdateBridge();
+
+    renderPage("/settings/updates");
+    expect(await screen.findByRole("heading", { name: "Updates" })).toBeInTheDocument();
+
+    for (const id of ["update-mode", "install-updates-on-quit", "check-for-updates"]) {
+      expect(document.querySelector(`[data-settings-item="${id}"]`)).not.toBeNull();
+    }
+    expect(document.getElementById(settingsDescriptionId(UPDATE_MODE_ENTRY))).toHaveTextContent(
+      UPDATE_MODE_ENTRY.description,
+    );
+    expect(
+      screen.getByRole("switch", { name: "Install downloaded updates on next quit" }),
+    ).toBeInTheDocument();
+  });
+
   it("surfaces manual update-check failures in Settings", async () => {
     const { bridge, emitStatus } = installUpdateBridge();
     vi.mocked(bridge.check).mockRejectedValueOnce(new Error("Cannot find latest.yml: 404"));
@@ -1681,6 +1838,123 @@ describe("SettingsPage", () => {
     fireEvent.change(input, { target: { value: "" } });
     expect(input.value).toBe("");
     expect(localStorage.getItem("omnigent:default-base-branch")).toBeNull();
+  });
+
+  it("renders the Archived sessions rows from their Settings catalog entries", () => {
+    mocks.conversations = [conv("conv_archived", { archived: true, title: "Old chat" })];
+    renderPage("/settings/archived");
+
+    expect(document.querySelector('[data-settings-item="archived-sessions"]')).not.toBeNull();
+    expect(
+      document.querySelector('[data-settings-control="archived-sessions:select"]'),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("combobox", { name: "Mark archived sessions as expired after" }),
+    ).toBeInTheDocument();
+    const row = screen.getByTestId("archived-row");
+    expect(row.querySelector('[data-settings-row-action="delete"]')).not.toBeNull();
+    expect(row.querySelector('[data-settings-row-action="unarchive"]')).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Select" }));
+    expect(screen.getByRole("button", { name: "Exit selection mode" })).toBeInTheDocument();
+  });
+
+  it("renders the Account rows and the password dialog from their Settings catalog entries", async () => {
+    renderPage("/settings/account");
+    await screen.findByRole("button", { name: "Sign out" });
+    expect(document.querySelector('[data-settings-item="account-sign-out"]')).not.toBeNull();
+    expect(
+      document.querySelector('[data-settings-control="account-password:change"]'),
+    ).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+    expect(screen.getByPlaceholderText("Current password")).toHaveAccessibleName(
+      "Current password",
+    );
+    expect(screen.getByPlaceholderText("New password")).toHaveAccessibleName("New password");
+    expect(screen.getByPlaceholderText("Confirm new password")).toHaveAccessibleName(
+      "Confirm new password",
+    );
+    expect(
+      document.querySelector('[data-settings-control="account-password:currentPassword"]'),
+    ).not.toBeNull();
+    expect(
+      document.querySelector('[data-settings-control="account-password:submit"]'),
+    ).not.toBeNull();
+  });
+
+  it("renders the Git rows from their Settings catalog entries", () => {
+    renderPage("/settings/git");
+    for (const id of ["always-use-worktree", "default-base-branch"]) {
+      expect(document.querySelector(`[data-settings-item="${id}"]`)).not.toBeNull();
+    }
+    expect(
+      document
+        .querySelector('[data-settings-control="default-base-branch:"]')
+        ?.getAttribute("aria-labelledby"),
+    ).toBe("settings-default-base-branch-label");
+    expect(
+      screen.getByRole("switch", { name: "Always use a random worktree" }),
+    ).toHaveAccessibleDescription(
+      "Use a fresh, randomly named worktree for new sessions in Git workspaces. Project settings override this default.",
+    );
+    expect(screen.getByRole("textbox", { name: "Default base branch" })).toBeInTheDocument();
+  });
+
+  it("renders the delete-worktrees row only when the server enables worktree cleanup", () => {
+    renderPage("/settings/git");
+    expect(document.querySelector('[data-settings-item="delete-worktrees-on-archive"]')).toBeNull();
+
+    cleanup();
+    mocks.archiveWorktreeCleanup = true;
+    renderPage("/settings/git");
+    expect(
+      document.querySelector('[data-settings-item="delete-worktrees-on-archive"]'),
+    ).not.toBeNull();
+    expect(
+      document
+        .querySelector('[data-settings-control="delete-worktrees-on-archive:"]')
+        ?.getAttribute("aria-labelledby"),
+    ).toBe("settings-delete-worktrees-on-archive-label");
+  });
+
+  it("renders the Sandbox Integrations rows from their Settings catalog entries", async () => {
+    mocks.enabledConnections = ["github", "databricks"];
+    renderPage("/settings/integrations");
+    expect(await screen.findByTestId("github-connect")).toBeInTheDocument();
+    expect(await screen.findByTestId("databricks-workspace")).toBeInTheDocument();
+    for (const id of ["github-connection", "databricks-connection"]) {
+      expect(document.querySelector(`[data-settings-item="${id}"]`)).not.toBeNull();
+    }
+    expect(
+      document.querySelector('[data-settings-control="databricks-connection:workspace"]'),
+    ).not.toBeNull();
+    expect(screen.getByRole("textbox", { name: "Databricks workspace host" })).toBeInTheDocument();
+  });
+
+  it("keeps the GitHub and Databricks rows on the page while their status is checking", () => {
+    mocks.enabledConnections = ["github", "databricks"];
+    renderPage("/settings/integrations");
+    for (const id of ["github-connection", "databricks-connection"]) {
+      expect(document.querySelector(`[data-settings-item="${id}"]`)).not.toBeNull();
+    }
+  });
+
+  it("keeps the integration rows on the page when their status can't be read", async () => {
+    mocks.enabledConnections = ["github", "databricks"];
+    vi.mocked(fetchGithubStatus).mockRejectedValueOnce(new Error("offline"));
+    vi.mocked(fetchDatabricksStatus).mockRejectedValueOnce(new Error("offline"));
+    renderPage("/settings/integrations");
+    expect(
+      await screen.findByText("GitHub status is unavailable.", { selector: "p" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Databricks status is unavailable.", { selector: "p" }),
+    ).toBeInTheDocument();
+    expect(
+      document.querySelector('[data-settings-item="github-connection"]')?.textContent,
+    ).toContain("GitHub status is unavailable.");
+    expect(
+      document.querySelector('[data-settings-item="databricks-connection"]')?.textContent,
+    ).toContain("Databricks status is unavailable.");
   });
 
   it("lists archived sessions and unarchives on click", () => {

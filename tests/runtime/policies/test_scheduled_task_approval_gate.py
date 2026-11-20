@@ -1,8 +1,8 @@
-"""Scheduled-task mutations are not gated by a mandatory approval policy.
+"""Scheduled-task mutations and reminders are not gated by a mandatory approval policy.
 
 ``build_policy_engine`` still injects ``__ask_on_add_policy``. Create and
-update of scheduled tasks follow the same no-policy fast path as list and
-delete when no other guardrails apply.
+update of scheduled tasks, and reminders, follow the same no-policy fast path
+as list and delete when no other guardrails apply.
 """
 
 from __future__ import annotations
@@ -54,8 +54,13 @@ def _no_guardrails_spec(
             },
             PolicyAction.ALLOW,
         ),
+        (
+            "sys_reminder_set",
+            {"message": "Check CI on PR #12.", "delay_seconds": 2700},
+            PolicyAction.ALLOW,
+        ),
     ],
-    ids=["add_policy_control", "create", "update"],
+    ids=["add_policy_control", "create", "update", "reminder"],
 )
 async def test_scheduled_task_mutation_allows_without_guardrails(
     tmp_path: Path,
@@ -103,6 +108,7 @@ def test_no_policy_fast_path_keeps_add_policy_gate(
         "sys_scheduled_task_update",
         "sys_scheduled_task_list",
         "sys_scheduled_task_delete",
+        "sys_reminder_set",
     ],
 )
 def test_no_policy_fast_path_skips_scheduled_task_tools(
