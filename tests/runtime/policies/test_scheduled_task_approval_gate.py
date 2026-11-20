@@ -1,8 +1,8 @@
 """Scheduled-task mutations require approval even without configured guardrails.
 
 ``build_policy_engine`` injects the mandatory approval guards into every engine
-and ``any_policies_apply`` never fast-paths their tools; reads and deletes stay
-allowed.
+and ``any_policies_apply`` never fast-paths their tools; reads, deletes and
+reminders stay allowed.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ def _no_guardrails_spec(
         (
             "sys_reminder_set",
             {"message": "Check CI on PR #12.", "delay_seconds": 2700},
-            PolicyAction.ASK,
+            PolicyAction.ALLOW,
         ),
     ],
     ids=["add_policy_control", "create", "update", "reminder"],
@@ -91,7 +91,6 @@ async def test_scheduled_task_mutation_asks_without_guardrails(
         "sys_add_policy",
         "sys_scheduled_task_create",
         "sys_scheduled_task_update",
-        "sys_reminder_set",
     ],
 )
 def test_no_policy_fast_path_keeps_mutation_gates(
@@ -111,7 +110,9 @@ def test_no_policy_fast_path_keeps_mutation_gates(
     )
 
 
-@pytest.mark.parametrize("tool_name", ["sys_scheduled_task_list", "sys_scheduled_task_delete"])
+@pytest.mark.parametrize(
+    "tool_name", ["sys_scheduled_task_list", "sys_scheduled_task_delete", "sys_reminder_set"]
+)
 def test_no_policy_fast_path_skips_ungated_scheduled_task_tools(
     tmp_path: Path,
     conversation_store: SqlAlchemyConversationStore,

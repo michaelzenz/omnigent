@@ -603,9 +603,8 @@ class SysReminderSetTool(Tool):
                         "delay_seconds": {
                             "type": "number",
                             "description": (
-                                "When to fire, as seconds from when the call runs (after "
-                                "its approval), e.g. 2700 for 45 minutes. Do not set at "
-                                "with it."
+                                "When to fire, as seconds from when the call runs, e.g. "
+                                "2700 for 45 minutes. Do not set at with it."
                             ),
                         },
                     },
