@@ -234,7 +234,7 @@ async def test_a_priority_filter_keeps_one_prioritys_cards_and_the_counts_cover_
     )
     assert ([card["id"] for card in rest["data"]], rest["has_more"]) == ([fix_docs], False)
     assert [card["id"] for card in found["data"]] == [fix_docs]
-    assert [read["priority_counts"] for read in (first, rest, found)] == [[1, 3, 0, 0]] * 3
+    assert [read["priority_counts"] for read in (first, rest, found)] == [[1, 2, 0, 0]] * 3
     assert [read["priority_update_counts"] for read in (first, rest, found)] == [[0, 1, 0, 0]] * 3
     assert out_of_range.status_code == 422
 

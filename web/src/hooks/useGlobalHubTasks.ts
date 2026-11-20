@@ -105,13 +105,13 @@ export interface AgentTaskBoard {
   prev_cursor?: string | null;
   /** How many live tasks on the whole board have no manager. */
   unmanaged_count: number;
-  /** How many live tasks on the whole board have each priority, P0 first. */
+  /** How many active and idle tasks on the whole board have each priority, P0 first. */
   priority_counts?: number[];
-  /** How many of those tasks have news flagged at each priority, P0 first. */
+  /** How many live tasks, agent-resolved ones included, have news at each priority, P0 first. */
   priority_update_counts?: number[];
 }
 
-/** How many live tasks on the whole board have each priority, P0 first, and how many have news. */
+/** The active and idle tasks at each priority, P0 first, and the live tasks with news. */
 export interface BoardPriorityCounts {
   tasks: readonly number[];
   updates: readonly number[];
@@ -215,9 +215,9 @@ export function useGlobalHubBoard(query = "", priority: number | null = null) {
 }
 
 /**
- * How many live tasks on the whole board have each priority, and how many of
- * them have news, from the board read that the cards use; ``undefined`` until
- * that read loads.
+ * How many active and idle tasks on the whole board have each priority, and how
+ * many live tasks have news, from the board read that the cards use;
+ * ``undefined`` until that read loads.
  */
 export function useBoardPriorityCounts(
   query = "",

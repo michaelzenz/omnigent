@@ -1656,7 +1656,7 @@
         "type": "object"
       },
       "AgentTaskBoard": {
-        "description": "One page of the live tasks on the caller's board, in board order, as cards.\n\nA search returns the matching tasks instead, best match first.\n`has_more` says that more pages follow; `next_cursor` reads the next\none, and is null on the last page. `prev_cursor` reads the page before,\nand is null on the first page. `unmanaged_count` counts the live tasks\non the whole board that have no manager. `priority_counts` counts the\nlive tasks on the whole board at each priority, P0 first, and\n`priority_update_counts` counts the ones among them with `has_update`;\na search and a priority filter do not change them.",
+        "description": "One page of the live tasks on the caller's board, in board order, as cards.\n\nA search returns the matching tasks instead, best match first.\n`has_more` says that more pages follow; `next_cursor` reads the next\none, and is null on the last page. `prev_cursor` reads the page before,\nand is null on the first page. `unmanaged_count` counts the live tasks\non the whole board that have no manager. `priority_counts` counts the\nactive and idle tasks on the whole board at each priority, P0 first, and\n`priority_update_counts` counts the live tasks with `has_update`,\nagent-resolved ones included; a search and a priority filter do not\nchange them.",
         "properties": {
           "data": {
             "items": {
@@ -22962,7 +22962,7 @@
     },
     "/v1/agent-tasks/board": {
       "get": {
-        "description": "Read a page of `limit` live tasks on the caller's board as cards, in board order.\n\n`after` is the `next_cursor` of the page above, and `before` the\n`prev_cursor` of the page below; without either, the page starts at\nthe top of the board. A read past either end of the board returns the\npage at that end. With a query `q`, the pages hold the live tasks\nwhose cards hold any of its words instead, best match first, as\n`board_search` ranks them. With vector search, they also hold the\ntasks near the query in meaning, all in one ranking. `priority`\nkeeps only the tasks of that priority, also in a search. A worker whose\nsession no longer exists is left off its card. The count of tasks\nwithout a manager and the counts at each priority, of all tasks and of\nthe ones with news, cover the whole board.",
+        "description": "Read a page of `limit` live tasks on the caller's board as cards, in board order.\n\n`after` is the `next_cursor` of the page above, and `before` the\n`prev_cursor` of the page below; without either, the page starts at\nthe top of the board. A read past either end of the board returns the\npage at that end. With a query `q`, the pages hold the live tasks\nwhose cards hold any of its words instead, best match first, as\n`board_search` ranks them. With vector search, they also hold the\ntasks near the query in meaning, all in one ranking. `priority`\nkeeps only the tasks of that priority, also in a search. A worker whose\nsession no longer exists is left off its card. The count of tasks\nwithout a manager, the counts of active and idle tasks at each\npriority, and the counts of tasks with news at each priority cover the\nwhole board.",
         "operationId": "read_board_v1_agent_tasks_board_get",
         "parameters": [
           {

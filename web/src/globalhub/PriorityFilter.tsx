@@ -9,9 +9,9 @@ const UNPICKED_CLASSES = "border-border text-muted-foreground hover:bg-muted hov
 
 /**
  * Chips that pick the one priority that the board shows, P0 to P3, in the
- * colors of the cards' priority menus, each with its count of live tasks and a
- * dot while one of those tasks has news. All shows every task, and so does a
- * click on the picked priority.
+ * colors of the cards' priority menus, each with its count of active and idle
+ * tasks and a dot while one of its live tasks has news. All shows every task,
+ * and so does a click on the picked priority.
  */
 export function PriorityFilter({
   value,
@@ -19,7 +19,7 @@ export function PriorityFilter({
   onChange,
 }: {
   value: BoardPriorityFilter;
-  /** How many live tasks have each priority, and how many have news, once the board loads. */
+  /** How many active and idle tasks have each priority, and how many live tasks have news. */
   counts?: BoardPriorityCounts;
   onChange: (value: BoardPriorityFilter) => void;
 }) {

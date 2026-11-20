@@ -58,6 +58,7 @@ MAX_BOARD_QUERY_CHARS = 200
 #: The longest cursor a board read takes.
 MAX_BOARD_CURSOR_CHARS = 80
 _PRIORITIES = range(4)
+_PRIORITY_COUNT_STATES = ("active", "idle")
 
 
 def create_agent_task_board_router(
@@ -116,8 +117,9 @@ def create_agent_task_board_router(
         tasks near the query in meaning, all in one ranking. ``priority``
         keeps only the tasks of that priority, also in a search. A worker whose
         session no longer exists is left off its card. The count of tasks
-        without a manager and the counts at each priority, of all tasks and of
-        the ones with news, cover the whole board.
+        without a manager, the counts of active and idle tasks at each
+        priority, and the counts of tasks with news at each priority cover the
+        whole board.
         """
         user_id = require_user(request, auth_provider)
         if after is not None and before is not None:
@@ -164,7 +166,9 @@ def create_agent_task_board_router(
                 board.tasks.count, owner_user_id=user_id, states=LIVE_TASK_STATES, unmanaged=True
             ),
             asyncio.to_thread(
-                board.tasks.count_by_priority, owner_user_id=user_id, states=LIVE_TASK_STATES
+                board.tasks.count_by_priority,
+                owner_user_id=user_id,
+                states=_PRIORITY_COUNT_STATES,
             ),
             asyncio.to_thread(
                 board.tasks.count_by_priority,
