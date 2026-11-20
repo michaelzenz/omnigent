@@ -107,11 +107,10 @@ name: no-guardrails
         conversation_id=conv.id,
         conversation_store=conversation_store,
     )
-    # No user-declared guardrails, but the hardcoded approval guards
-    # are always present.
+    # No user-declared guardrails, but the hardcoded approval guard
+    # is always present.
     assert [p.spec.name for p in engine.policies] == [
         "__ask_on_add_policy",
-        "__ask_on_scheduled_task_change",
     ]
     assert engine.label_defs == {}
     assert engine.labels == {}
@@ -140,10 +139,9 @@ guardrails: {}
         conversation_id=conv.id,
         conversation_store=conversation_store,
     )
-    # Mandatory approval guards remain even without configured policies.
+    # Mandatory approval guard remains even without configured policies.
     assert [p.spec.name for p in engine.policies] == [
         "__ask_on_add_policy",
-        "__ask_on_scheduled_task_change",
     ]
     assert engine.label_defs == {}
     assert engine.labels == {}
@@ -192,13 +190,12 @@ guardrails:
     # or reverse direction.
     names = [p.spec.name for p in engine.policies]
     # Declared policies in YAML order, plus the mandatory approval
-    # guards appended by the builder.
+    # guard appended by the builder.
     assert names == [
         "alpha",
         "bravo",
         "charlie",
         "__ask_on_add_policy",
-        "__ask_on_scheduled_task_change",
     ]
 
 
@@ -539,9 +536,8 @@ def test_build_from_programmatic_spec(
     )
     assert engine.ask_timeout == 45
     assert engine.policies[0].spec.name == "taint_web"
-    assert [p.spec.name for p in engine.policies[-2:]] == [
+    assert [p.spec.name for p in engine.policies[-1:]] == [
         "__ask_on_add_policy",
-        "__ask_on_scheduled_task_change",
     ]
     assert engine.labels == {"integrity": "1"}
 
@@ -583,7 +579,6 @@ def test_default_policies_appended_after_agent_policies(
         "agent_policy",
         "admin_policy",
         "__ask_on_add_policy",
-        "__ask_on_scheduled_task_change",
     ]
 
 
@@ -609,9 +604,8 @@ def test_default_policies_alone_builds_live_engine(
         default_policies=[admin_policy],
     )
     assert engine.policies[0].spec.name == "admin_audit"
-    assert [p.spec.name for p in engine.policies[-2:]] == [
+    assert [p.spec.name for p in engine.policies[-1:]] == [
         "__ask_on_add_policy",
-        "__ask_on_scheduled_task_change",
     ]
 
 
@@ -636,8 +630,8 @@ def test_empty_default_policies_preserves_existing_behaviour(
         conversation_store=conversation_store,
         default_policies=[],
     )
-    # Only the two hardcoded approval guards.
-    guards = ["__ask_on_add_policy", "__ask_on_scheduled_task_change"]
+    # Only the hardcoded approval guard.
+    guards = ["__ask_on_add_policy"]
     assert [p.spec.name for p in engine_none.policies] == guards
     assert [p.spec.name for p in engine_empty.policies] == guards
 
