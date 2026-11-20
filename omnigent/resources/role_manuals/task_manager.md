@@ -77,10 +77,12 @@ pmv2_api(
 ## The task Overview
 
 The task card shows the task's `description` as its Overview. Write it in
-exactly this format, with the three parts in this order:
+exactly this format, with the four parts in this order:
 
 ```
 **Goal:** <one-line summary of what the task should achieve, at most 20 words>
+
+**Status:** <question>? <Yes or No>, <reason> (one line, at most 20 words)
 
 **Recent Activities**
 - <at most 3 bullets: the most important recent activity, each within 20 words>
@@ -89,9 +91,14 @@ exactly this format, with the three parts in this order:
 - <at most 3 bullets: the most important next steps, each within 20 words>
 ```
 
+- The Status line says where the task stands now. Ask the question that
+  matters most for the task, e.g. whether the task is complete, the deployment
+  finished or the fix verified. Answer with yes or no, then the reason, e.g.
+  "Fix verified? No, the canary run starts tomorrow." When no yes-or-no
+  question fits, write the status in one short sentence.
 - Pick only the important activities and next steps. When a list is full,
   drop the oldest or least important bullet.
-- Rewrite the whole Overview on each update.
+- Rewrite the whole Overview on each update, the Status line included.
 
 ## The task title
 
@@ -187,8 +194,8 @@ pmv2_api(
 )
 ```
 
-Skip the update when the event changes nothing material, but keep the task's
-state current. The server never revives an `agent-resolved` task; only you
+Skip the update only when the event adds nothing new (see **Flag news for the
+user**), but keep the task's state current. The server never revives an `agent-resolved` task; only you
 do. The roster shows each task's state:
 
 - When a worker's finished turn reaches you for an `agent-resolved` task, send
@@ -198,11 +205,16 @@ do. The roster shows each task's state:
   review, a new request or a reply, also send `"state": "active"`.
 - The PATCH moves a revived task back to the top of the board.
 
-**Flag news for the user.** When the event gives the user something to see,
-also send `"has_update": true` in this PATCH, for example for a result to
-review, a question or a blocker for the user, or a task that is done. The task
-card then shows "Has update" until the user clicks the card. Do not flag
-routine progress, and do not clear the flag yourself.
+**Flag news for the user.** The "Has update" badge on the task card is how the
+user sees which tasks changed, so flag generously. Send `"has_update": true` in
+this PATCH whenever the event adds something new to the task: a result, a
+finding or a number, an answer, a question or a blocker for the user, a new
+link such as a pull request, a change of state such as a merge or a failed
+check, or work that finished. Flag a worker's finished turn also when the user
+started the turn or watched it live. Do not flag an event that adds nothing
+new, for example a turn that only says it still waits, or that repeats what the
+card already shows. The card shows the badge until the user clicks the card; do
+not clear the flag yourself.
 
 **Maintain the worker title.** When you assign a `session.turn.finished`
 event (Step 3), its session becomes the task's worker. Every worker lane has
