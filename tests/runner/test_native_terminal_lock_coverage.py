@@ -70,6 +70,15 @@ def test_devin_status_comes_from_its_forwarder_not_the_pty_watcher() -> None:
     assert CLAUDE_NATIVE_TERMINAL_ROLE in _STATUS_EMITTING_TERMINAL_ROLES
 
 
+def test_pi_status_comes_from_its_extension_not_the_pty_watcher() -> None:
+    from omnigent.runner.resource_registry import (
+        _STATUS_EMITTING_TERMINAL_ROLES,
+        PI_NATIVE_TERMINAL_ROLE,
+    )
+
+    assert PI_NATIVE_TERMINAL_ROLE not in _STATUS_EMITTING_TERMINAL_ROLES
+
+
 def test_devin_is_wired_into_interrupt_and_stop() -> None:
     # devin's Stop/interrupt route through the uniform bridge-inject maps; absent
     # entries make the web Stop button a silent no-op (`_UNIFORM_*.get` -> None).

@@ -87,14 +87,13 @@ DEVIN_NATIVE_TERMINAL_ROLE = "devin-native"
 #: and returns immediately, leaving pane activity as their only running/idle
 #: source — without membership here the web "Working…" badge never clears and the
 #: turn times out. A generic shell's role is absent so its output can't move the
-#: session status. A harness whose own forwarder posts authoritative running/idle
-#: edges (devin-native, from its hook stream) is excluded instead, because pane
-#: quiescence would clobber them; ``tests/runner/test_native_terminal_lock_coverage.py``
-#: guards both sides.
+#: session status. A harness that posts its own authoritative running/idle edges
+#: (devin-native from its hook stream, pi-native from its extension) is excluded
+#: instead, because pane quiescence would clobber them;
+#: ``tests/runner/test_native_terminal_lock_coverage.py`` guards both sides.
 _STATUS_EMITTING_TERMINAL_ROLES: frozenset[str] = frozenset(
     {
         CLAUDE_NATIVE_TERMINAL_ROLE,
-        PI_NATIVE_TERMINAL_ROLE,
         CURSOR_NATIVE_TERMINAL_ROLE,
         KIRO_NATIVE_TERMINAL_ROLE,
         GOOSE_NATIVE_TERMINAL_ROLE,
@@ -1837,9 +1836,9 @@ class SessionResourceRegistry:
         aligned with the underlying tmux process. No-op when no publisher
         is installed (e.g. embedded/test runners).
 
-        For the claude-native *agent* terminal (``resource_role`` ==
-        :data:`CLAUDE_NATIVE_TERMINAL_ROLE` or
-        :data:`PI_NATIVE_TERMINAL_ROLE`) the same watcher also drives the
+        For a native *agent* terminal whose role is in
+        :data:`_STATUS_EMITTING_TERMINAL_ROLES`, e.g.
+        :data:`CLAUDE_NATIVE_TERMINAL_ROLE`, the same watcher also drives the
         session's working status: pane activity → ``running`` and a short
         quiescence → ``idle``, emitted via the session-status publisher.
         This PTY-derived status catches cases lifecycle hooks can miss
