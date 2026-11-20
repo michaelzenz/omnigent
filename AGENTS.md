@@ -120,7 +120,8 @@ Deploy the omnigent-pmv2 app only with `~/.omnigent-pmv2/deploy/redeploy-app.sh`
 The script ships the app's server config and sets `OMNIGENT_CONFIG` to it. The
 config's `globalhub.search.embedding_endpoint` turns on the vector search of the
 Global Hub board. Keep vector search on in every deploy: without the config, the
-board search matches keywords only.
+board search matches keywords only. The script also turns on the
+`one_time_automations` server feature, which `sys_reminder_set` needs.
 
 ### No proactive browser-based verification
 
