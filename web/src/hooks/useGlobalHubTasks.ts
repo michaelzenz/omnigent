@@ -228,6 +228,23 @@ export function useBoardPriorityCounts(
   return { tasks: page.priority_counts, updates: page.priority_update_counts ?? [] };
 }
 
+/**
+ * Whether any live task on the user's board has news (the "Has update" badge),
+ * for the dot on the Global Hub link. A one-card read carries the counts of the
+ * whole board.
+ */
+export function useBoardHasUpdates(): boolean {
+  const { data } = useQuery({
+    queryKey: [...GLOBALHUB_TASKS_QUERY_KEY, "board-updates"],
+    queryFn: async () =>
+      (await readJson<AgentTaskBoard>(await authenticatedFetch("/v1/agent-tasks/board?limit=1")))
+        .priority_update_counts ?? [],
+    refetchInterval: BOARD_REFRESH_MS,
+    retry: false,
+  });
+  return (data ?? []).some((count) => count > 0);
+}
+
 /** The user's managers, for the names on the task cards. */
 export function useAgentManagers() {
   return useQuery({

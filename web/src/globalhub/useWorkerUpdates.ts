@@ -9,7 +9,6 @@ import { useOptionalLoadedConversations } from "@/hooks/useSidebarData";
 import {
   isConversationUnseen,
   isExplicitlyUnread,
-  isReadStateHydrated,
   type ReadStateSeed,
   useMarkConversationSeen,
   useSeedReadState,
@@ -82,22 +81,4 @@ export function useWorkersWithUpdates(workers: AgentTaskWorker[]): ReadonlySet<s
   return new Set(
     workers.filter((worker) => hasUnseenTurn(worker, openSessionId)).map((worker) => worker.id),
   );
-}
-
-/**
- * Whether a worker on any of the user's live tasks has a finished turn that the
- * user has not seen, for the dot on the Global Hub link. A read of the session
- * anywhere clears it. The sessions give read state only after the first seed,
- * so that a reload keeps an unread mark that the session list has not sent yet.
- */
-export function useHasWorkerUpdates(openSessionId: string | undefined): boolean {
-  useUnseenTick();
-  const sessions = useBoardWorkerSessions().data;
-  const hydrated = isReadStateHydrated();
-  const seeds = useMemo(
-    () => (hydrated && sessions ? readStateSeeds(sessions) : undefined),
-    [hydrated, sessions],
-  );
-  useSeedReadState(seeds);
-  return (sessions ?? []).some((entry) => hasUnseenTurn(entry, openSessionId));
 }
