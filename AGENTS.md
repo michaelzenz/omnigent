@@ -114,6 +114,14 @@ start its server and host with `OMNIGENT_DATA_DIR="$HOME/.omnigent-pmv2"`
 (`config.yaml`), and use `sqlite:///$HOME/.omnigent-pmv2/chat.db` as the database
 URI.
 
+### omnigent-mz app deploy
+
+Deploy the omnigent-pmv2 app only with `~/.omnigent-pmv2/deploy/redeploy-app.sh`.
+The script ships the app's server config and sets `OMNIGENT_CONFIG` to it. The
+config's `globalhub.search.embedding_endpoint` turns on the vector search of the
+Global Hub board. Keep vector search on in every deploy: without the config, the
+board search matches keywords only.
+
 ### No proactive browser-based verification
 
 - Do not run browser-based verification: no manual browser interaction,
