@@ -2284,7 +2284,7 @@
         "type": "object"
       },
       "AgentTaskEventResponse": {
-        "description": "A signal on the caller's GlobalHub board.\n\nAn event about a source that sessions follow is `routed` to each of them;\n`target_session_id` is the session it went to. The broker routes an\n`unrouted` event to a manager's session. A manager handles a `routed`\nevent and dismisses it, or files it into an FYI cluster; another session\ngets its event once. `task_id` is the task a manager assigned it to.",
+        "description": "A signal on the caller's GlobalHub board.\n\nAn event about a source that sessions follow is `routed` to each of them;\n`target_session_id` is the session it went to. The broker routes an\n`unrouted` event to a manager's session, or to a task's manager. A manager\nhandles a `routed` event and dismisses it, or files it into an FYI\ncluster; another session gets its event once. `task_id` is the task that\nthe broker routed it to, or that a manager assigned it to.",
         "properties": {
           "created_at": {
             "format": "int64",
@@ -11451,6 +11451,31 @@
           "manager_id"
         ],
         "title": "RouteAgentTaskEventsRequest",
+        "type": "object"
+      },
+      "RouteAgentTaskEventsToTaskRequest": {
+        "additionalProperties": false,
+        "description": "Route events that wait for the broker to one of the caller's tasks.\n\nThe events go to the session of the task's manager, and each event records\nthe task. The manager does not follow their sources.",
+        "properties": {
+          "event_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Event Ids",
+            "type": "array"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_ids",
+          "task_id"
+        ],
+        "title": "RouteAgentTaskEventsToTaskRequest",
         "type": "object"
       },
       "RoutingDecisionData": {
@@ -37497,6 +37522,48 @@
           }
         },
         "summary": "Route Events To Manager",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/task-events/batch-route-task": {
+      "post": {
+        "description": "Route events that wait for the broker to the manager of one of the caller's tasks.\n\nEach event records the task, and the manager's notice names it. Either\nevery event is routed or none is. Events already routed to that task\nare left as they are, so a retry is safe. An archived task, or a task\nwithout a manager, takes no events. The manager does not follow the\nevents' sources.",
+        "operationId": "route_events_to_task_v1_task_events_batch_route_task_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RouteAgentTaskEventsToTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskEventList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Route Events To Task",
         "tags": [
           "agent-tasks"
         ]

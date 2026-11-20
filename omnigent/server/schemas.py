@@ -7125,9 +7125,10 @@ class AgentTaskEventResponse(BaseModel):
 
     An event about a source that sessions follow is ``routed`` to each of them;
     ``target_session_id`` is the session it went to. The broker routes an
-    ``unrouted`` event to a manager's session. A manager handles a ``routed``
-    event and dismisses it, or files it into an FYI cluster; another session
-    gets its event once. ``task_id`` is the task a manager assigned it to.
+    ``unrouted`` event to a manager's session, or to a task's manager. A manager
+    handles a ``routed`` event and dismisses it, or files it into an FYI
+    cluster; another session gets its event once. ``task_id`` is the task that
+    the broker routed it to, or that a manager assigned it to.
     """
 
     object: Literal["agent.task.event"] = "agent.task.event"
@@ -7189,6 +7190,19 @@ class RouteAgentTaskEventsRequest(BaseModel):
 
     event_ids: list[str] = Field(..., min_length=1, max_length=100)
     manager_id: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RouteAgentTaskEventsToTaskRequest(BaseModel):
+    """Route events that wait for the broker to one of the caller's tasks.
+
+    The events go to the session of the task's manager, and each event records
+    the task. The manager does not follow their sources.
+    """
+
+    event_ids: list[str] = Field(..., min_length=1, max_length=100)
+    task_id: str
 
     model_config = ConfigDict(extra="forbid")
 

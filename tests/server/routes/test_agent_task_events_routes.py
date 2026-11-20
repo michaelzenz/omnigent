@@ -217,6 +217,53 @@ async def test_the_broker_routes_waiting_events_to_a_managers_session_without_fo
     assert SqlAlchemyAgentQueueStore(db_uri).list(owner_user_id=ALICE_ID) == []
 
 
+async def test_the_broker_routes_waiting_events_to_a_tasks_manager_and_records_the_task(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    manager_session = _session(db_uri)
+    manager_id = _manager(db_uri, session_id=manager_session)
+    task_id = _task(db_uri, manager_id=manager_id)
+    other_task_id = _task(db_uri, manager_id=manager_id)
+    unmanaged_task_id = _task(db_uri)
+    archived_task_id = _task(db_uri, manager_id=manager_id)
+    SqlAlchemyTaskStore(db_uri).update(archived_task_id, owner_user_id=ALICE_ID, state="archived")
+    review = await _create(auth_client, "Review comment", source=PULL_REQUEST, source_key=PR)
+    waiting = review["id"]
+    to_manager = (await _create(auth_client, "Channel chatter"))["id"]
+    await auth_client.post(
+        f"{ROUTE}/batch-route-manager",
+        json={"event_ids": [to_manager], "manager_id": manager_id},
+        headers=ALICE,
+    )
+
+    async def route(
+        event_ids: list[str], task: str, headers: dict[str, str] = ALICE
+    ) -> httpx.Response:
+        return await auth_client.post(
+            f"{ROUTE}/batch-route-task",
+            json={"event_ids": event_ids, "task_id": task},
+            headers=headers,
+        )
+
+    refused = [
+        (await route([waiting], uuid.uuid4().hex)).status_code,
+        (await route([waiting], task_id, headers=BOB)).status_code,
+        (await route([waiting], unmanaged_task_id)).status_code,
+        (await route([waiting], archived_task_id)).status_code,
+        (await route([waiting, to_manager], task_id)).status_code,
+    ]
+    routed = await route([waiting], task_id)
+    retried = await route([waiting], task_id)
+    elsewhere = await route([waiting], other_task_id)
+
+    assert refused == [404, 404, 409, 409, 409]
+    assert [
+        (event["id"], event["state"], event["target_session_id"], event["task_id"])
+        for event in routed.json()["data"]
+    ] == [(waiting, "routed", manager_session, task_id)]
+    assert (retried.status_code, elsewhere.status_code) == (200, 409)
+
+
 async def test_dismiss_settles_only_the_callers_events_and_repeats_safely(
     auth_client: httpx.AsyncClient,
 ) -> None:

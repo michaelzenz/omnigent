@@ -9,7 +9,7 @@ from typing import cast
 from fastapi import APIRouter, Request
 
 from omnigent.agent_tasks.board_stores import BoardStores
-from omnigent.entities import SESSION_EVENT_SOURCE, EventTag, TaskEvent
+from omnigent.entities import LIVE_TASK_STATES, SESSION_EVENT_SOURCE, EventTag, TaskEvent
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
@@ -23,6 +23,7 @@ from omnigent.server.schemas import (
     AssignAgentTaskEventRequest,
     CreateAgentTaskEventRequest,
     RouteAgentTaskEventsRequest,
+    RouteAgentTaskEventsToTaskRequest,
 )
 from omnigent.stores import ConversationStore
 from omnigent.stores.subscription_store import (
@@ -135,6 +136,47 @@ def create_agent_task_events_router(
 
         return task_event_response(await asyncio.to_thread(create))
 
+    def route_to_manager(
+        event_ids: list[str],
+        *,
+        owner_user_id: str | None,
+        manager_id: str,
+        task_id: str | None = None,
+    ) -> list[TaskEvent]:
+        manager = managers.get(manager_id, owner_user_id=owner_user_id)
+        if manager is None:
+            raise OmnigentError("manager not found", code=ErrorCode.NOT_FOUND)
+        session_id = manager.conversation_id
+        if session_id is None:
+            raise OmnigentError("the manager has no session yet", code=ErrorCode.CONFLICT)
+        if conversation_store is not None:
+            session = conversation_store.get_conversation(session_id)
+            if session is None or session.archived:
+                raise OmnigentError(
+                    "the manager's session is gone; route to another manager",
+                    code=ErrorCode.CONFLICT,
+                )
+        for event_id in event_ids:
+            event = events.get(event_id, owner_user_id=owner_user_id)
+            if event is None:
+                raise OmnigentError(f"task event {event_id} not found", code=ErrorCode.NOT_FOUND)
+            routed_here = (
+                event.state == "routed"
+                and event.target_session_id == session_id
+                and event.task_id == task_id
+            )
+            if event.state != "unrouted" and not routed_here:
+                raise OmnigentError(
+                    f"task event {event_id} is {event.state}, not waiting for the broker",
+                    code=ErrorCode.CONFLICT,
+                )
+        routed = events.route_to_session(
+            event_ids, owner_user_id=owner_user_id, session_id=session_id, task_id=task_id
+        )
+        if routed is None:
+            raise OmnigentError("task events changed while routing", code=ErrorCode.CONFLICT)
+        return routed
+
     @router.post("/task-events/batch-route-manager", response_model=AgentTaskEventList)
     async def route_events_to_manager(
         request: Request, body: RouteAgentTaskEventsRequest
@@ -148,39 +190,43 @@ def create_agent_task_events_router(
         session follows comes to the broker again.
         """
         user_id = require_user(request, auth_provider)
+        routed = await asyncio.to_thread(
+            route_to_manager, body.event_ids, owner_user_id=user_id, manager_id=body.manager_id
+        )
+        return AgentTaskEventList(data=[task_event_response(event) for event in routed])
+
+    @router.post("/task-events/batch-route-task", response_model=AgentTaskEventList)
+    async def route_events_to_task(
+        request: Request, body: RouteAgentTaskEventsToTaskRequest
+    ) -> AgentTaskEventList:
+        """Route events that wait for the broker to the manager of one of the caller's tasks.
+
+        Each event records the task, and the manager's notice names it. Either
+        every event is routed or none is. Events already routed to that task
+        are left as they are, so a retry is safe. An archived task, or a task
+        without a manager, takes no events. The manager does not follow the
+        events' sources.
+        """
+        user_id = require_user(request, auth_provider)
 
         def route() -> list[TaskEvent]:
-            manager = managers.get(body.manager_id, owner_user_id=user_id)
-            if manager is None:
-                raise OmnigentError("manager not found", code=ErrorCode.NOT_FOUND)
-            session_id = manager.conversation_id
-            if session_id is None:
-                raise OmnigentError("the manager has no session yet", code=ErrorCode.CONFLICT)
-            if conversation_store is not None:
-                session = conversation_store.get_conversation(session_id)
-                if session is None or session.archived:
-                    raise OmnigentError(
-                        "the manager's session is gone; route to another manager",
-                        code=ErrorCode.CONFLICT,
-                    )
-            for event_id in body.event_ids:
-                event = events.get(event_id, owner_user_id=user_id)
-                if event is None:
-                    raise OmnigentError(
-                        f"task event {event_id} not found", code=ErrorCode.NOT_FOUND
-                    )
-                routed_here = event.state == "routed" and event.target_session_id == session_id
-                if event.state != "unrouted" and not routed_here:
-                    raise OmnigentError(
-                        f"task event {event_id} is {event.state}, not waiting for the broker",
-                        code=ErrorCode.CONFLICT,
-                    )
-            routed = events.route_to_session(
-                body.event_ids, owner_user_id=user_id, session_id=session_id
+            task = board.tasks.get(body.task_id, owner_user_id=user_id)
+            if task is None:
+                raise OmnigentError("task not found", code=ErrorCode.NOT_FOUND)
+            if task.state not in LIVE_TASK_STATES:
+                raise OmnigentError(
+                    "the task is archived; route to a manager", code=ErrorCode.CONFLICT
+                )
+            if task.manager_id is None:
+                raise OmnigentError(
+                    "the task has no manager; route to a manager", code=ErrorCode.CONFLICT
+                )
+            return route_to_manager(
+                body.event_ids,
+                owner_user_id=user_id,
+                manager_id=task.manager_id,
+                task_id=task.id,
             )
-            if routed is None:
-                raise OmnigentError("task events changed while routing", code=ErrorCode.CONFLICT)
-            return routed
 
         routed = await asyncio.to_thread(route)
         return AgentTaskEventList(data=[task_event_response(event) for event in routed])

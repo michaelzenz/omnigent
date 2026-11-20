@@ -57,7 +57,7 @@ BOB = "bob@example.com"
 PLACEMENT = GlobalHubPlacement(
     host_id="0f1e2d3c4b5a69788796a5b4c3d2e1f0", workspace="/Users/alice/globalhub"
 )
-ROUTE_PROMPT = "[System: route these events to managers]\n"
+ROUTE_PROMPT = "[System: route these events to tasks or managers]\n"
 PULL_REQUEST = "github.pull_request"
 TICKET = "jira.issue"
 PR = "https://github.com/example-org/repo/pull/12"
@@ -422,6 +422,60 @@ async def test_a_manager_notice_lists_its_events_by_id_with_their_source_and_rep
         ]
     )
     assert _state(board, stale_turn) == "dismissed"
+
+
+async def test_a_manager_notice_names_the_task_that_the_broker_found_for_an_event(
+    board: BoardStores, sessions: RoleSessionStores
+) -> None:
+    manager_id, manager_session = _manager(board, sessions)
+    task = board.tasks.create(
+        next(_ids), owner_user_id=ALICE, title="Fix S3 retries", manager_id=manager_id
+    )
+    live_session = sessions.conversation_store.create_conversation(title="Fix S3").id
+    matched = _event(
+        board,
+        target_session_id=manager_session,
+        title="Review comment",
+        source=PULL_REQUEST,
+        source_key=PR,
+        task_id=task.id,
+    )
+    turn = _event(
+        board,
+        event_type="session.turn.finished",
+        target_session_id=manager_session,
+        source=SESSION_EVENT_SOURCE,
+        source_key=live_session,
+        source_session_id=live_session,
+        payload={"session_title": "Fix S3", "session_id": live_session},
+        task_id=task.id,
+    )
+    loose = _event(board, target_session_id=manager_session, title="Loose comment")
+    item = board.queue.enqueue(
+        uuid.uuid4().hex,
+        owner_user_id=ALICE,
+        target_session_id=manager_session,
+        kind="events",
+        event_ids=[matched, turn, loose],
+    )
+    assert item is not None
+
+    notice = EventNoticeWriter(board=board, conversations=sessions.conversation_store).write(item)
+
+    match_line = f"  Broker match: task {task.id} — Fix S3 retries (active)"
+    assert notice == "\n".join(
+        [
+            "[System: 3 event(s) for you — triage or act]",
+            f"- [event:{matched}] github.pr.comment {PULL_REQUEST} {PR}: 'Review comment'",
+            match_line,
+            f"- [event:{loose}] github.pr.comment: 'Loose comment'",
+            f"- [event:{turn}] session.turn.finished: Session 'Fix S3' finished a turn",
+            f"  Session ID: {live_session}",
+            "  Read the recent session transcript to see what was done. "
+            "Update the task overview, stamp all assets, then assign the event to its task.",
+            match_line,
+        ]
+    )
 
 
 async def test_another_session_gets_one_event_notice_for_the_sources_it_follows(

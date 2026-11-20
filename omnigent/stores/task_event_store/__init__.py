@@ -130,18 +130,25 @@ class TaskEventStore(ABC):
 
     @abstractmethod
     def route_to_session(
-        self, event_ids: Collection[str], *, owner_user_id: str | None, session_id: str
+        self,
+        event_ids: Collection[str],
+        *,
+        owner_user_id: str | None,
+        session_id: str,
+        task_id: str | None = None,
     ) -> builtins.list[TaskEvent] | None:
         """
         Route the owner's events to one session, e.g. a manager's, all or none.
 
-        Events already routed to that session stay as they are. A newly
-        routed event leaves its queue item, so the session's item can carry
-        it, and its delivery count starts again.
+        Events already routed to that session for the same task stay as they
+        are. A newly routed event leaves its queue item, so the session's item
+        can carry it, and its delivery count starts again.
 
+        :param task_id: The task that the broker found for the events, which
+            each newly routed event records, or ``None`` for no task.
         :returns: The events in request order, or ``None``, changing nothing,
             when one is missing, someone else's, or neither unrouted nor
-            routed to this session.
+            routed to this session for the same task.
         """
 
     @abstractmethod

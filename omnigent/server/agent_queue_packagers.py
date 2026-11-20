@@ -62,7 +62,7 @@ MAX_DELIVERIES = 3
 SESSION_DELETED_EVENT_TYPE = "session.deleted"
 SESSION_START_FAILED_EVENT_TYPE = "session.start.failed"
 SESSION_TURN_FINISHED_EVENT_TYPE = "session.turn.finished"
-_BROKER_PROMPT = "[System: route these events to managers]\n"
+_BROKER_PROMPT = "[System: route these events to tasks or managers]\n"
 _TURN_FINISHED_ADVICE = (
     "Read the recent session transcript to see what was done. "
     "Update the task overview, stamp all assets, then assign the event to its task."
@@ -429,8 +429,16 @@ class EventNoticeWriter:
             return None
         if role is not None and role.key == MANAGER_ROLE_KEY:
             # The roster rides each turn as turn context (see role_turn_context).
-            return _manager_events_text(waiting)
+            return _manager_events_text(waiting, self._matched_tasks(item.owner_user_id, waiting))
         return _subscriber_events_text(waiting)
+
+    def _matched_tasks(self, owner: str | None, events: Sequence[TaskEvent]) -> dict[str, Task]:
+        matched: dict[str, Task] = {}
+        for task_id in dict.fromkeys(event.task_id for event in events if event.task_id):
+            task = self._board.tasks.get(task_id, owner_user_id=owner)
+            if task is not None:
+                matched[task_id] = task
+        return matched
 
     def _broker_notice(self, item: AgentQueueItem) -> str | None:
         waiting = self._waiting_events(item, "unrouted")
@@ -740,8 +748,8 @@ def _broker_entry(event: TaskEvent) -> dict[str, Any]:
     }
 
 
-def _manager_events_text(events: Sequence[TaskEvent]) -> str:
-    """Write v2's manager notice lines, each with its event id."""
+def _manager_events_text(events: Sequence[TaskEvent], matched: Mapping[str, Task]) -> str:
+    """Write v2's manager notice lines, each with its event id and the broker's task match."""
     lines = [f"[System: {len(events)} event(s) for you — triage or act]"]
     by_session: dict[str, list[TaskEvent]] = {}
     for event in events:
@@ -749,8 +757,18 @@ def _manager_events_text(events: Sequence[TaskEvent]) -> str:
             by_session.setdefault(event.source_session_id, []).append(event)
         else:
             lines.append(f"- [event:{event.id}] {_event_text(event)}")
-    lines.extend(_session_entry(session_events) for session_events in by_session.values())
+            lines.extend(_broker_match_lines([event], matched))
+    for session_events in by_session.values():
+        lines.append(_session_entry(session_events))
+        lines.extend(_broker_match_lines(session_events, matched))
     return "\n".join(lines)
+
+
+def _broker_match_lines(events: Sequence[TaskEvent], matched: Mapping[str, Task]) -> list[str]:
+    for event in events:
+        if event.task_id is not None and event.task_id in matched:
+            return [f"  Broker match: task {_task_line(matched[event.task_id])}"]
+    return []
 
 
 def _subscriber_events_text(events: Sequence[TaskEvent]) -> str:

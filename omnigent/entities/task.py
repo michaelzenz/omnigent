@@ -178,7 +178,8 @@ class TaskEvent:
         source, key and event type it identifies a repeated report.
     :param source_session_id: The session the event came from.
     :param tags: Routing hints.
-    :param task_id: The task a manager assigned the event to.
+    :param task_id: The task the broker routed the event to, or the task a
+        manager assigned the event to.
     :param target_session_id: The session the event was routed to.
     :param fyi_cluster_id: The FYI cluster the event was filed into.
     :param queue_item_id: The queue item that carries the event to its role

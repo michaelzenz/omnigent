@@ -296,13 +296,19 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
 
     def route_to_session(
-        self, event_ids: Collection[str], *, owner_user_id: str | None, session_id: str
+        self,
+        event_ids: Collection[str],
+        *,
+        owner_user_id: str | None,
+        session_id: str,
+        task_id: str | None = None,
     ) -> builtins.list[TaskEvent] | None:
         """Route the owner's events to one session, e.g. a manager's, all or none."""
         wanted = list(
             dict.fromkeys(normalize_uuid(event_id) or event_id for event_id in event_ids)
         )
         target = normalize_uuid(session_id) or session_id
+        task = normalize_uuid(task_id) or task_id
         now = now_epoch()
 
         def write(session: Session) -> builtins.list[TaskEvent] | None:
@@ -312,13 +318,18 @@ class SqlAlchemyTaskEventStore(TaskEventStore):
             if len(rows) != len(wanted):
                 return None
             for row in rows.values():
-                routed_here = row.state == _ROUTED and row.target_session_id == target
+                routed_here = (
+                    row.state == _ROUTED
+                    and row.target_session_id == target
+                    and row.task_id == task
+                )
                 if row.state != _UNROUTED and not routed_here:
                     return None
             for row in rows.values():
                 if row.state == _UNROUTED:
                     row.state = _ROUTED
                     row.target_session_id = target
+                    row.task_id = task
                     # The session's own queue item carries it from here.
                     row.queue_item_id = None
                     row.delivery_count = 0
