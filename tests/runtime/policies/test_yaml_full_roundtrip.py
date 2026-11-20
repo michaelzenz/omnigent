@@ -343,13 +343,14 @@ guardrails:
           prompt: "check"
 """,
     )
-    # All three policies build before the mandatory approval guard.
+    # All three policies build before the mandatory approval guards.
     names = [p.spec.name for p in engine.policies]
     assert names == [
         "label_taint",
         "function_rate",
         "prompt_check",
         "__ask_on_add_policy",
+        "__ask_on_scheduled_task_change",
     ]
 
     from omnigent.spec.types import FunctionPolicySpec

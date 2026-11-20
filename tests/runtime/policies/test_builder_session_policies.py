@@ -379,8 +379,9 @@ def test_build_engine_includes_session_policies(db_uri: str) -> None:
 
     assert isinstance(engine.policies[0], FunctionPolicy)
     assert engine.policies[0].spec.name == "test_policy"
-    assert [p.spec.name for p in engine.policies[-1:]] == [
+    assert [p.spec.name for p in engine.policies[-2:]] == [
         "__ask_on_add_policy",
+        "__ask_on_scheduled_task_change",
     ]
 
 
@@ -398,9 +399,10 @@ def test_build_engine_no_store_returns_noop(db_uri: str) -> None:
         policy_store=None,
     )
 
-    # No user-declared policies, but the mandatory approval guard is always present.
+    # No user-declared policies, but the mandatory approval guards are always present.
     assert [p.spec.name for p in engine.policies] == [
         "__ask_on_add_policy",
+        "__ask_on_scheduled_task_change",
     ]
 
 
@@ -459,6 +461,7 @@ def test_build_engine_ordering_session_agent_admin(db_uri: str) -> None:
         "agent_policy",
         "admin_policy",
         "__ask_on_add_policy",
+        "__ask_on_scheduled_task_change",
     ]
 
 
@@ -501,6 +504,7 @@ def test_subagent_inherits_root_session_policies(db_uri: str) -> None:
 
     names = [p.spec.name for p in engine.policies]
     assert "root_guard" in names, f"root session policy not inherited by sub-agent; got {names}"
+    assert names.count("__ask_on_scheduled_task_change") == 1
     # Root policy should come before the ask_on_add_policy sentinel.
     assert names.index("root_guard") < names.index("__ask_on_add_policy")
 
@@ -956,6 +960,7 @@ def test_build_engine_ordering_session_agent_db_default_admin(db_uri: str) -> No
         "db_default_policy",
         "yaml_admin_policy",
         "__ask_on_add_policy",
+        "__ask_on_scheduled_task_change",
     ]
 
 

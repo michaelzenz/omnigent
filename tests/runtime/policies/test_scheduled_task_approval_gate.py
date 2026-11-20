@@ -1,8 +1,8 @@
-"""Scheduled-task mutations and reminders are not gated by a mandatory approval policy.
+"""Scheduled-task mutations require approval even without configured guardrails.
 
-``build_policy_engine`` still injects ``__ask_on_add_policy``. Create and
-update of scheduled tasks, and reminders, follow the same no-policy fast path
-as list and delete when no other guardrails apply.
+``build_policy_engine`` injects the mandatory approval guards into every engine
+and ``any_policies_apply`` never fast-paths their tools; reads and deletes stay
+allowed.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def _no_guardrails_spec(
     ("tool_name", "arguments", "expected"),
     [
         ("sys_add_policy", {"name": "shell_gate", "handler": "x.y"}, PolicyAction.ASK),
-        ("sys_scheduled_task_create", _CREATE_ARGS, PolicyAction.ALLOW),
+        ("sys_scheduled_task_create", _CREATE_ARGS, PolicyAction.ASK),
         (
             "sys_scheduled_task_update",
             {
@@ -52,17 +52,17 @@ def _no_guardrails_spec(
                 "prompt": "Triage new issues.",
                 "permission_mode": "bypassPermissions",
             },
-            PolicyAction.ALLOW,
+            PolicyAction.ASK,
         ),
         (
             "sys_reminder_set",
             {"message": "Check CI on PR #12.", "delay_seconds": 2700},
-            PolicyAction.ALLOW,
+            PolicyAction.ASK,
         ),
     ],
     ids=["add_policy_control", "create", "update", "reminder"],
 )
-async def test_scheduled_task_mutation_allows_without_guardrails(
+async def test_scheduled_task_mutation_asks_without_guardrails(
     tmp_path: Path,
     conversation_store: SqlAlchemyConversationStore,
     tool_name: str,
@@ -85,9 +85,19 @@ async def test_scheduled_task_mutation_allows_without_guardrails(
     assert result.action == expected, result.reason
 
 
-def test_no_policy_fast_path_keeps_add_policy_gate(
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "sys_add_policy",
+        "sys_scheduled_task_create",
+        "sys_scheduled_task_update",
+        "sys_reminder_set",
+    ],
+)
+def test_no_policy_fast_path_keeps_mutation_gates(
     tmp_path: Path,
     conversation_store: SqlAlchemyConversationStore,
+    tool_name: str,
 ) -> None:
     spec, conv = _no_guardrails_spec(tmp_path, conversation_store)
     assert any_policies_apply(
@@ -96,22 +106,13 @@ def test_no_policy_fast_path_keeps_add_policy_gate(
         default_policies=None,
         policy_store=None,
         phase=Phase.TOOL_CALL,
-        tool_name="sys_add_policy",
+        tool_name=tool_name,
         conversation=conv,
     )
 
 
-@pytest.mark.parametrize(
-    "tool_name",
-    [
-        "sys_scheduled_task_create",
-        "sys_scheduled_task_update",
-        "sys_scheduled_task_list",
-        "sys_scheduled_task_delete",
-        "sys_reminder_set",
-    ],
-)
-def test_no_policy_fast_path_skips_scheduled_task_tools(
+@pytest.mark.parametrize("tool_name", ["sys_scheduled_task_list", "sys_scheduled_task_delete"])
+def test_no_policy_fast_path_skips_ungated_scheduled_task_tools(
     tmp_path: Path,
     conversation_store: SqlAlchemyConversationStore,
     tool_name: str,
