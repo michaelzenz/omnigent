@@ -67,19 +67,7 @@ class SysScheduledTaskCreateTool(Tool):
             "connected_host, optionally pin a host and/or a workspace on it; with no "
             "pinned host it runs on your live host at fire time (the owner must have an online "
             "host then, else the run is recorded as failed). The task fires "
-            "automatically on its schedule until deleted. "
-            "To hear about changes to a source, e.g. comments or CI results on a pull request, "
-            "follow it with event_subscriptions instead: a watcher reports each change in time. "
-            "Wake this session with a task only when the work needs a check at a set time, "
-            "because no change may come, e.g. a pull request that is still not merged after 7 "
-            "days. Usually do both: follow the source, and schedule the check. To wake this "
-            "session, run the task in this session. Call sys_session_get_info with no arguments "
-            "to get this session's session_id and agent_id. Then create the task with "
-            "session_mode 'continue', that session_id, that agent_id and permission_mode null; "
-            "when this session runs in a mode that skips approval, pass that mode instead. Each "
-            "run's prompt then comes into this session. A rule fires at least twice, at least "
-            "10 minutes apart: delete the task with sys_scheduled_task_delete when the work "
-            "finishes. A sub-agent session cannot be the target."
+            "automatically on its schedule until deleted."
         )
 
     def get_schema(self) -> dict[str, Any]:

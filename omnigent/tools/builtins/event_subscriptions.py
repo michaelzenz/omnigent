@@ -49,8 +49,8 @@ class EventSubscriptionsTool(Tool):
             "schedule, often every 10 minutes. (2) For any later change, subscribe instead of "
             "a loop: a watcher reports each change, e.g. a comment, a CI result or a merge. "
             "(3) When the work needs a check at a set time even if nothing changes, e.g. a pull "
-            "request that is still not merged after 7 days, subscribe and also wake this session "
-            "with sys_scheduled_task_create; delete that task when the work finishes."
+            "request that is still not merged after 7 days, subscribe and also set a reminder "
+            "for this session with sys_reminder_set."
         )
 
     def get_schema(self) -> dict[str, Any]:
