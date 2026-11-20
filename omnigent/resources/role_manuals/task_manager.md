@@ -307,13 +307,14 @@ pmv2_api(
     "host_id": "<host id>",
     "workspace": "<absolute path of the repository on that host>",
     "title": "<worker title, e.g. Review PR 12>",
-    "message": "<the complete work order>"
+    "message": "<the complete work order>",
+    "agent": "pi-native-ui",
+    "model": "omnigent-openai/system.ai.glm-5-3"
   }
 )
 ```
 
-Optional fields: `agent` (an agent name from New Chat, e.g. `claude-native-ui`),
-`project_name`, `git`, `model` and `reasoning_effort`.
+Optional fields: `project_name`, `git` and `reasoning_effort`.
 
 - **Host and workspace are required.** List the hosts with
 `pmv2_api(method="GET", path="/v1/hosts")`. Copy the workspace from a session
@@ -321,8 +322,10 @@ that worked in the same repository: read the task's workers
 (`GET /v1/agent-tasks/<task_id>/workers`), call `sys_session_get_info` on a
 worker's session, and use its `host_id` and `workspace`. Follow the user's
 instructions about where the repositories are. Never guess a path.
-- **Agent.** Without `agent`, the session uses the server's default agent. If
-the server has no default agent, the call fails; then name an agent.
+- **Agent and model.** Start each worker as a Pi session on GLM 5.3, with
+`"agent": "pi-native-ui"` and `"model": "omnigent-openai/system.ai.glm-5-3"`.
+Use another agent or model only when the user asks for it; take the agent name
+from New Chat, e.g. `claude-native-ui`.
 - **Worktree.** `git` starts the session in a new git worktree, so the work
 does not change the user's checkout. Use
 `{"branch_name": "<new branch>", "base_branch": "main"}` for a new branch, or
