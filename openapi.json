@@ -818,6 +818,203 @@
         "title": "AgentManagerTask",
         "type": "object"
       },
+      "AgentNoticeDeleteSession": {
+        "additionalProperties": false,
+        "description": "Delete the session `session`.",
+        "properties": {
+          "details": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "kind": {
+            "const": "delete_session",
+            "title": "Kind",
+            "type": "string"
+          },
+          "session": {
+            "maxLength": 64,
+            "title": "Session",
+            "type": "string"
+          },
+          "summary": {
+            "maxLength": 300,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "kind",
+          "session"
+        ],
+        "title": "AgentNoticeDeleteSession",
+        "type": "object"
+      },
+      "AgentNoticeMergeSessions": {
+        "additionalProperties": false,
+        "description": "Keep the session `keep`; it gets a hand-off from each session in `merge`, which\nis then deleted.",
+        "properties": {
+          "details": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "keep": {
+            "maxLength": 64,
+            "title": "Keep",
+            "type": "string"
+          },
+          "kind": {
+            "const": "merge_sessions",
+            "title": "Kind",
+            "type": "string"
+          },
+          "merge": {
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Merge",
+            "type": "array"
+          },
+          "summary": {
+            "maxLength": 300,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "kind",
+          "keep",
+          "merge"
+        ],
+        "title": "AgentNoticeMergeSessions",
+        "type": "object"
+      },
+      "AgentNoticeMergeTasks": {
+        "additionalProperties": false,
+        "description": "Keep the task `keep`; each task in `merge` moves into it and is deleted.",
+        "properties": {
+          "details": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "keep": {
+            "maxLength": 64,
+            "title": "Keep",
+            "type": "string"
+          },
+          "kind": {
+            "const": "merge_tasks",
+            "title": "Kind",
+            "type": "string"
+          },
+          "merge": {
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Merge",
+            "type": "array"
+          },
+          "summary": {
+            "maxLength": 300,
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "kind",
+          "keep",
+          "merge"
+        ],
+        "title": "AgentNoticeMergeTasks",
+        "type": "object"
+      },
+      "AgentNoticeSplitTask": {
+        "additionalProperties": false,
+        "description": "Split `task`: a new task named `new_title` also gets the listed `sessions`.",
+        "properties": {
+          "details": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "kind": {
+            "const": "split_task",
+            "title": "Kind",
+            "type": "string"
+          },
+          "new_title": {
+            "maxLength": 256,
+            "title": "New Title",
+            "type": "string"
+          },
+          "sessions": {
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Sessions",
+            "type": "array"
+          },
+          "summary": {
+            "maxLength": 300,
+            "title": "Summary",
+            "type": "string"
+          },
+          "task": {
+            "maxLength": 64,
+            "title": "Task",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "kind",
+          "task",
+          "new_title"
+        ],
+        "title": "AgentNoticeSplitTask",
+        "type": "object"
+      },
       "AgentObject": {
         "description": "API representation of a registered agent.",
         "properties": {
@@ -1026,6 +1223,38 @@
         "title": "AgentSystemNoticeClickResponse",
         "type": "object"
       },
+      "AgentSystemNoticeDraft": {
+        "description": "The changes staged for the caller's next system notice, and what the final check found.\n\nEach change carries the `id` of the toggle that will approve it. The draft\ncan be committed only while `problems` is empty.",
+        "properties": {
+          "changes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "object": {
+            "const": "agent.task.system_notice.draft",
+            "default": "agent.task.system_notice.draft",
+            "title": "Object",
+            "type": "string"
+          },
+          "problems": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          }
+        },
+        "required": [
+          "changes",
+          "problems"
+        ],
+        "title": "AgentSystemNoticeDraft",
+        "type": "object"
+      },
       "AgentSystemNoticeInput": {
         "additionalProperties": false,
         "description": "A control the user sets before clicking an action: a toggle or a text box.\n\n`group` names a set of the action's inputs, e.g. the sessions on one\nhost, that the board can switch on or off together. `default` is a\ntoggle's initial value.",
@@ -1108,7 +1337,7 @@
         "type": "object"
       },
       "AgentSystemNoticeResponse": {
-        "description": "A notice pinned on the caller's GlobalHub board, e.g. the custodian's\ncleanup proposal.\n\n`publisher_session_id` and `publisher_label` name the session that\npublished it, when that session's runner sent the request.",
+        "description": "A notice pinned on the caller's GlobalHub board, e.g. the custodian's\ncleanup proposal.\n\n`publisher_session_id` and `publisher_label` name the session that\npublished it, when that session's runner sent the request. `changes`\nlists the staged changes a committed draft proposes, each with the `id`\nof the toggle that approves it.",
         "properties": {
           "actions": {
             "items": {
@@ -1135,6 +1364,14 @@
             ],
             "title": "Body Kind",
             "type": "string"
+          },
+          "changes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Changes",
+            "type": "array"
           },
           "created_at": {
             "format": "int64",
@@ -3571,6 +3808,26 @@
           "goal"
         ],
         "title": "CodexGoalResponse",
+        "type": "object"
+      },
+      "CommitAgentSystemNoticeDraftRequest": {
+        "additionalProperties": false,
+        "description": "Publish the staged changes as the caller's system notice, which replaces the active one.\n\nWithout `title` the server writes one from the changes.",
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "CommitAgentSystemNoticeDraftRequest",
         "type": "object"
       },
       "CompactionCompletedEvent": {
@@ -16719,6 +16976,43 @@
         "title": "SourceTypeResponse",
         "type": "object"
       },
+      "StageAgentNoticeChangeRequest": {
+        "additionalProperties": false,
+        "description": "Stage one change for the caller's next system notice.\n\nA change for the same kind and subject (the task or session it keeps,\nsplits or deletes) replaces the staged one.",
+        "properties": {
+          "change": {
+            "discriminator": {
+              "mapping": {
+                "delete_session": "#/components/schemas/AgentNoticeDeleteSession",
+                "merge_sessions": "#/components/schemas/AgentNoticeMergeSessions",
+                "merge_tasks": "#/components/schemas/AgentNoticeMergeTasks",
+                "split_task": "#/components/schemas/AgentNoticeSplitTask"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AgentNoticeMergeTasks"
+              },
+              {
+                "$ref": "#/components/schemas/AgentNoticeSplitTask"
+              },
+              {
+                "$ref": "#/components/schemas/AgentNoticeMergeSessions"
+              },
+              {
+                "$ref": "#/components/schemas/AgentNoticeDeleteSession"
+              }
+            ],
+            "title": "Change"
+          }
+        },
+        "required": [
+          "change"
+        ],
+        "title": "StageAgentNoticeChangeRequest",
+        "type": "object"
+      },
       "StampFoldersRequest": {
         "additionalProperties": false,
         "description": "Folders to add or retitle, and paths to drop, by absolute path.",
@@ -20070,6 +20364,182 @@
           }
         },
         "summary": "Dismiss System Notice",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/system-notice/draft": {
+      "delete": {
+        "description": "Remove every staged change from the caller's draft.",
+        "operationId": "discard_notice_draft_v1_agent_tasks_system_notice_draft_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSystemNoticeDraft"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Discard Notice Draft",
+        "tags": [
+          "agent-tasks"
+        ]
+      },
+      "get": {
+        "description": "Return the changes staged for the caller's next notice, and the check's problems.",
+        "operationId": "get_notice_draft_v1_agent_tasks_system_notice_draft_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSystemNoticeDraft"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Notice Draft",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/system-notice/draft/changes": {
+      "post": {
+        "description": "Stage one change for the caller's next notice; nobody sees it until a commit.\n\nA change for the same kind and subject replaces the staged one. The\ndraft holds at most as many changes as one notice.",
+        "operationId": "stage_notice_change_v1_agent_tasks_system_notice_draft_changes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StageAgentNoticeChangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSystemNoticeDraft"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stage Notice Change",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/system-notice/draft/changes/{change_id}": {
+      "delete": {
+        "description": "Remove one staged change from the caller's draft.",
+        "operationId": "unstage_notice_change_v1_agent_tasks_system_notice_draft_changes__change_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "title": "Change Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSystemNoticeDraft"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unstage Notice Change",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/system-notice/draft/commit": {
+      "post": {
+        "description": "Publish the staged changes as the caller's notice, which replaces the active one.\n\nThe commit runs the final check and publishes nothing while it finds a\nproblem. The notice lists the changes with one toggle each, and the\ncommit takes the published changes out of the draft.",
+        "operationId": "commit_notice_draft_v1_agent_tasks_system_notice_draft_commit_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CommitAgentSystemNoticeDraftRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTaskBoardSystemNotice"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Commit Notice Draft",
         "tags": [
           "agent-tasks"
         ]

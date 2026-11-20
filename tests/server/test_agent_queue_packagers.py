@@ -937,6 +937,47 @@ def test_a_notice_click_is_written_for_the_custodian() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("approved", "listed"),
+    [
+        (
+            [{"id": "delete_session__a", "kind": "delete_session", "session": "a"}],
+            [
+                "Approved changes; make these and no others:",
+                '  - {"id": "delete_session__a", "kind": "delete_session", "session": "a"}',
+            ],
+        ),
+        ([], ["Approved changes: none."]),
+    ],
+)
+def test_a_click_on_a_committed_notice_lists_the_approved_changes(
+    approved: list[dict[str, Any]], listed: list[str]
+) -> None:
+    item = AgentQueueItem(
+        id=next(_ids),
+        owner_user_id=ALICE,
+        target_session_id=next(_ids),
+        kind="notice_click",
+        state="sending",
+        seq=1,
+        created_at=0,
+        payload={
+            "notice_id": "notice-1",
+            "title": "1 session change to review",
+            "action_id": "apply_changes",
+            "action_label": "Apply selected changes",
+            "inputs": {"delete_session__a": bool(approved)},
+            "changes": approved,
+        },
+    )
+
+    assert write_notice_click(item).splitlines()[3:-1] == [
+        "Inputs:",
+        f"  - delete_session__a: {json.dumps(bool(approved))}",
+        *listed,
+    ]
+
+
 def test_a_request_for_managers_lists_the_live_tasks_without_one(
     board: BoardStores, monkeypatch: pytest.MonkeyPatch
 ) -> None:

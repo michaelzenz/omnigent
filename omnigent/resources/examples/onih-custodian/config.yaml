@@ -18,6 +18,7 @@ skills: none
 
 tools:
   builtins:
+    - pmv2_api
     - pmv2_read
     - search_conversations
     - source_watchers
@@ -33,12 +34,14 @@ allowed_builtin_tools:
   - find
   - ls
   - mcp
+  - pmv2_api
   - pmv2_read
   - search_conversations
   - source_watchers
   - sys_session_list
   - sys_session_get_info
   - sys_session_get_history
+  - sys_session_message
   - sys_scheduled_task_create
   - sys_scheduled_task_list
   - sys_scheduled_task_update

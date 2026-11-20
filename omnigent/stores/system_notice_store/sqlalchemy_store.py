@@ -44,7 +44,12 @@ def _to_entity(row: SqlSystemNotice) -> SystemNotice:
         publisher_label=row.publisher_label,
         updated_at=row.updated_at,
         resolved_at=row.resolved_at,
+        changes=json.loads(row.changes) if row.changes else [],
     )
+
+
+def _encode_list(items: Sequence[Mapping[str, Any]]) -> str | None:
+    return json.dumps([dict(item) for item in items], ensure_ascii=False) if items else None
 
 
 def _owned_active(owner_user_id: str | None) -> ColumnElement[bool]:
@@ -92,15 +97,13 @@ class SqlAlchemySystemNoticeStore(SystemNoticeStore):
         actions: Sequence[Mapping[str, Any]] = (),
         publisher_session_id: str | None = None,
         publisher_label: str | None = None,
+        changes: Sequence[Mapping[str, Any]] = (),
     ) -> SystemNotice:
         """Make a new notice the owner's active one, resolving the one it replaces."""
         now = now_epoch()
         body_kind_code = encode_system_notice_body_kind(body_kind)
-        encoded_actions = (
-            json.dumps([dict(action) for action in actions], ensure_ascii=False)
-            if actions
-            else None
-        )
+        encoded_actions = _encode_list(actions)
+        encoded_changes = _encode_list(changes)
 
         def write(session: Session) -> SystemNotice:
             require_active_account(session, owner_user_id)
@@ -122,6 +125,7 @@ class SqlAlchemySystemNoticeStore(SystemNoticeStore):
                 created_at=now,
                 updated_at=None,
                 resolved_at=None,
+                changes=encoded_changes,
             )
             session.add(row)
             return _to_entity(row)

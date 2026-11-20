@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from omnigent.db.account_authority import require_active_account
 from omnigent.db.compression import decode
 from omnigent.db.db_models import SqlPreference, current_workspace_id
-from omnigent.db.preference_rows import upsert_preference_row
+from omnigent.db.preference_rows import insert_preference_row_if_missing, upsert_preference_row
 from omnigent.db.utils import (
     get_or_create_engine,
     make_named_managed_session_maker,
@@ -63,6 +63,8 @@ GLOBALHUB_NEW_SESSION_REPORTS_PREFERENCE_KEY = "globalhub_new_session_reports"
 _NEW_SESSION_REPORTS_OFF = "off"
 GLOBALHUB_DEFAULT_WATCHERS_PREFERENCE_KEY = "globalhub_default_watchers"
 _DEFAULT_WATCHERS_ADDED = "added"
+GLOBALHUB_NOTICE_DRAFT_PREFERENCE_KEY = "globalhub_notice_draft"
+_MAX_NOTICE_DRAFT_BYTES = 4 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -282,6 +284,89 @@ class UserSettingsStore:
             user_id=user_id,
         )
 
+    def get_globalhub_notice_draft(self, *, user_id: str | None) -> list[dict[str, Any]]:
+        """Return the changes the user's custodian staged for its next notice, oldest first."""
+        return _parse_notice_draft(
+            self._read(
+                "read_globalhub_notice_draft",
+                GLOBALHUB_NOTICE_DRAFT_PREFERENCE_KEY,
+                user_id=user_id,
+                max_decoded_bytes=_MAX_NOTICE_DRAFT_BYTES,
+            )
+        )
+
+    def change_globalhub_notice_draft(
+        self,
+        change: Callable[[list[dict[str, Any]]], list[dict[str, Any]]],
+        *,
+        user_id: str | None,
+    ) -> list[dict[str, Any]]:
+        """Read, change and store the user's notice draft in one transaction.
+
+        :param change: Turns the staged changes into the new draft. An exception
+            that it raises leaves the draft as it was.
+        :param user_id: The user, or ``None`` in single-user mode.
+        :returns: The new draft.
+        """
+        preference_user_id = RESERVED_USER_LOCAL if user_id is None else user_id
+        owned_row = (
+            SqlPreference.workspace_id == current_workspace_id(),
+            SqlPreference.user_id == preference_user_id,
+            SqlPreference.key == GLOBALHUB_NOTICE_DRAFT_PREFERENCE_KEY,
+        )
+
+        def write(session: Session) -> list[dict[str, Any]]:
+            require_active_account(session, user_id)
+            insert_preference_row_if_missing(
+                session,
+                user_id=preference_user_id,
+                key=GLOBALHUB_NOTICE_DRAFT_PREFERENCE_KEY,
+                value="[]",
+            )
+            raw = session.scalar(
+                select(type_coerce(SqlPreference.value, LargeBinary))
+                .where(*owned_row)
+                .with_for_update()
+            )
+            stored = None
+            if raw is not None:
+                try:
+                    stored = decode(raw, max_decoded_bytes=_MAX_NOTICE_DRAFT_BYTES)
+                except (ValueError, zstandard.ZstdError):
+                    _logger.warning("stored GlobalHub notice draft is unreadable — replacing it")
+            draft = change(_parse_notice_draft(stored))
+            if draft:
+                upsert_preference_row(
+                    session,
+                    user_id=preference_user_id,
+                    key=GLOBALHUB_NOTICE_DRAFT_PREFERENCE_KEY,
+                    value=json.dumps(draft, ensure_ascii=False),
+                )
+            else:
+                session.execute(delete(SqlPreference).where(*owned_row))
+            return draft
+
+        return run_write_transaction(
+            self._session_immediate, "change_globalhub_notice_draft", write
+        )
+
+    def save_globalhub_notice_draft(
+        self, changes: Sequence[Mapping[str, Any]], *, user_id: str | None
+    ) -> None:
+        """Store the changes staged for the user's next notice; no changes deletes the draft.
+
+        :param changes: The staged changes, oldest first.
+        :param user_id: The user, or ``None`` in single-user mode.
+        """
+        self._write(
+            "save_globalhub_notice_draft",
+            GLOBALHUB_NOTICE_DRAFT_PREFERENCE_KEY,
+            json.dumps([dict(change) for change in changes], ensure_ascii=False)
+            if changes
+            else None,
+            user_id=user_id,
+        )
+
     def _read(
         self, operation: str, key: str, *, user_id: str | None, max_decoded_bytes: int
     ) -> str | None:
@@ -349,6 +434,19 @@ class UserSettingsStore:
 # custom-lint: disable-next=workspace-scoped-cache -- keyed by database URL; queries scope rows
 _stores: dict[str, UserSettingsStore] = {}
 _stores_lock = threading.Lock()
+
+
+def _parse_notice_draft(value: str | None) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    try:
+        changes = json.loads(value)
+    except ValueError:
+        _logger.warning("stored GlobalHub notice draft is unreadable — ignoring it")
+        return []
+    if not isinstance(changes, list):
+        return []
+    return [change for change in changes if isinstance(change, dict)]
 
 
 def open_user_settings_store(conversation_store: object) -> UserSettingsStore | None:

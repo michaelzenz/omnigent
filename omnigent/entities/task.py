@@ -293,6 +293,8 @@ class SystemNotice:
     :param publisher_label: That session's title when it published.
     :param updated_at: Unix epoch seconds of the last change.
     :param resolved_at: When it was replaced or dismissed.
+    :param changes: The staged changes the notice proposes, each with the ``id``
+        of the toggle that approves it; empty for a notice published directly.
     """
 
     id: str
@@ -307,6 +309,7 @@ class SystemNotice:
     publisher_label: str | None = None
     updated_at: int | None = None
     resolved_at: int | None = None
+    changes: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

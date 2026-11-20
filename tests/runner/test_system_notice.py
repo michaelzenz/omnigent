@@ -49,9 +49,45 @@ async def test_each_action_calls_its_route_as_the_calling_session() -> None:
     assert {request.headers[ORCHESTRATION_SOURCE_HEADER] for request in requests} == {SOURCE_ID}
 
 
+async def test_each_staging_action_calls_its_draft_route() -> None:
+    requests: list[httpx.Request] = []
+    client = _client(requests)
+    change = {"kind": "delete_session", "session": SOURCE_ID, "summary": "Idle"}
+
+    for args in [
+        {"action": "stage", "change": change},
+        {"action": "unstage", "change_id": f"delete_session__{SOURCE_ID}"},
+        {"action": "check"},
+        {"action": "commit", "title": "Idle sessions"},
+        {"action": "commit"},
+        {"action": "discard"},
+    ]:
+        await execute_system_notice(args, client, SOURCE_ID)
+
+    assert [(request.method, request.url.path) for request in requests] == [
+        ("POST", f"{ROUTE}/draft/changes"),
+        ("DELETE", f"{ROUTE}/draft/changes/delete_session__{SOURCE_ID}"),
+        ("GET", f"{ROUTE}/draft"),
+        ("POST", f"{ROUTE}/draft/commit"),
+        ("POST", f"{ROUTE}/draft/commit"),
+        ("DELETE", f"{ROUTE}/draft"),
+    ]
+    assert [json.loads(requests[index].content) for index in (0, 3, 4)] == [
+        {"change": change},
+        {"title": "Idle sessions"},
+        {},
+    ]
+
+
 @pytest.mark.parametrize(
     ("args", "source_id"),
-    [({"action": "delete"}, SOURCE_ID), ({}, SOURCE_ID), ({"action": "get"}, None)],
+    [
+        ({"action": "delete"}, SOURCE_ID),
+        ({}, SOURCE_ID),
+        ({"action": "get"}, None),
+        ({"action": "stage"}, SOURCE_ID),
+        ({"action": "unstage", "change_id": "../draft"}, SOURCE_ID),
+    ],
 )
 async def test_bad_calls_are_refused_before_any_request(
     args: dict[str, Any], source_id: str | None

@@ -1218,6 +1218,8 @@ class SqlSystemNotice(OmnigentBase):
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last change, or ``None``.
     :param resolved_at: When it was replaced or dismissed, or ``None``.
+    :param changes: JSON list of the staged changes the notice proposes, or
+        ``None`` for a notice published directly.
     """
 
     __tablename__ = "system_notices"
@@ -1242,6 +1244,7 @@ class SqlSystemNotice(OmnigentBase):
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     resolved_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    changes: Mapped[str | None] = mapped_column(CompressedText, nullable=True)
 
     __table_args__ = (
         CheckConstraint("state IN (1, 2)", name="ck_system_notices_state"),

@@ -61,6 +61,7 @@ from omnigent.server.server_config import (
     GLOBALHUB_ROLE_RRULE_MAX_CHARS,
     GLOBALHUB_WORKSPACE_MAX_CHARS,
 )
+from omnigent.util.uuid import uuid_to_bytes
 
 # ── Shared ──────────────────────────────────────────────────────
 
@@ -7079,7 +7080,9 @@ class AgentSystemNoticeResponse(BaseModel):
     cleanup proposal.
 
     ``publisher_session_id`` and ``publisher_label`` name the session that
-    published it, when that session's runner sent the request.
+    published it, when that session's runner sent the request. ``changes``
+    lists the staged changes a committed draft proposes, each with the ``id``
+    of the toggle that approves it.
     """
 
     object: Literal["agent.task.system_notice"] = "agent.task.system_notice"
@@ -7094,6 +7097,7 @@ class AgentSystemNoticeResponse(BaseModel):
     created_at: int
     updated_at: int | None
     resolved_at: int | None
+    changes: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AgentTaskBoardSystemNotice(BaseModel):
@@ -7157,6 +7161,105 @@ class AgentSystemNoticeClickResponse(BaseModel):
     notice_id: str
     action_id: str
     inputs: dict[str, bool | str]
+
+
+_AgentNoticeChangeSummary = Annotated[
+    str, Field(max_length=300), AfterValidator(_strip_required_text)
+]
+
+
+def _bare_uuid(value: str) -> str:
+    raw = uuid_to_bytes(value.strip())
+    if len(raw) != 16:
+        raise ValueError("must be a UUID")
+    return raw.hex()
+
+
+_AgentNoticeSubjectId = Annotated[str, Field(max_length=64), AfterValidator(_bare_uuid)]
+
+
+class _AgentNoticeChangeFields(BaseModel):
+    summary: _AgentNoticeChangeSummary
+    details: str | None = Field(default=None, max_length=4_000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentNoticeMergeTasks(_AgentNoticeChangeFields):
+    """Keep the task ``keep``; each task in ``merge`` moves into it and is deleted."""
+
+    kind: Literal["merge_tasks"]
+    keep: _AgentNoticeSubjectId
+    merge: list[_AgentNoticeSubjectId] = Field(min_length=1, max_length=10)
+
+
+class AgentNoticeSplitTask(_AgentNoticeChangeFields):
+    """Split ``task``: a new task named ``new_title`` also gets the listed ``sessions``."""
+
+    kind: Literal["split_task"]
+    task: _AgentNoticeSubjectId
+    new_title: _AgentTaskTitle
+    sessions: list[_AgentNoticeSubjectId] = Field(default_factory=list, max_length=20)
+
+
+class AgentNoticeMergeSessions(_AgentNoticeChangeFields):
+    """Keep the session ``keep``; it gets a hand-off from each session in ``merge``, which
+    is then deleted."""
+
+    kind: Literal["merge_sessions"]
+    keep: _AgentNoticeSubjectId
+    merge: list[_AgentNoticeSubjectId] = Field(min_length=1, max_length=10)
+
+
+class AgentNoticeDeleteSession(_AgentNoticeChangeFields):
+    """Delete the session ``session``."""
+
+    kind: Literal["delete_session"]
+    session: _AgentNoticeSubjectId
+
+
+AgentNoticeChange = Annotated[
+    AgentNoticeMergeTasks
+    | AgentNoticeSplitTask
+    | AgentNoticeMergeSessions
+    | AgentNoticeDeleteSession,
+    Field(discriminator="kind"),
+]
+
+
+class StageAgentNoticeChangeRequest(BaseModel):
+    """Stage one change for the caller's next system notice.
+
+    A change for the same kind and subject (the task or session it keeps,
+    splits or deletes) replaces the staged one.
+    """
+
+    change: AgentNoticeChange
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentSystemNoticeDraft(BaseModel):
+    """The changes staged for the caller's next system notice, and what the final check found.
+
+    Each change carries the ``id`` of the toggle that will approve it. The draft
+    can be committed only while ``problems`` is empty.
+    """
+
+    object: Literal["agent.task.system_notice.draft"] = "agent.task.system_notice.draft"
+    changes: list[dict[str, Any]]
+    problems: list[str]
+
+
+class CommitAgentSystemNoticeDraftRequest(BaseModel):
+    """Publish the staged changes as the caller's system notice, which replaces the active one.
+
+    Without ``title`` the server writes one from the changes.
+    """
+
+    title: _AgentSystemNoticeTitle | None = None
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class UpdateGlobalHubRoleProfileRequest(BaseModel):

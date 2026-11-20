@@ -703,6 +703,13 @@ def write_notice_click(item: AgentQueueItem) -> str:
             if isinstance(value, str) and len(value) > _CLICK_TEXT_SHOWN_CHARS:
                 value = value[:_CLICK_TEXT_SHOWN_CHARS] + "…"
             lines.append(f"  - {input_id}: {json.dumps(value, ensure_ascii=False)}")
+    if "changes" in click:
+        approved: list[dict[str, Any]] = click["changes"]
+        if approved:
+            lines.append("Approved changes; make these and no others:")
+            lines.extend(f"  - {json.dumps(change, ensure_ascii=False)}" for change in approved)
+        else:
+            lines.append("Approved changes: none.")
     lines.append(
         "Interpret this click per the notice's intent and the Custodian manual. Read the "
         'notice itself with system_notice(action="get") if you need its full body.'

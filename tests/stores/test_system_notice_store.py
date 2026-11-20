@@ -20,6 +20,9 @@ CLEANUP_ACTIONS = [
         ],
     }
 ]
+CHANGES = [
+    {"id": "delete_session__a", "kind": "delete_session", "session": "a", "summary": "Idle"}
+]
 # Creation order ties on the one-second created_at, then falls back to id.
 _ids = (f"{n:032x}" for n in itertools.count(1))
 
@@ -40,13 +43,19 @@ def test_publishing_replaces_the_owners_active_notice(store: SqlAlchemySystemNot
         actions=CLEANUP_ACTIONS,
         publisher_session_id=CUSTODIAN_SESSION,
         publisher_label="Task custodian",
+        changes=CHANGES,
     )
     bobs = store.publish(next(_ids), owner_user_id=BOB, title="Bob's notice")
 
     active = store.get_active(owner_user_id=ALICE)
 
     assert active is not None and active.id == published.id
-    assert (active.state, active.body_kind, active.actions) == ("active", "html", CLEANUP_ACTIONS)
+    assert (active.state, active.body_kind, active.actions, active.changes) == (
+        "active",
+        "html",
+        CLEANUP_ACTIONS,
+        CHANGES,
+    )
     assert (active.publisher_session_id, active.publisher_label) == (
         CUSTODIAN_SESSION,
         "Task custodian",
@@ -73,6 +82,6 @@ def test_resolving_leaves_no_active_notice_and_repeats_safely(
         "resolved",
         True,
     )
-    assert (resolved.actions, resolved.body) == ([], None)
+    assert (resolved.actions, resolved.body, resolved.changes) == ([], None, [])
     assert store.resolve_active(owner_user_id=None) is None
     assert store.get_active(owner_user_id=None) is None

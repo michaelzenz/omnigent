@@ -35,6 +35,7 @@ class SystemNoticeStore(ABC):
         actions: Sequence[Mapping[str, Any]] = (),
         publisher_session_id: str | None = None,
         publisher_label: str | None = None,
+        changes: Sequence[Mapping[str, Any]] = (),
     ) -> SystemNotice:
         """
         Make a new notice the owner's active one, resolving the one it replaces.
@@ -47,6 +48,7 @@ class SystemNoticeStore(ABC):
         :param actions: The declared actions the user can click.
         :param publisher_session_id: The session that published it, when confirmed.
         :param publisher_label: That session's title.
+        :param changes: The staged changes the notice proposes, if any.
         :returns: The new active notice.
         """
 
