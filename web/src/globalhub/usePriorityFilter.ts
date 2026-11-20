@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { globalHubStorageKey } from "@/lib/globalHubStorage";
 import { subscribeIdentity } from "@/lib/identity";
 
@@ -19,34 +19,50 @@ function readPriorityFilter(key: string | null): BoardPriorityFilter {
   }
 }
 
+function savePriorityFilter(key: string | null, priority: BoardPriorityFilter): void {
+  if (key === null) return;
+  try {
+    if (priority === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, String(priority));
+  } catch {
+    // The filter still holds until the page reloads.
+  }
+}
+
 /**
  * The board's priority filter, kept in this browser for the signed-in user.
  * Until the user is known, a change stays in memory.
  *
+ * A search starts at All and does not change the kept filter. When the search
+ * ends, a priority picked during it stays; with All picked, the kept filter
+ * applies again.
+ *
+ * @param searching - Whether the board shows a search.
  * @returns The filter, and a function that sets it.
  */
-export function usePriorityFilter(): [
-  BoardPriorityFilter,
-  (priority: BoardPriorityFilter) => void,
-] {
+export function usePriorityFilter(
+  searching = false,
+): [BoardPriorityFilter, (priority: BoardPriorityFilter) => void] {
   const key = useSyncExternalStore(subscribeIdentity, priorityFilterKey, () => null);
-  const [priority, setPriority] = useState(() => readPriorityFilter(key));
+  const [saved, setSaved] = useState(() => readPriorityFilter(key));
   const [loadedKey, setLoadedKey] = useState(key);
   if (loadedKey !== key) {
     setLoadedKey(key);
-    setPriority(readPriorityFilter(key));
+    setSaved(readPriorityFilter(key));
   }
+  const [searchPick, setSearchPick] = useState<BoardPriorityFilter>(null);
+  const [wasSearching, setWasSearching] = useState(searching);
+  if (wasSearching !== searching) {
+    setWasSearching(searching);
+    setSearchPick(null);
+    if (!searching && searchPick !== null) setSaved(searchPick);
+  }
+  useEffect(() => savePriorityFilter(key, saved), [key, saved]);
 
   function choose(next: BoardPriorityFilter) {
-    setPriority(next);
-    if (key === null) return;
-    try {
-      if (next === null) localStorage.removeItem(key);
-      else localStorage.setItem(key, String(next));
-    } catch {
-      // The filter still holds until the page reloads.
-    }
+    if (searching) setSearchPick(next);
+    else setSaved(next);
   }
 
-  return [priority, choose];
+  return [searching ? searchPick : saved, choose];
 }

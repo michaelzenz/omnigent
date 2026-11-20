@@ -29,7 +29,7 @@ export function GlobalHubPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const query = useDebouncedValue(search.trim(), SEARCH_DELAY_MS);
-  const [priority, setPriority] = usePriorityFilter();
+  const [priority, setPriority] = usePriorityFilter(query !== "");
   const priorityCounts = useBoardPriorityCounts(query, priority);
   const boardRef = useRef<HTMLDivElement>(null);
   const openSettings = () => setSettingsOpen(true);

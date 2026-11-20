@@ -141,4 +141,39 @@ describe("GlobalHubPage", () => {
     expect([remembered, clickedAgain, switched, shown()]).toEqual(["1", "all", "0", "all"]);
     expect(chip("All")).toHaveAttribute("aria-pressed", "true");
   });
+
+  it("starts a search at All, keeps a priority picked during it, and else restores the kept one", async () => {
+    const settings = { host_id: "host_laptop", workspace: "/srv", report_new_sessions: true };
+    const board = () => screen.getByTestId("globalhub-task-board");
+    const chip = (name: string) => screen.getByRole("button", { name: new RegExp(`^${name}, `) });
+    const search = () => screen.getByRole("textbox", { name: "Search tasks" });
+    const searchFor = async (text: string) => {
+      fireEvent.change(search(), { target: { value: text } });
+      await waitFor(() => expect(board().dataset.query).toBe(text));
+    };
+    renderPage(settings);
+    fireEvent.click(chip("P1"));
+
+    await searchFor("retries");
+    const searched = [board().dataset.priority, chip("All").getAttribute("aria-pressed")];
+    fireEvent.keyDown(search(), { key: "Escape" });
+    await waitFor(() => expect(board().dataset.query).toBe(""));
+    const restored = board().dataset.priority;
+    await searchFor("retries");
+    fireEvent.click(chip("P2"));
+    const pickedInSearch = board().dataset.priority;
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    await waitFor(() => expect(board().dataset.query).toBe(""));
+    const kept = board().dataset.priority;
+    cleanup();
+    renderPage(settings);
+
+    expect(searched).toEqual(["all", "true"]);
+    expect([restored, pickedInSearch, kept, board().dataset.priority]).toEqual([
+      "1",
+      "2",
+      "2",
+      "2",
+    ]);
+  });
 });
