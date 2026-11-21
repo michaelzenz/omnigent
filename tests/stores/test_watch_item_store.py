@@ -32,6 +32,9 @@ PR = "https://github.com/example-org/repo/pull/12"
 OTHER_PR = "https://github.com/example-org/repo/pull/13"
 THIRD_PR = "https://github.com/example-org/repo/pull/14"
 UNTRACKED = "https://example.com/gone"
+SLACK_THREAD = "slack.thread"
+SLACK_DM = "D0000000001"
+SLACK_THREAD_LINK = "https://example.com/archives/C0000000001/p1700000000000100"
 
 
 def _watcher(db_uri: str, owner: str = ALICE) -> Watcher:
@@ -198,6 +201,42 @@ def test_a_change_goes_to_each_following_session_but_the_reporter_else_to_the_br
         2,
     )
     assert len(events.list(owner_user_id=ALICE)) == 3
+
+
+def test_a_slack_conversation_change_goes_only_to_the_broker_and_a_thread_reply_to_followers(
+    db_uri: str,
+) -> None:
+    store = SqlAlchemyWatchItemStore(db_uri)
+    events = SqlAlchemyTaskEventStore(db_uri)
+    _follow(db_uri, SLACK_DM)
+    thread_follower = _follow(db_uri, SLACK_THREAD_LINK)
+    watcher = _watcher(db_uri)
+
+    def seen(source_key: str, latest: str) -> WatchObservation:
+        return WatchObservation(
+            source=SLACK_THREAD, source_key=source_key, offsets={"latest": latest}
+        )
+
+    keys = (SLACK_DM, SLACK_THREAD_LINK)
+    store.observe(watcher, [seen(key, "1") for key in keys], session_id=SESSION_ID, now=100)
+    conversation, thread = store.observe(
+        watcher, [seen(key, "2") for key in keys], session_id=SESSION_ID, now=200
+    )
+    store.finish(
+        watcher, [WatchFinish(SLACK_THREAD, key) for key in keys], session_id=SESSION_ID, now=300
+    )
+
+    def targets(event_ids: tuple[str, ...]) -> list[tuple[str | None, str]]:
+        found = [events.get(event_id, owner_user_id=ALICE) for event_id in event_ids]
+        return [(event.target_session_id, event.state) for event in found if event is not None]
+
+    assert targets(conversation.event_ids) == [(None, "unrouted")]
+    assert targets(thread.event_ids) == [(thread_follower, "routed")]
+    assert [
+        event.source_key
+        for event in events.list(owner_user_id=ALICE)
+        if event.event_type == WATCH_DONE_EVENT_TYPE
+    ] == [SLACK_THREAD_LINK]
 
 
 def test_marking_items_done_tells_their_other_followers_once_and_never_the_broker(

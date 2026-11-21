@@ -28,6 +28,7 @@ from omnigent.entities import (
     WatchItem,
 )
 from omnigent.errors import StaleCursorError
+from omnigent.stores.subscription_store import is_slack_conversation
 from omnigent.stores.subscription_store.sqlalchemy_store import subscriber_session_ids
 from omnigent.stores.task_event_store.sqlalchemy_store import new_task_event_row
 from omnigent.stores.watch_item_store import (
@@ -484,7 +485,9 @@ def _record(
 
     Each session that follows the item's key gets an event, except the
     reporting session. When no session follows it, one event goes to the
-    broker, or none when ``to_broker`` is false.
+    broker, or none when ``to_broker`` is false. An event about a whole Slack
+    conversation, e.g. a direct message, goes only to the broker, or nowhere
+    when ``to_broker`` is false.
     """
     payload: dict[str, Any] = {
         "watcher": {"id": watcher.id, "name": watcher.name},
@@ -499,8 +502,12 @@ def _record(
     }
     if details is not None:
         payload["details"] = dict(details)
-    followers = subscriber_session_ids(
-        session, owner_user_id=row.owner_user_id, source_key=row.source_key
+    followers = (
+        []
+        if is_slack_conversation(row.source, row.source_key)
+        else subscriber_session_ids(
+            session, owner_user_id=row.owner_user_id, source_key=row.source_key
+        )
     )
     reporter = normalize_uuid(session_id) or session_id if session_id is not None else None
     targets: list[str | None] = [follower for follower in followers if follower != reporter]

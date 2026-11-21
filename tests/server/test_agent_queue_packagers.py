@@ -60,6 +60,9 @@ PLACEMENT = GlobalHubPlacement(
 ROUTE_PROMPT = "[System: route these events to tasks or managers]\n"
 PULL_REQUEST = "github.pull_request"
 TICKET = "jira.issue"
+SLACK_THREAD = "slack.thread"
+SLACK_DM = "D0000000001"
+SLACK_CHANNEL = "C0000000001"
 PR = "https://github.com/example-org/repo/pull/12"
 # Events made in one second list by id, so ids follow creation order.
 _ids = (f"{n:032x}" for n in itertools.count(1))
@@ -270,6 +273,47 @@ async def test_the_notice_carries_the_items_waiting_events_in_tag_clusters(
     for event_id in (storage, storage_pr, untagged, deletion_report):
         board.events.route_to_session([event_id], owner_user_id=ALICE, session_id=uuid.uuid4().hex)
     assert writer.write(item) is None
+
+
+async def test_the_notice_lists_the_newest_followers_of_a_slack_conversation(
+    board: BoardStores, sessions: RoleSessionStores
+) -> None:
+    broker = await _broker(sessions)
+    worker_session = sessions.conversation_store.create_conversation(title="Fix S3").id
+    task = board.tasks.create(next(_ids), owner_user_id=ALICE, title="S3 retries")
+    board.workers.create(
+        next(_ids), owner_user_id=ALICE, task_id=task.id, session_id=worker_session
+    )
+    _follow(board, worker_session, SLACK_THREAD, SLACK_DM, note="Waits for the design reply")
+    for _ in range(21):
+        _follow(board, uuid.uuid4().hex, SLACK_THREAD, SLACK_CHANNEL)
+    direct = _event(board, source=SLACK_THREAD, source_key=SLACK_DM)
+    channel = _event(board, source=SLACK_THREAD, source_key=SLACK_CHANNEL)
+    unfollowed = _event(board, source=PULL_REQUEST, source_key=PR)
+    item = board.queue.enqueue(
+        uuid.uuid4().hex,
+        owner_user_id=ALICE,
+        target_session_id=broker,
+        kind="events",
+        event_ids=[direct, channel, unfollowed],
+    )
+    assert item is not None
+
+    writer = EventNoticeWriter(board=board, conversations=sessions.conversation_store)
+    notice = json.loads(writer.write(item) or "{}")
+
+    entries = {entry["id"]: entry for cluster in notice["clusters"] for entry in cluster["events"]}
+    assert entries[direct]["followed_by"] == [
+        {
+            "session_id": worker_session,
+            "title": "Fix S3",
+            "note": "Waits for the design reply",
+            "tasks": [{"id": task.id, "title": "S3 retries"}],
+        }
+    ]
+    assert "more_followers" not in entries[direct]
+    assert (len(entries[channel]["followed_by"]), entries[channel]["more_followers"]) == (20, 1)
+    assert "followed_by" not in entries[unfollowed]
 
 
 async def test_routed_events_become_items_for_the_managers_session_they_went_to(

@@ -37445,7 +37445,7 @@
     },
     "/v1/task-events": {
       "post": {
-        "description": "Record an event on the caller's board.\n\nEach session that follows the event's source key gets a copy, except\nthe session the event came from, and the response is the first copy.\nWhen only that session follows the key, the event is recorded as\nhandled. When no session follows the key, the broker routes the event.\nA report that names its source type and source key is recorded once.",
+        "description": "Record an event on the caller's board.\n\nEach session that follows the event's source key gets a copy, except\nthe session the event came from, and the response is the first copy.\nWhen only that session follows the key, the event is recorded as\nhandled. When no session follows the key, the broker routes the event.\nAn event about a whole Slack conversation, e.g. a direct message or a\nchannel, goes only to the broker. A report that names its source type\nand source key is recorded once.",
         "operationId": "create_event_v1_task_events_post",
         "requestBody": {
           "content": {

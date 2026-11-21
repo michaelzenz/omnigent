@@ -3,6 +3,9 @@
 A session subscribes to a source: a type such as ``"github.pull_request"`` and
 a key such as the pull request URL. Each event about the key goes to every
 session that follows it; an event that no session follows goes to the broker.
+An event about a whole Slack conversation, e.g. a direct message or a channel,
+goes only to the broker, because one conversation can carry unrelated topics; a
+reply in a Slack thread goes to the sessions that follow the thread.
 Keys match exactly, so the store keeps one spelling of each: a trimmed key,
 and for a web address, no fragment and no final slash. The custodian assigns
 each source type to the watcher whose manual covers it; the fallback watcher
@@ -32,6 +35,8 @@ MAX_SUBSCRIPTION_NOTE_CHARS = 3000
 #: The longest link that a subscription stores.
 MAX_SOURCE_URL_CHARS = 2048
 _SOURCE_TYPE = re.compile(r"[a-z0-9][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)+")
+_SLACK_SOURCE_TYPE_PREFIX = "slack."
+_SLACK_MESSAGE_ID = re.compile(r"/p\d{10,}|\d{10}\.\d{6}")
 
 
 class SourceError(ValueError):
@@ -114,6 +119,12 @@ def normalize_source_url(url: str) -> str:
 def is_reserved_source_type(source_type: str) -> bool:
     """Whether only the server records events for the type, e.g. ``"omnigent.session"``."""
     return source_type.startswith(RESERVED_SOURCE_TYPE_PREFIX)
+
+
+def is_slack_conversation(source_type: str, source_key: str) -> bool:
+    return source_type.startswith(_SLACK_SOURCE_TYPE_PREFIX) and not _SLACK_MESSAGE_ID.search(
+        source_key
+    )
 
 
 @dataclass(frozen=True)

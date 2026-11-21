@@ -18,6 +18,7 @@ from omnigent.stores.subscription_store import (
     SourceError,
     SourceTypeUse,
     is_reserved_source_type,
+    is_slack_conversation,
     normalize_source_key,
     normalize_source_type,
 )
@@ -71,6 +72,25 @@ def test_a_source_type_is_one_lowercase_dotted_name() -> None:
             normalize_source_type(unusable)
     assert is_reserved_source_type(SESSION_EVENT_SOURCE)
     assert not is_reserved_source_type(PULL_REQUEST)
+
+
+def test_a_slack_key_without_a_message_names_a_whole_conversation() -> None:
+    conversations = (
+        "D0000000001",
+        "C0000000001",
+        "https://example.com/archives/D0000000001",
+        "https://example.com/archives/C0000000001",
+    )
+    threads = (
+        "https://example.com/archives/C0000000001/p1700000000000100",
+        "https://example.com/archives/D0000000001/p1700000000000100?thread_ts=1700000000.000100",
+        THREAD,
+    )
+
+    assert all(is_slack_conversation("slack.conversation", key) for key in conversations)
+    assert all(is_slack_conversation("slack.thread", key) for key in conversations)
+    assert not any(is_slack_conversation("slack.thread", key) for key in threads)
+    assert not is_slack_conversation(PULL_REQUEST, "https://example.com/archives/D0000000001")
 
 
 def test_a_source_key_is_trimmed_and_a_web_address_loses_its_fragment_and_final_slash() -> None:

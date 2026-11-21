@@ -54,6 +54,7 @@ from omnigent.entities import (
 )
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.agent_task_delivery import SessionSendDeps, session_has_live_turn
+from omnigent.stores.subscription_store import is_slack_conversation
 
 _logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ SESSION_DELETED_EVENT_TYPE = "session.deleted"
 SESSION_START_FAILED_EVENT_TYPE = "session.start.failed"
 SESSION_TURN_FINISHED_EVENT_TYPE = "session.turn.finished"
 _BROKER_PROMPT = "[System: route these events to tasks or managers]\n"
+_MAX_FOLLOWERS_IN_BROKER_NOTICE = 20
 _TURN_FINISHED_ADVICE = (
     "Read the recent session transcript to see what was done. "
     "Update the task overview, stamp all assets, then assign the event to its task."
@@ -444,13 +446,69 @@ class EventNoticeWriter:
         waiting = self._waiting_events(item, "unrouted")
         if not waiting:
             return None
+        followed: dict[str, dict[str, Any]] = {}
+        for event in waiting:
+            key = event.source_key
+            if (
+                key
+                and key not in followed
+                and event.source
+                and is_slack_conversation(event.source, key)
+            ):
+                followed[key] = self._followed_by(item.owner_user_id, key)
         clusters = [
-            {"tags": _tags(cluster[0]), "events": [_broker_entry(event) for event in cluster]}
+            {
+                "tags": _tags(cluster[0]),
+                "events": [
+                    {**_broker_entry(event), **followed.get(event.source_key or "", {})}
+                    for event in cluster
+                ],
+            }
             for cluster in cluster_by_tags(waiting)
         ]
         return json.dumps(
             {"prompt": _BROKER_PROMPT, "clusters": clusters}, ensure_ascii=False, indent=2
         )
+
+    def _followed_by(self, owner: str | None, source_key: str) -> dict[str, Any]:
+        followers = self._board.subscriptions.subscribers(
+            owner_user_id=owner, source_key=source_key
+        )
+        shown = followers[-_MAX_FOLLOWERS_IN_BROKER_NOTICE:][::-1]
+        if not shown:
+            return {}
+        facts: dict[str, Any] = {
+            "followed_by": [self._follower(owner, session_id, source_key) for session_id in shown]
+        }
+        if len(followers) > len(shown):
+            facts["more_followers"] = len(followers) - len(shown)
+        return facts
+
+    def _follower(self, owner: str | None, session_id: str, source_key: str) -> dict[str, Any]:
+        session = self._conversations.get_conversation(session_id)
+        follower: dict[str, Any] = {
+            "session_id": session_id,
+            "title": session.title if session is not None else None,
+        }
+        note = next(
+            (
+                subscription.note
+                for subscription in self._board.subscriptions.list_for_session(
+                    session_id, owner_user_id=owner
+                )
+                if subscription.source_key == source_key and subscription.note
+            ),
+            None,
+        )
+        if note:
+            follower["note"] = note
+        tasks: list[dict[str, str]] = []
+        for worker in self._board.workers.list_for_session(session_id, owner_user_id=owner):
+            task = self._board.tasks.get(worker.task_id, owner_user_id=owner)
+            if task is not None and task.state in LIVE_TASK_STATES:
+                tasks.append({"id": task.id, "title": task.title})
+        follower["tasks"] = tasks
+        return follower
 
     def _waiting_events(self, item: AgentQueueItem, state: str) -> list[TaskEvent]:
         owner = item.owner_user_id
