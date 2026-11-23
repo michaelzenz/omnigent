@@ -14,6 +14,7 @@ const {
   isPlainHttpRemote,
   normalizeSavedServerUrl,
   isDatabricksManagedServerUrl,
+  isDatabricksAppsServerUrl,
   databricksWorkspaceUiUrl,
   expandDatabricksWorkspaceUrl,
   WORKSPACE_UI_PATH,
@@ -198,6 +199,16 @@ describe("isDatabricksManagedServerUrl", () => {
     // Junk input fails closed:
     assert.equal(isDatabricksManagedServerUrl(null), false);
     assert.equal(isDatabricksManagedServerUrl("not a url"), false);
+  });
+});
+
+describe("isDatabricksAppsServerUrl", () => {
+  it("accepts only https Databricks Apps hosts", () => {
+    assert.equal(isDatabricksAppsServerUrl("https://databricksapps.com/"), true);
+    assert.equal(isDatabricksAppsServerUrl("http://databricksapps.com/"), false);
+    assert.equal(isDatabricksAppsServerUrl("https://evildatabricksapps.com"), false);
+    assert.equal(isDatabricksAppsServerUrl("https://app.example"), false);
+    assert.equal(isDatabricksAppsServerUrl("not a url"), false);
   });
 });
 

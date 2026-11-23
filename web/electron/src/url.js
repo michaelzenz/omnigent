@@ -270,10 +270,25 @@
     }
     if (url.protocol !== "https:") return false;
     const host = url.hostname.toLowerCase();
-    if (host === DATABRICKS_APPS_HOST_SUFFIX || host.endsWith(`.${DATABRICKS_APPS_HOST_SUFFIX}`)) {
-      return true;
-    }
+    if (isDatabricksAppsHost(host)) return true;
     return isDatabricksWorkspaceHost(host);
+  }
+
+  function isDatabricksAppsHost(host) {
+    const normalized = (host ?? "").toLowerCase();
+    return (
+      normalized === DATABRICKS_APPS_HOST_SUFFIX ||
+      normalized.endsWith(`.${DATABRICKS_APPS_HOST_SUFFIX}`)
+    );
+  }
+
+  function isDatabricksAppsServerUrl(rawUrl) {
+    try {
+      const url = new URL(rawUrl);
+      return url.protocol === "https:" && isDatabricksAppsHost(url.hostname);
+    } catch {
+      return false;
+    }
   }
 
   /** Browser OAuth/session bridging is workspace/account-only, not Databricks Apps. */
@@ -334,10 +349,7 @@
     }
     // Databricks Apps share the workspace ``server: databricks`` header but have
     // no workspace UI mount, so never expand them.
-    const host = url.hostname.toLowerCase();
-    if (host === DATABRICKS_APPS_HOST_SUFFIX || host.endsWith(`.${DATABRICKS_APPS_HOST_SUFFIX}`)) {
-      return normalized;
-    }
+    if (isDatabricksAppsHost(url.hostname)) return normalized;
     let probe;
     try {
       probe = await fetch(`${url.origin}/`, {
@@ -542,6 +554,7 @@
     databricksWorkspaceUiUrl,
     expandDatabricksWorkspaceUrl,
     isDatabricksManagedServerUrl,
+    isDatabricksAppsServerUrl,
     isDatabricksOAuthServerUrl,
     WELL_KNOWN_MANIFEST_PATH,
     MANIFEST_FETCH_TIMEOUT_MS,

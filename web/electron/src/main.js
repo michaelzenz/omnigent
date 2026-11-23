@@ -119,6 +119,7 @@ const {
   SESSION_REJECTED,
   IP_ACL_BLOCKED,
 } = require("./databricks-auth");
+const { createDatabricksAppsAuth } = require("./databricks-apps-auth");
 const { decideWindowOpen, stripCrossOriginOpenerHeaders, WEB_SCHEMES } = require("./popupPolicy");
 const {
   SETTINGS_PATH,
@@ -978,6 +979,7 @@ const EXPIRY_RELOAD_MIN_INTERVAL_MS = 15_000;
 // Read the rollback preference once: a running connection must never change auth modes.
 let databricksAuthMode;
 let databricksAuth;
+let databricksAppsAuth;
 let oidcAuth;
 const connectionAttempts = new WeakMap();
 // Workspaces whose stored credentials minted a session Databricks then rejected;
@@ -1008,7 +1010,7 @@ function reportConnectionProgress(win, attempt, phase) {
   win.webContents.send("omnigent:connection-progress", { requestId: attempt.requestId, phase });
 }
 
-function usesBrowserAuth(url) {
+function selectedDatabricksAuthMode() {
   if (databricksAuthMode === undefined) {
     databricksAuthMode = readDatabricksAuthMode({
       registerDefaults: systemPreferences.registerDefaults?.bind(systemPreferences),
@@ -1016,7 +1018,15 @@ function usesBrowserAuth(url) {
     });
     console.log(`[omnigent] databricks auth: selected workspace auth mode=${databricksAuthMode}`);
   }
-  return usesDatabricksBrowserAuth(url, databricksAuthMode);
+  return databricksAuthMode;
+}
+
+function usesBrowserAuth(url) {
+  return usesDatabricksBrowserAuth(url, selectedDatabricksAuthMode());
+}
+
+function usesAppsBrowserSignIn(url) {
+  return selectedDatabricksAuthMode() === "browser" && getDatabricksAppsAuth().covers(url);
 }
 
 // Chromium net errors that mean the host could not be reached at all.
@@ -1258,6 +1268,15 @@ function getDatabricksAuth() {
     isSetupUrl: isSetupPageUrl,
   });
   return databricksAuth;
+}
+
+function getDatabricksAppsAuth() {
+  databricksAppsAuth ??= createDatabricksAppsAuth({
+    session: session.defaultSession,
+    ensureSession: ensureDatabricksSession,
+    onAuthRequired: showDatabricksAuthRequired,
+  });
+  return databricksAppsAuth;
 }
 
 /** Whether a window signs in to its OIDC server through the system browser. */
@@ -1564,6 +1583,7 @@ function pinWindow(win, origin, attemptToKeep) {
     if (connectionAttempts.get(win) !== attemptToKeep) abortConnectionAttempt(win);
     if (origin === null && usesBrowserAuth(state.origin)) databricksAuth?.rejectConnection(win);
     else databricksAuth?.detach(win);
+    databricksAppsAuth?.detach(win);
     oidcAuth?.detach(win);
     state.authKind = null;
     // Leaving a server: this window's unread contribution goes with it.
@@ -2368,6 +2388,7 @@ async function loadServerUrl(
     assertCurrent();
     diagnostics.record("connection_start", { origin: originOf(serverUrl), interactive });
     databricksAuth?.reset(win);
+    databricksAppsAuth?.detach(win);
     oidcAuth?.detach(win);
     pinWindow(win, originOf(serverUrl), attempt);
     setWindowServerUrl(win, serverUrl);
@@ -2454,6 +2475,34 @@ async function loadServerUrl(
               returnUrl: workspaceUrl || target,
               interactive,
             });
+          }
+        }
+        throw error;
+      }
+    } else if (usesAppsBrowserSignIn(serverUrl)) {
+      diagnostics.record("auth_mode", { origin: originOf(serverUrl), phase: "databricks" });
+      reportConnectionProgress(win, attempt, "authenticating");
+      win.webContents.stop();
+      if (!isSetupPageUrl(win.webContents.getURL()) && !reconnectOverlay.isShown(win)) {
+        connectionLoading.show(win, attempt, "Signing in…");
+      }
+      const appOrigin = originOf(serverUrl);
+      const browserSignIn = interactive && databricksBrowserSignInRequired.has(appOrigin);
+      try {
+        await getDatabricksAppsAuth().prepare(win, serverUrl, {
+          interactive,
+          useStoredCredentials: !browserSignIn,
+          loadUrl: target,
+          signal,
+        });
+        if (browserSignIn) databricksBrowserSignInRequired.delete(appOrigin);
+      } catch (error) {
+        if (current()) {
+          if (error.name === "AbortError") {
+            pinWindow(win, null);
+            setWindowServerUrl(win, null);
+          } else {
+            showDatabricksAuthRequired(win, serverUrl, error, { returnUrl: target, interactive });
           }
         }
         throw error;
@@ -2947,6 +2996,7 @@ function createWindow(targetUrl, opts = {}) {
     abortConnectionAttempt(win);
     cancelReconnect(win);
     databricksAuth?.reset(win);
+    databricksAppsAuth?.detach(win);
     oidcAuth?.detach(win);
     // Destroy this window's embedded-browser views, else they leak webContents.
     try {
