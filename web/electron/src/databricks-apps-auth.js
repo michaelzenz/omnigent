@@ -9,6 +9,8 @@
 // never go to the app. An unlisted app keeps the in-window sign-in.
 "use strict";
 
+const https = require("node:https");
+
 const { isDatabricksAppsServerUrl, isDatabricksOAuthServerUrl } = require("./url");
 const { SESSION_REJECTED } = require("./databricks-auth");
 
@@ -51,20 +53,39 @@ function isWorkspaceLoginPage(rawUrl, workspaceOrigin) {
   );
 }
 
+// Node's fetch always sends "sec-fetch-mode: cors", and the Apps sign-in gate answers
+// that with 401 instead of its redirect, so the probe uses a plain HTTPS request.
+function probeRedirect(url, { signal } = {}) {
+  return new Promise((resolve, reject) => {
+    const request = https.request(
+      url,
+      { method: "GET", headers: { accept: "text/html" }, signal, timeout: DISCOVERY_TIMEOUT_MS },
+      (response) => {
+        resolve({ status: response.statusCode ?? 0, location: response.headers.location ?? null });
+        response.destroy();
+      },
+    );
+    request.on("timeout", () => request.destroy(new Error("The app sign-in probe timed out")));
+    request.on("error", reject);
+    request.end();
+  });
+}
+
 // The Apps sign-in gate answers a request without credentials with a redirect to its
 // workspace. This request sends no cookies or tokens, and it accepts only a Databricks host.
+// When the probe fails, the app keeps the in-window sign-in.
 async function discoverWorkspaceOrigin(
   appOrigin,
-  { fetchFn = fetch, signal, isWorkspaceOrigin = isDatabricksOAuthServerUrl } = {},
+  { probe = probeRedirect, signal, isWorkspaceOrigin = isDatabricksOAuthServerUrl } = {},
 ) {
-  const timeout = AbortSignal.timeout(DISCOVERY_TIMEOUT_MS);
-  const response = await fetchFn(`${appOrigin}/`, {
-    redirect: "manual",
-    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-  });
-  await response.body?.cancel?.().catch(() => {});
-  const location = response.headers.get("location");
-  if (response.status < 300 || response.status >= 400 || !location) return null;
+  let answer;
+  try {
+    answer = await probe(`${appOrigin}/`, { signal });
+  } catch {
+    return null;
+  }
+  const { status, location } = answer;
+  if (status < 300 || status >= 400 || !location) return null;
   const origin = originOrNull(location, appOrigin);
   return origin && isWorkspaceOrigin(origin) ? origin : null;
 }
@@ -83,7 +104,7 @@ function createDatabricksAppsAuth({
   isAppUrl = isDatabricksAppsServerUrl,
   isWorkspaceOrigin = isDatabricksOAuthServerUrl,
   appOrigins = browserSignInAppOrigins(process.env, isAppUrl),
-  fetchFn = fetch,
+  probe = probeRedirect,
   now = Date.now,
 }) {
   const workspaces = new Map();
@@ -95,7 +116,7 @@ function createDatabricksAppsAuth({
 
   async function workspaceOriginFor(appOrigin, signal) {
     if (workspaces.has(appOrigin)) return workspaces.get(appOrigin);
-    const origin = await discoverWorkspaceOrigin(appOrigin, { fetchFn, signal, isWorkspaceOrigin });
+    const origin = await discoverWorkspaceOrigin(appOrigin, { probe, signal, isWorkspaceOrigin });
     if (origin) workspaces.set(appOrigin, origin);
     return origin;
   }

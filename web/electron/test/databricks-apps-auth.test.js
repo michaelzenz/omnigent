@@ -36,20 +36,20 @@ const drain = () =>
   });
 
 function redirectTo(location, status = 302) {
-  return { status, headers: new Headers(location ? { location } : {}), body: null };
+  return { status, location };
 }
 
 function harness({ response = redirectTo(AUTHORIZE), ensureSession } = {}) {
   let clock = NOW;
-  const calls = { fetch: [], ensure: [], load: [], authRequired: [] };
+  const calls = { probe: [], ensure: [], load: [], authRequired: [] };
   const session = { name: "default" };
   const auth = createDatabricksAppsAuth({
     session,
     isAppUrl,
     isWorkspaceOrigin,
     appOrigins: new Set([APP]),
-    fetchFn: async (url, init) => {
-      calls.fetch.push({ url, init });
+    probe: async (url) => {
+      calls.probe.push(url);
       return response;
     },
     ensureSession: async (...args) => {
@@ -109,31 +109,32 @@ describe("isWorkspaceLoginPage", () => {
 });
 
 describe("discoverWorkspaceOrigin", () => {
-  it("reads the workspace from the app's sign-in redirect without following it", async () => {
+  it("reads the workspace from the redirect of the app's root", async () => {
     const requests = [];
-    const fetchFn = async (url, init) => {
-      requests.push({ url, redirect: init.redirect });
+    const probe = async (url) => {
+      requests.push(url);
       return redirectTo(AUTHORIZE);
     };
 
-    assert.equal(await discoverWorkspaceOrigin(APP, { fetchFn, isWorkspaceOrigin }), WORKSPACE);
-    assert.deepEqual(requests, [{ url: `${APP}/`, redirect: "manual" }]);
+    assert.equal(await discoverWorkspaceOrigin(APP, { probe, isWorkspaceOrigin }), WORKSPACE);
+    assert.deepEqual(requests, [`${APP}/`]);
   });
 
-  it("finds no workspace for a foreign redirect or an answer without one", async () => {
-    const responses = [
-      redirectTo("https://example.com/authorize"),
-      redirectTo(null),
-      { status: 403, headers: new Headers(), body: null },
+  it("finds no workspace for a foreign redirect, an answer without one, or a failed probe", async () => {
+    const probes = [
+      async () => redirectTo("https://example.com/authorize"),
+      async () => redirectTo(null),
+      async () => ({ status: 403, location: null }),
+      async () => {
+        throw new Error("connection reset");
+      },
     ];
 
     const found = await Promise.all(
-      responses.map((response) =>
-        discoverWorkspaceOrigin(APP, { fetchFn: async () => response, isWorkspaceOrigin }),
-      ),
+      probes.map((probe) => discoverWorkspaceOrigin(APP, { probe, isWorkspaceOrigin })),
     );
 
-    assert.deepEqual(found, [null, null, null]);
+    assert.deepEqual(found, [null, null, null, null]);
   });
 });
 
@@ -159,7 +160,7 @@ describe("createDatabricksAppsAuth", () => {
     await auth.prepare(window(), APP);
 
     assert.equal(first, WORKSPACE);
-    assert.equal(calls.fetch.length, 1);
+    assert.equal(calls.probe.length, 1);
     assert.deepEqual(calls.ensure[0], [
       session,
       WORKSPACE,
