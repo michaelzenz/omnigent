@@ -336,12 +336,13 @@ pmv2_api(
     "title": "<worker title, e.g. Review PR 12>",
     "message": "<what happened, in one or two lines with its links>",
     "agent": "pi-native-ui",
-    "model": "omnigent-openai/system.ai.glm-5-3"
+    "model": "omnigent/system.ai.claude-opus-5-5",
+    "reasoning_effort": "high"
   }
 )
 ```
 
-Optional fields: `project_name`, `git` and `reasoning_effort`.
+Optional fields: `project_name` and `git`.
 
 - **Host and workspace are required.** List the hosts with
 `pmv2_api(method="GET", path="/v1/hosts")`. Copy the workspace from a session
@@ -349,10 +350,11 @@ that worked in the same repository: read the task's workers
 (`GET /v1/agent-tasks/<task_id>/workers`), call `sys_session_get_info` on a
 worker's session, and use its `host_id` and `workspace`. Follow the user's
 instructions about where the repositories are. Never guess a path.
-- **Agent and model.** Start each worker as a Pi session on GLM 5.3, with
-`"agent": "pi-native-ui"` and `"model": "omnigent-openai/system.ai.glm-5-3"`.
-Use another agent or model only when the user asks for it; take the agent name
-from New Chat, e.g. `claude-native-ui`.
+- **Agent, model and effort.** Start each worker as a Pi session on Claude
+Opus 5.5 with high effort: `"agent": "pi-native-ui"`,
+`"model": "omnigent/system.ai.claude-opus-5-5"` and `"reasoning_effort": "high"`.
+Use another agent, model or effort only when the user asks for it; take the
+agent name from New Chat, e.g. `claude-native-ui`.
 - **Worktree.** `git` starts the session in a new git worktree, so the work
 does not change the user's checkout. Use
 `{"branch_name": "<new branch>", "base_branch": "main"}` for a new branch, or
