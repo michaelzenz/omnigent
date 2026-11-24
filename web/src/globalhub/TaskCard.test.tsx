@@ -127,12 +127,20 @@ describe("TaskCard", () => {
   it("clears Has update when a button on the card is clicked, and the button still works", async () => {
     renderCard(agentTask("t1", { has_update: true }));
 
+    fireEvent.click(screen.getByTestId("task-card-delete-t1"));
+
+    expect(await sentRequest()).toEqual(["/v1/agent-tasks/t1", "PATCH", { has_update: false }]);
+    expect(await screen.findByTestId("task-confirm-button")).toBeInTheDocument();
+  });
+
+  it("keeps Has update when the card moves to the queue end or the manager's chat opens", async () => {
+    renderCard(agentTask("t1", { manager_id: "m1", has_update: true }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Chat with Storage" }));
     fireEvent.click(screen.getByTestId("task-card-move-to-end-t1"));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(
-      fetchMock.mock.calls.map(([path, init]) => `${init?.method} ${String(path)}`).sort(),
-    ).toEqual(["PATCH /v1/agent-tasks/t1", "POST /v1/agent-tasks/t1/move-to-queue-end"]);
+    expect(await sentRequest()).toEqual(["/v1/agent-tasks/t1/move-to-queue-end", "POST", undefined]);
+    expect(screen.getByText("Has update")).toBeInTheDocument();
   });
 
   it("shows a resolved task without a manager, and the last card cannot move down", () => {

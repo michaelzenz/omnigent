@@ -80,7 +80,13 @@ export const TaskCard = memo(function TaskCard({
       data-testid={`task-card-${task.id}`}
       data-task-id={task.id}
       tabIndex={-1}
-      onClickCapture={hasUpdate ? () => clearNews.mutate({ has_update: false }) : undefined}
+      onClickCapture={
+        hasUpdate
+          ? (event) => {
+              if (!keepsUpdateFlag(event.target)) clearNews.mutate({ has_update: false });
+            }
+          : undefined
+      }
     >
       <header className="space-y-2 border-b border-border px-4 py-3">
         <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
@@ -147,6 +153,7 @@ export const TaskCard = memo(function TaskCard({
                 moveToEnd.mutate(undefined, { onError: () => cancelMove?.() });
               }}
               data-testid={`task-card-move-to-end-${task.id}`}
+              data-keeps-update-flag=""
             >
               {moveToEnd.isPending ? "Moving…" : "Move to queue end"}
             </Button>
@@ -213,6 +220,10 @@ export const TaskCard = memo(function TaskCard({
   );
 });
 
+function keepsUpdateFlag(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("[data-keeps-update-flag]") !== null;
+}
+
 /** The manager's name; while the manager has a session, a button that opens its chat. */
 function ManagerName({
   task,
@@ -233,6 +244,7 @@ function ManagerName({
       variant="outline"
       size="lg"
       className="w-full justify-start font-medium aria-pressed:bg-accent aria-pressed:text-foreground"
+      data-keeps-update-flag=""
     >
       <MessageSquareIcon aria-hidden />
       <span className="truncate">{title}</span>

@@ -17,6 +17,7 @@ import {
 } from "@/hooks/useGlobalHubNotice";
 import { BOARD_COLUMN_CLASS } from "./boardLayout";
 import { HtmlNoticeBody } from "./HtmlNoticeBody";
+import { OpenSessionLink } from "./OpenSessionLink";
 
 /** The notice pinned at the top of the board, e.g. the custodian's cleanup proposal. */
 export function SystemNoticeCard() {
@@ -41,9 +42,17 @@ export function SystemNoticeCard() {
             </p>
             <h2 className="text-base leading-snug font-semibold">{notice.title}</h2>
             {notice.publisher_label && (
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                Published by {notice.publisher_label}
-              </p>
+              <div className="mt-0.5 flex items-center gap-2">
+                <p className="min-w-0 truncate text-xs text-muted-foreground">
+                  Published by {notice.publisher_label}
+                </p>
+                {notice.publisher_session_id && (
+                  <OpenSessionLink
+                    sessionId={notice.publisher_session_id}
+                    label={`Open the ${notice.publisher_label} session`}
+                  />
+                )}
+              </div>
             )}
           </div>
           <Button

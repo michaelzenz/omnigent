@@ -209,15 +209,19 @@ do. The roster shows each task's state:
 - The PATCH moves a revived task back to the top of the board.
 
 **Flag news for the user.** The "Has update" badge on the task card is how the
-user sees which tasks changed, so flag generously. Send `"has_update": true` in
-this PATCH whenever the event adds something new to the task: a result, a
+user sees which tasks changed, so flag only real news. Send `"has_update": true`
+in this PATCH whenever the event adds something new to the task: a result, a
 finding or a number, an answer, a question or a blocker for the user, a new
 link such as a pull request, a change of state such as a merge or a failed
 check, or work that finished. Flag a worker's finished turn also when the user
 started the turn or watched it live. Do not flag an event that adds nothing
 new, for example a turn that only says it still waits, or that repeats what the
-card already shows. The card shows the badge until the user clicks the card; do
-not clear the flag yourself.
+card already shows. A routine check-in is not news: when a worker's turn only
+checks its work again, for example on a timer or a reminder, and finds no
+change and nothing to do (the CI still runs, the pull request still waits for a
+review, no new comment), do not flag it, also when the turn writes a long
+report. Flag such a turn only when it finds one of the changes above. The card
+shows the badge until the user clicks the card; do not clear the flag yourself.
 
 **Maintain the worker title.** When you assign a `session.turn.finished`
 event (Step 3), its session becomes the task's worker. Every worker lane has
@@ -301,6 +305,14 @@ Send a worker only one message: its first message, which the start route
 below sends. Do not send it any later message. Do not answer its questions
 and do not pass on new work; the user talks to the worker.
 
+Keep the message short and only informational. Say what happened, in one or
+two lines with its links, e.g. "New review request: <pull request link>" or
+"<person> sent you a Slack DM: <link>". Do not give instructions: no steps, no
+goal, no definition of done and no reminders of rules. The worker decides what
+to do from its own instructions. The only exception is a direct request from
+the user, that is, a message to you that does not start with `[System`. When
+the user asks for something special, include that request in the user's words.
+
 When an event asks for more work on something that a worker already does,
 for example a failed check or a review comment on the pull request that the
 worker opened, fold it into the task (Step 2) and send `"has_update": true`,
@@ -322,7 +334,7 @@ pmv2_api(
     "host_id": "<host id>",
     "workspace": "<absolute path of the repository on that host>",
     "title": "<worker title, e.g. Review PR 12>",
-    "message": "<the complete work order>",
+    "message": "<what happened, in one or two lines with its links>",
     "agent": "pi-native-ui",
     "model": "omnigent-openai/system.ai.glm-5-3"
   }
@@ -346,13 +358,10 @@ does not change the user's checkout. Use
 `{"branch_name": "<new branch>", "base_branch": "main"}` for a new branch, or
 `{"branch_name": "<existing branch>", "existing_branch": true}` for a branch
 that exists, for example the branch of a pull request.
-- **First message.** It is the only message that the worker gets from you, so
-give the complete work order. The session knows nothing about the task. Write
-what the work should achieve (the Overview's Goal line), the links, and what
-done means. Ask it to follow the sources of its work with `event_subscriptions`:
-the ticket or thread that it works from, the pull request that it opens, and
-each change that it must wait for, e.g. a CI run, a review, a reply or a
-rollout. Their events then go to it and not to the broker.
+- **First message.** Write it as **Messages to workers** says: the event and
+its links, e.g. "New review request: <pull request link>". Do not add a work
+order, a goal or a request to follow sources. The worker follows the sources
+of its work on its own, so their events go to it and not to the broker.
 - **One session for each piece of work.** Do not start a second session for
 work that a worker already does, and do not message that worker (see
 **Messages to workers**).

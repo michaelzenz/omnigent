@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 
 import { SystemNoticeCard } from "./SystemNoticeCard";
 import type * as NoticeBridgeModule from "./noticeBridge";
@@ -56,7 +57,9 @@ function renderCard(): void {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <SystemNoticeCard />
+      <MemoryRouter>
+        <SystemNoticeCard />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -78,10 +81,11 @@ afterEach(() => {
 });
 
 describe("SystemNoticeCard", () => {
-  it("shows the notice with its publisher and body, and marks it seen", async () => {
+  it("shows the notice with its publisher, a link to that session, and body, and marks it seen", async () => {
     serveNotice(
       systemNotice("n1", {
         title: "3 stale sessions",
+        publisher_session_id: "s-custodian",
         publisher_label: "Custodian",
         body: "Toggle the **ones** to delete.",
       }),
@@ -91,6 +95,9 @@ describe("SystemNoticeCard", () => {
 
     expect(await screen.findByRole("heading", { name: "3 stale sessions" })).toBeInTheDocument();
     expect(screen.getByText("Published by Custodian")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open the Custodian session" }).getAttribute("href"),
+    ).toBe("/c/s-custodian");
     expect(screen.getByText("ones")).toBeInTheDocument();
     expect(screen.queryByText(/\*\*/)).toBeNull();
     expect(localStorage.getItem(globalHubStorageKey("seen-notice-id") ?? "")).toBe("n1");
