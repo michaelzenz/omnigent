@@ -5336,6 +5336,57 @@ def _agent_headers(db_uri: str) -> dict[str, str]:
     }
 
 
+async def test_agents_cannot_create_an_automation_in_a_mode_that_skips_approval(
+    auth_app: FastAPI, auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    _make_user(db_uri)
+    transport = httpx.ASGITransport(app=auth_app, client=("192.0.2.10", 12345))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as agent:
+        refused = await agent.post(
+            "/v1/scheduled-tasks",
+            json=_create_body(permission_mode="bypassPermissions"),
+            headers=_agent_headers(db_uri),
+        )
+        allowed = await agent.post(
+            "/v1/scheduled-tasks",
+            json=_create_body(permission_mode="acceptEdits"),
+            headers=_agent_headers(db_uri),
+        )
+    assert refused.status_code == 403, refused.text
+    assert "skips approval" in refused.json()["error"]["message"]
+    assert allowed.status_code == 200, allowed.text
+    listed = (await auth_client.get("/v1/scheduled-tasks", headers=_headers())).json()
+    assert [task["permission_mode"] for task in listed["scheduled_tasks"]] == ["acceptEdits"]
+
+
+async def test_agents_can_only_pause_or_restrict_an_automation_that_skips_approval(
+    auth_app: FastAPI, auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    _make_user(db_uri)
+    task_id = await _create_task(auth_client, permission_mode="bypassPermissions")
+    url = f"/v1/scheduled-tasks/{task_id}"
+    transport = httpx.ASGITransport(app=auth_app, client=("192.0.2.10", 12345))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as agent:
+        refused = await agent.patch(
+            url, json={"prompt": "push to prod"}, headers=_agent_headers(db_uri)
+        )
+        paused = await agent.patch(url, json={"state": "paused"}, headers=_agent_headers(db_uri))
+        paused_saved = (await auth_client.get(url, headers=_headers())).json()
+        restricted = await agent.patch(
+            url, json={"permission_mode": "acceptEdits"}, headers=_agent_headers(db_uri)
+        )
+    assert refused.status_code == 403, refused.text
+    assert "skips approval" in refused.json()["error"]["message"]
+    assert paused.status_code == 200, paused.text
+    assert (paused_saved["prompt"], paused_saved["permission_mode"], paused_saved["state"]) == (
+        "triage the queue",
+        "bypassPermissions",
+        "paused",
+    )
+    assert restricted.status_code == 200, restricted.text
+    assert restricted.json()["permission_mode"] == "acceptEdits"
+
+
 @_SHARING
 @pytest.mark.parametrize(
     "field",

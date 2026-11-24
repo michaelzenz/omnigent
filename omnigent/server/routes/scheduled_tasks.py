@@ -34,6 +34,7 @@ from omnigent.db.account_authority import account_generation, current_account_us
 from omnigent.entities import Agent, Conversation, ScheduledTask, ScheduledTaskRun
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.inner._subprocess_lifecycle import await_cleanup_task
+from omnigent.native.permission_modes import APPROVAL_SKIPPING_PERMISSION_MODES
 from omnigent.runtime import pending_elicitations
 from omnigent.server.auth import LEVEL_OWNER, RESERVED_USER_LOCAL, AuthProvider
 from omnigent.server.bundles import agent_for_user
@@ -466,6 +467,17 @@ def _workflow_reuse_change(
 
 
 _AGENT_AUTOMATION_ACTION = "Agent automation changes"
+
+
+def _refuse_agent_approval_skipping_mode(request: Request, mode: str | None) -> None:
+    if mode in APPROVAL_SKIPPING_PERMISSION_MODES and request_from_agent(request):
+        raise OmnigentError(
+            f"permission_mode {mode!r} skips approval, so an agent can't create or change "
+            "an automation that runs in it, except to pause it. Choose a mode that asks for "
+            "approval or uses the harness's reviewer, or ask the user to change it on the "
+            "Automations page.",
+            code=ErrorCode.FORBIDDEN,
+        )
 
 
 def _inbox_cursor_task_id(task_id: str) -> str:
@@ -1086,6 +1098,7 @@ def create_scheduled_tasks_router(
             )
         _validate_timezone_or_400(body.timezone)
         permission_mode = validate_scheduled_permission_mode(body.permission_mode)
+        _refuse_agent_approval_skipping_mode(request, permission_mode)
         agent, workspace, model_override, reasoning_effort = await _validate_launch_inputs(
             request,
             owner=owner,
@@ -1669,6 +1682,7 @@ def create_scheduled_tasks_router(
         if body.timezone is not None:
             _validate_timezone_or_400(body.timezone)
         fields = body.model_dump(exclude_unset=True)
+        pause_only = fields.keys() == {"state"} and fields["state"] == "paused"
         if fields.get("session_mode") is None:
             fields.pop("session_mode", None)
         if fields.get("mcp_services") is None:
@@ -1738,6 +1752,10 @@ def create_scheduled_tasks_router(
                     agent=agent,
                     agent_cache=agent_cache,
                 )
+        if not pause_only:
+            _refuse_agent_approval_skipping_mode(
+                request, fields.get("permission_mode", existing.permission_mode)
+            )
         if "mcp_services" in fields or (
             existing.mcp_services
             and (
@@ -1879,6 +1897,10 @@ def create_scheduled_tasks_router(
         def guard(locked: ScheduledTask) -> None:
             if shared_target_guard is not None:
                 shared_target_guard(locked)
+            if not pause_only:
+                _refuse_agent_approval_skipping_mode(
+                    request, fields.get("permission_mode", locked.permission_mode)
+                )
             # Another update may have changed the prompt or session mode since the snapshot.
             locked_change = _workflow_reuse_change(locked, requested_session)
             if locked_change is not None:

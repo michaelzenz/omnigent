@@ -1468,15 +1468,15 @@ approval expiry, and uncertain completion after a write. Execution-budget
 accounting is covered by `tests/runtime/test_tool_call_deadline.py`.
 
 For a human check in an isolated instance, use a native session in Chat to ask
-for an automation named "Approval deadline check" with harmless instructions
-and a first run well after the test. Leave its create approval pending for
-more than five minutes:
-the agent must not report a tool failure or claim creation, and the automation
-must not exist yet. Approve and confirm exactly one automation appears.
-Repeat with Reject and with cancelling the turn: no automation should appear,
-and cancelled approvals must no longer be actionable. Repeat the request from
-the native terminal and answer the same approval in Chat or Inbox. Remove the
-throwaway automation afterward. The 30-second save-request timeout is unchanged.
+it to add a harmless session policy with `sys_add_policy`, which always asks
+for approval in Omnigent. If the harness shows its own prompt first, allow it.
+Leave the Omnigent approval pending for more than five minutes: the agent
+must not report a tool failure or claim the policy exists, and the session
+must not have the policy yet. Approve and confirm exactly one policy appears.
+Repeat with Reject and with cancelling the turn: no policy should appear, and
+cancelled approvals must no longer be actionable. Repeat the request from the
+native terminal and answer the same approval in Chat or Inbox. Remove the
+throwaway policy afterward.
 
 The native client's own deadline must exceed the wait being tested. Codex 0.166.0
 has a separate 300-second MCP deadline that does not extend with relay progress.
@@ -1487,13 +1487,12 @@ for 345 seconds. A TUI-only launch argument does not configure the separate
 app-server's MCP client. This isolates the relay's unchanged 300-second execution
 budget; it does not prove the default client can wait for a full approval day.
 With the default client deadline, cancellation must clear the approval without
-creating the automation. Record the client configuration with the evidence.
+adding the policy. Record the client configuration with the evidence.
 
 Native sessions also get `sys_reminder_set`, which needs no approval: the call
 creates the reminder at once, and its message arrives later as a new turn in the
-same session.
-`tests/policies/builtins/test_safety.py::test_ask_on_scheduled_task_change_allows_a_reminder`
-covers the policy. For a human check in an isolated instance
+same session. `tests/runtime/policies/test_mandatory_approval_guards.py` covers
+that no policy asks for it. For a human check in an isolated instance
 started with `OMNIGENT_FEATURES=one_time_automations` (one-time automations are
 off by default; the database scheduler, `automations_v2`, is on by default; without
 either the tool refuses), ask a native session to remind it in 15 minutes. Confirm

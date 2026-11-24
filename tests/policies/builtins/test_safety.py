@@ -678,261 +678,22 @@ def test_ask_on_add_policy_handles_missing_arguments() -> None:
     assert result["result"] == "ASK"
 
 
-# ── ask_on_scheduled_task_change ───────────────────────────────
-
-
-@pytest.mark.parametrize("data_name", ["sys_scheduled_task_create", "transformed_tool"])
-def test_ask_on_scheduled_task_change_asks_for_create_with_preview(data_name: str) -> None:
-    """A create call ASKs and names the task and its schedule."""
-    from omnigent.policies.builtins.safety import ask_on_scheduled_task_change
-
-    result = ask_on_scheduled_task_change(
-        {
-            "type": "tool_call",
-            "target": "sys_scheduled_task_create",
-            "data": {
-                "name": data_name,
-                "arguments": {
-                    "name": "nightly triage",
-                    "prompt": "Triage new issues.",
-                    "permission_mode": None,
-                    "rrule": "FREQ=DAILY;BYHOUR=9",
-                },
-            },
-        }
-    )
-    assert result["result"] == "ASK"
-    assert "nightly triage" in result["reason"]
-    assert "rrule=FREQ=DAILY;BYHOUR=9" in result["reason"]
-    assert "Task permission setting: agent default (no task override)" in result["reason"]
-
-
-def test_ask_on_scheduled_task_change_allows_a_reminder() -> None:
-    from omnigent.policies.builtins.safety import ask_on_scheduled_task_change
-
-    result = ask_on_scheduled_task_change(
-        {
-            "type": "tool_call",
-            "target": "sys_reminder_set",
-            "data": {"arguments": {"message": "Check CI on PR #12.", "delay_seconds": 2700}},
-        }
-    )
-    assert result == {"result": "ALLOW"}
-
-
-def test_ask_on_scheduled_task_change_notes_a_continued_sessions_own_mode() -> None:
-    """A continuing task's setting doesn't change the mode of the session it continues."""
-    from omnigent.policies.builtins.safety import ask_on_scheduled_task_change
-
-    result = ask_on_scheduled_task_change(
-        {
-            "type": "tool_call",
-            "target": "sys_scheduled_task_create",
-            "data": {
-                "arguments": {
-                    "name": "follow up",
-                    "prompt": "Check the deploy.",
-                    "permission_mode": "dontAsk",
-                    "rrule": "FREQ=DAILY;BYHOUR=9",
-                    "session_mode": "continue",
-                    "session_id": "conv_1",
-                },
-            },
-        }
-    )
-    assert result["result"] == "ASK"
-    assert (
-        "Task permission setting: dontAsk (skips approval prompts, so unattended runs act "
-        "without asking); a continued session keeps its own permission mode"
-    ) in result["reason"].splitlines()
-
-
-def test_ask_on_scheduled_task_change_keeps_full_prompt_and_settings_visible() -> None:
-    """Launch settings and every prompt character remain in the approval reason."""
-    from omnigent.policies.builtins.safety import ask_on_scheduled_task_change
-
-    prompt = "Summarize everything. " * 300
-    result = ask_on_scheduled_task_change(
-        {
-            "type": "tool_call",
-            "target": "sys_scheduled_task_create",
-            "data": {
-                "name": "sys_scheduled_task_create",
-                "arguments": {
-                    "name": "nightly triage",
-                    "prompt": prompt,
-                    "rrule": "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0",
-                    "timezone": "America/Los_Angeles",
-                    "agent_id": "ag_" + "a" * 70,
-                    "host_id": "host_" + "b" * 70,
-                    "workspace": "/srv/" + "c" * 70,
-                    "model_override": "databricks-" + "d" * 70,
-                    "execution_target": "managed_sandbox",
-                    "project_name": "Nightly triage",
-                    "permission_mode": "bypassPermissions",
-                    "max_cost_usd": 2.5,
-                },
-            },
-        }
-    )
-    reason = result["reason"]
-    assert result["result"] == "ASK"
-    for setting in (
-        "agent_id=ag_" + "a" * 54 + "...",
-        "rrule=FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0",
-        "timezone=America/Los_Angeles",
-        "host_id=host_" + "b" * 52 + "...",
-        "workspace=/srv/",
-        "execution_target=managed_sandbox",
-        "project_name=Nightly triage",
-        "permission_mode=bypassPermissions",
-        "max_cost_usd=2.5",
-    ):
-        assert setting in reason, reason
-    assert prompt in reason
-    assert (
-        "Task permission setting: bypassPermissions "
-        "(skips approval prompts, so unattended runs act without asking)"
-    ) in reason.splitlines()
+# ── scheduled_task_arguments_error ─────────────────────────────
 
 
 @pytest.mark.parametrize(
-    "extras,expected",
+    ("action", "arguments"),
     [
-        (
-            {f"setting_{i:02d}": "v" * 80 for i in range(20)},
-            ", ".join(f"setting_{i:02d}=" + "v" * 57 + "..." for i in range(2)) + ", ...",
-        ),
-        ({"x" * 250: "value"}, "..."),
-        ({"x" * 150: "first, " + "v" * 70}, "..."),
-        ({"x" * 190: "a, b"}, "x" * 190 + "=a, b"),
+        ("create", {"prompt": "Review every issue."}),
+        ("update", {"scheduled_task_id": "0123456789abcdef0123456789abcdef", "state": "paused"}),
     ],
-    ids=["many-extras", "long-key", "comma-within-clipped-pair", "complete-comma-value"],
 )
-def test_ask_on_scheduled_task_change_bounds_the_preview(
-    extras: dict[str, object], expected: str
+def test_scheduled_task_arguments_error_allows_omitted_fields(
+    action: str, arguments: dict[str, object]
 ) -> None:
-    """Many long extra arguments and a long name still give a short, readable reason."""
-    from omnigent.policies.builtins.safety import ask_on_scheduled_task_change
+    from omnigent.policies.builtins.safety import scheduled_task_arguments_error
 
-    arguments = dict(extras)
-    arguments["name"] = "N" * 100
-    arguments["timezone"] = "UTC"
-    arguments["prompt"] = "Run the review."
-    arguments["permission_mode"] = None
-    result = ask_on_scheduled_task_change(
-        {
-            "type": "tool_call",
-            "target": "sys_scheduled_task_create",
-            "data": {"name": "sys_scheduled_task_create", "arguments": arguments},
-        }
-    )
-    reason = result["reason"]
-    assert result["result"] == "ASK"
-    assert "'" + "N" * 57 + "...'" in reason
-    assert reason.count("v" * 58) == 0
-    assert "Settings: name=" in reason
-    assert f"timezone=UTC, permission_mode=None, {expected}" in reason
-    settings = reason.split("Settings: ", 1)[1].split("\nFull automation instructions:", 1)[0]
-    # These known fields use at most 102 characters; extras have a 200-character budget.
-    assert len(settings) <= 302
-
-
-def test_ask_on_scheduled_task_change_names_missing_identifiers() -> None:
-    """A create without a name or an update without an id still gets a readable preview."""
-    from omnigent.policies.builtins.safety import ask_on_scheduled_task_change
-
-    create = ask_on_scheduled_task_change(
-        {
-            "type": "tool_call",
-            "target": "sys_scheduled_task_create",
-            "data": {
-                "name": "sys_scheduled_task_create",
-                "arguments": {
-                    "prompt": "Run it.",
-                    "permission_mode": None,
-                    "rrule": "FREQ=HOURLY",
-                },
-            },
-        }
-    )
-    update = ask_on_scheduled_task_change(
-        {
-            "type": "tool_call",
-            "target": "sys_scheduled_task_update",
-            "data": {
-                "name": "sys_scheduled_task_update",
-                "arguments": {
-                    "prompt": "Run it.",
-                    "permission_mode": None,
-                    "state": "paused",
-                },
-            },
-        }
-    )
-    assert "scheduled task '(unnamed)'" in create["reason"]
-    assert update["result"] == "DENY"
-    assert "scheduled_task_id" in update["reason"]
-
-
-def test_ask_on_scheduled_task_change_asks_for_update_naming_fields() -> None:
-    """An update call ASKs and names the task id and the fields it changes."""
-    from omnigent.policies.builtins.safety import ask_on_scheduled_task_change
-
-    result = ask_on_scheduled_task_change(
-        {
-            "type": "tool_call",
-            "target": "sys_scheduled_task_update",
-            "data": {
-                "name": "sys_scheduled_task_update",
-                "arguments": {
-                    "scheduled_task_id": "0123456789abcdef0123456789abcdef",
-                    "prompt": "Triage new issues.",
-                    "permission_mode": "auto",
-                    "state": "paused",
-                },
-            },
-        }
-    )
-    assert result["result"] == "ASK"
-    assert "0123456789abcdef0123456789abcdef" in result["reason"]
-    assert "state=paused" in result["reason"]
-
-
-@pytest.mark.parametrize(
-    "tool", ["sys_scheduled_task_list", "sys_scheduled_task_delete", "web_search"]
-)
-def test_ask_on_scheduled_task_change_allows_other_tools(tool: str) -> None:
-    """Reads, deletes and unrelated tools pass through."""
-    from omnigent.policies.builtins.safety import ask_on_scheduled_task_change
-
-    result = ask_on_scheduled_task_change(
-        {"type": "tool_call", "target": tool, "data": {"name": tool, "arguments": {}}}
-    )
-    assert result["result"] == "ALLOW"
-
-
-def test_ask_on_scheduled_task_change_allows_non_tool_events() -> None:
-    """Non-tool_call events pass through."""
-    from omnigent.policies.builtins.safety import ask_on_scheduled_task_change
-
-    result = ask_on_scheduled_task_change({"type": "request", "data": "hello"})
-    assert result["result"] == "ALLOW"
-
-
-def test_ask_on_scheduled_task_change_denies_missing_arguments() -> None:
-    """Missing or non-dict review arguments fail closed."""
-    from omnigent.policies.builtins.safety import ask_on_scheduled_task_change
-
-    result = ask_on_scheduled_task_change(
-        {
-            "type": "tool_call",
-            "target": "sys_scheduled_task_update",
-            "data": {"name": "sys_scheduled_task_update", "arguments": "not-a-dict"},
-        }
-    )
-    assert result["result"] == "DENY"
-    assert "scheduled_task_id" in result["reason"]
+    assert scheduled_task_arguments_error(arguments, action=action) is None
 
 
 @pytest.mark.parametrize("action", ["create", "update"])
@@ -941,27 +702,21 @@ def test_ask_on_scheduled_task_change_denies_missing_arguments() -> None:
     [("prompt", value) for value in [None, "", " \n\t", 1, ["instructions"]]]
     + [("permission_mode", value) for value in ["", " \n\t", 1, ["auto"], "null", " NULL "]],
 )
-def test_scheduled_task_approval_denies_invalid_review_values(
+def test_scheduled_task_arguments_error_names_invalid_values(
     action: str, field: str, value: object
 ) -> None:
-    """The string "null" is refused before approval, with the hint the runner gives."""
-    from omnigent.policies.builtins.safety import ask_on_scheduled_task_change
+    """The string "null" is refused, with the hint the runner gives."""
+    from omnigent.policies.builtins.safety import scheduled_task_arguments_error
 
-    result = ask_on_scheduled_task_change(
+    error = scheduled_task_arguments_error(
         {
-            "type": "tool_call",
-            "target": f"sys_scheduled_task_{action}",
-            "data": {
-                "arguments": {
-                    "scheduled_task_id": "0123456789abcdef0123456789abcdef",
-                    "prompt": "Review every issue.",
-                    "permission_mode": None,
-                    field: value,
-                }
-            },
-        }
+            "scheduled_task_id": "0123456789abcdef0123456789abcdef",
+            "prompt": "Review every issue.",
+            "permission_mode": None,
+            field: value,
+        },
+        action=action,
     )
-    assert result["result"] == "DENY"
     expected = {
         "prompt": "prompt must be a non-empty string",
         "permission_mode": (
@@ -969,65 +724,8 @@ def test_scheduled_task_approval_denies_invalid_review_values(
             "or JSON null (not the string 'null') for the agent default"
         ),
     }[field]
-    assert expected in result["reason"]
-
-
-@pytest.mark.parametrize(
-    ("action", "missing_field", "agent_id"),
-    [
-        ("create", "prompt", None),
-        ("create", "permission_mode", None),
-        ("update", "prompt", None),
-        ("update", "permission_mode", None),
-        ("update", "permission_mode", "another-agent"),
-    ],
-)
-def test_legacy_scheduled_task_approval_identifies_omitted_fields(
-    action: str, missing_field: str, agent_id: str | None
-) -> None:
-    from omnigent.policies.builtins.safety import ask_on_scheduled_task_change
-
-    arguments = {
-        "scheduled_task_id": "0123456789abcdef0123456789abcdef",
-        "prompt": "Review every issue.",
-        "permission_mode": "auto",
-    }
-    arguments.pop(missing_field)
-    if agent_id is not None:
-        arguments["agent_id"] = agent_id
-    result = ask_on_scheduled_task_change(
-        {
-            "type": "tool_call",
-            "target": f"sys_scheduled_task_{action}",
-            "data": {"arguments": arguments},
-        }
-    )
-    if action == "create" and missing_field == "prompt":
-        assert result["result"] == "DENY"
-    else:
-        assert result["result"] == "ASK"
-        if missing_field == "prompt":
-            expected_prompt = "(unchanged; not supplied by legacy caller)"
-            expected_permission = "auto"
-        else:
-            expected_prompt = "Review every issue."
-            if action == "create":
-                expected_permission = "agent default (no task override)"
-            elif agent_id is not None:
-                expected_permission = (
-                    "existing override retained if agent_id is unchanged; "
-                    "cleared to agent default (no task override) if agent_id changes "
-                    "(not supplied by legacy caller)"
-                )
-            else:
-                expected_permission = "unchanged (not supplied by legacy caller)"
-        assert f"Task permission setting: {expected_permission}" in result["reason"].splitlines()
-        assert result["reason"].endswith(
-            f"Full automation instructions:\n{expected_prompt}\nApprove?"
-        )
-        if action == "update":
-            assert "Legacy partial update" in result["reason"]
-            assert "unchanged values were not supplied" not in result["reason"]
+    assert error is not None
+    assert expected in error
 
 
 # ── block_skills: native Skill tool (PreToolUse hook path) ─────────────────

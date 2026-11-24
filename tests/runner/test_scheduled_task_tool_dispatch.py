@@ -159,30 +159,56 @@ async def test_create_posts_payload() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tool_name", ["sys_scheduled_task_create", "sys_scheduled_task_update"])
-@pytest.mark.parametrize("missing_field", ["prompt", "permission_mode"])
-async def test_current_runner_refuses_incomplete_review_before_dispatch(
-    tool_name: str, missing_field: str
+async def test_create_without_a_prompt_is_refused_before_dispatch() -> None:
+    client = _RecordingClient()
+    result = await _execute_scheduled_task_tool(
+        "sys_scheduled_task_create",
+        json.dumps({"name": "n", "rrule": "FREQ=DAILY", "agent_id": "ag_1"}),
+        server_client=client,
+        conversation_id="conv_source",
+    )
+
+    assert "prompt must be a non-empty string" in json.loads(result)["error"]
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "sent"),
+    [
+        (
+            "sys_scheduled_task_create",
+            {"name": "n", "prompt": "Review every issue.", "rrule": "FREQ=DAILY", "agent_id": "a"},
+            (
+                "POST",
+                {
+                    "name": "n",
+                    "prompt": "Review every issue.",
+                    "rrule": "FREQ=DAILY",
+                    "agent_id": "a",
+                },
+            ),
+        ),
+        (
+            "sys_scheduled_task_update",
+            {"scheduled_task_id": _TASK_ID, "state": "paused"},
+            ("PATCH", {"state": "paused"}),
+        ),
+    ],
+    ids=["create-without-permission-mode", "update-with-only-the-change"],
+)
+async def test_prompt_and_permission_mode_are_optional_where_they_do_not_change(
+    tool_name: str, arguments: dict[str, object], sent: tuple[str, dict[str, object]]
 ) -> None:
     client = _RecordingClient()
-    arguments: dict[str, object] = {
-        **_REVIEW_FIELDS,
-        "scheduled_task_id": _TASK_ID,
-    }
-    arguments.pop(missing_field)
-    result = await _execute_scheduled_task_tool(
+    await _execute_scheduled_task_tool(
         tool_name,
         json.dumps(arguments),
         server_client=client,
         conversation_id="conv_source",
     )
 
-    error = json.loads(result)["error"]
-    assert missing_field in error
-    assert ("List the task" in error) == (tool_name == "sys_scheduled_task_update")
-    if tool_name == "sys_scheduled_task_create":
-        assert "JSON null (not the string 'null')" in error
-    assert client.calls == []
+    assert [(method, body) for method, _, body in client.calls] == [sent]
 
 
 @pytest.mark.asyncio
@@ -672,13 +698,7 @@ def test_create_tool_schema_makes_workspace_and_host_optional() -> None:
     assert "base_branch" not in properties
     assert "workspace" not in schema["required"]
     assert "host_id" not in schema["required"]
-    assert set(schema["required"]) == {
-        "name",
-        "prompt",
-        "rrule",
-        "agent_id",
-        "permission_mode",
-    }
+    assert set(schema["required"]) == {"name", "prompt", "rrule", "agent_id"}
 
 
 def test_update_tool_schema_allows_connected_host_changes() -> None:
@@ -690,7 +710,7 @@ def test_update_tool_schema_allows_connected_host_changes() -> None:
     assert "host_id" in properties
     # Switching which agent/harness a task runs is part of the update surface.
     assert "agent_id" in properties
-    assert set(schema["required"]) == {"scheduled_task_id", "prompt", "permission_mode"}
+    assert set(schema["required"]) == {"scheduled_task_id"}
 
 
 def test_tools_in_dispatch_and_relay_sets() -> None:

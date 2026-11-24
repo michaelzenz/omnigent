@@ -123,15 +123,16 @@ class SysScheduledTaskCreateTool(Tool):
                                 "Claude Code (e.g. 'acceptEdits'), Codex ('default', "
                                 "'ask-for-approval', 'approve-for-me', 'read-only'), "
                                 "Cursor (e.g. 'auto-review'), "
-                                "Antigravity ('default', 'skip'), or Devin (e.g. 'smart'). "
+                                "Antigravity ('default'), or Devin (e.g. 'smart'). "
                                 "Other harnesses, such as claude-sdk, have no automation "
                                 "permission modes. "
                                 "Runs are unattended, so a prompting mode ('default'/'plan') "
-                                "stalls waiting for approval — prefer an auto-running mode. "
-                                "Send JSON null (not the string 'null') for the agent "
-                                "default, and always for a harness without modes. This "
-                                "field is required so the user can review the effective "
-                                "task setting."
+                                "stalls waiting for approval — prefer a mode with the "
+                                "harness's reviewer, e.g. Claude Code 'auto' or Codex "
+                                "'approve-for-me'. An agent can't choose a mode that skips "
+                                "approval, e.g. 'bypassPermissions' or 'full-access'. "
+                                "Omit it, or send JSON null (not the string 'null'), for "
+                                "the agent default; always do so for a harness without modes."
                             ),
                         },
                         "mcp_services": {
@@ -225,7 +226,6 @@ class SysScheduledTaskCreateTool(Tool):
                         "prompt",
                         "rrule",
                         "agent_id",
-                        "permission_mode",
                     ],
                     "additionalProperties": False,
                 },
@@ -276,9 +276,7 @@ class SysScheduledTaskUpdateTool(Tool):
         """:returns: Human-readable description of the tool."""
         return (
             "Update a scheduled task's mutable fields. Only the fields you pass "
-            "change, except prompt and permission_mode: first list the task and "
-            "resend those complete review fields even when they are unchanged. "
-            "Pass agent_id to switch which agent/harness "
+            "change. Pass agent_id to switch which agent/harness "
             "it runs. Pass state='paused' to stop it firing without deleting it, "
             "or state='active' to resume. A 'completed' task has no remaining "
             "occurrences; change its rrule to schedule it again."
@@ -322,12 +320,13 @@ class SysScheduledTaskUpdateTool(Tool):
                             "description": (
                                 "New permission mode using the selected harness's vocabulary: "
                                 "Claude Code (e.g. 'acceptEdits'), Codex (e.g. 'read-only'), "
-                                "Cursor (e.g. 'auto-review'), Antigravity ('default', 'skip'), "
+                                "Cursor (e.g. 'auto-review'), Antigravity ('default'), "
                                 "or Devin (e.g. 'smart'). Other harnesses, such as "
                                 "claude-sdk, have no automation permission modes. Send JSON "
                                 "null (not the string 'null') for the agent default, and "
-                                "always for a harness without modes. Required for approval "
-                                "review; resend the current value when it is unchanged."
+                                "always for a harness without modes. Omit it to keep the "
+                                "current mode. An agent can't choose a mode that skips "
+                                "approval, and can only pause an automation that runs in one."
                             ),
                         },
                         "mcp_services": {
@@ -408,7 +407,7 @@ class SysScheduledTaskUpdateTool(Tool):
                             ),
                         },
                     },
-                    "required": ["scheduled_task_id", "prompt", "permission_mode"],
+                    "required": ["scheduled_task_id"],
                     "additionalProperties": False,
                 },
             },

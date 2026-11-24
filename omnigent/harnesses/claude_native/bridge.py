@@ -2981,8 +2981,8 @@ def build_hook_settings(
     # before reading them. Deny/ask rules and Omnigent policy hooks still apply.
     attachment_read_rule = _claude_read_rule(attachment_cache_dir(bridge_dir))
     allow_rules = [attachment_read_rule] if attachment_read_rule is not None else []
-    # Omnigent reviews the full change and requires human approval server-side.
-    # Don't let a second native prompt or classifier prevent that review.
+    # Agents create and update automations without approval; Omnigent policies
+    # still apply. Don't let a native prompt or classifier ask instead.
     allow_rules.extend(
         (
             "mcp__omnigent__sys_scheduled_task_create",

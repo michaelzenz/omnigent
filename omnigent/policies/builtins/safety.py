@@ -13,10 +13,7 @@ import json as _json
 import re as _re
 from typing import Literal
 
-from omnigent.native.permission_modes import (
-    AGENT_DEFAULT_PERMISSION_MODE_HINT,
-    APPROVAL_SKIPPING_PERMISSION_MODES,
-)
+from omnigent.native.permission_modes import AGENT_DEFAULT_PERMISSION_MODE_HINT
 from omnigent.policies.schema import (
     PolicyCallable,
     PolicyEvent,
@@ -391,88 +388,11 @@ def ask_on_add_policy(event: PolicyEvent) -> PolicyResponse:
     }
 
 
-# Agent tools that create or reshape automations. The builder injects
-# ``ask_on_scheduled_task_change`` into every engine and exempts these names
-# from its no-policy fast path; both read this set so they cannot drift.
-SCHEDULED_TASK_APPROVAL_TOOLS: frozenset[str] = frozenset(
-    {"sys_scheduled_task_create", "sys_scheduled_task_update"}
-)
-
-
-# Settings a user weighs before approving, shown first in this order so
-# unexpected extra arguments cannot push them out of the prompt.
-_SCHEDULED_TASK_SETTINGS = (
-    "name",
-    "agent_id",
-    "rrule",
-    "timezone",
-    "state",
-    "host_id",
-    "workspace",
-    "execution_target",
-    "project_name",
-    "project_id",
-    "session_mode",
-    "session_id",
-    "permission_mode",
-    "max_cost_usd",
-    "model_override",
-    "reasoning_effort",
-    "prompt",
-)
-_PREVIEW_VALUE_CHARS = 60
-_PREVIEW_EXTRA_CHARS = 200
-
-_SCHEDULED_TASK_REVIEW_FIELDS = frozenset({"prompt", "permission_mode"})
 _PERMISSION_MODE_VALUES = f"a mode name, or {AGENT_DEFAULT_PERMISSION_MODE_HINT}"
 
 
-def _clip(value: str) -> str:
-    """Bound a preview value, marking the cut so it cannot pass for the whole value."""
-    if len(value) > _PREVIEW_VALUE_CHARS:
-        return value[: _PREVIEW_VALUE_CHARS - 3] + "..."
-    return value
-
-
-def _scheduled_task_settings(args: dict[str, object], *, skip: str) -> str:
-    """``key=value`` pairs for every argument but ``skip``, each value bounded.
-
-    Known settings come first and are never dropped; other arguments follow and
-    are capped as a group. The free-text prompt is rendered separately in full.
-    """
-
-    def pair(key: str) -> str:
-        value = str(args[key])
-        return f"{key}={_clip(value)}"
-
-    known = [pair(key) for key in _SCHEDULED_TASK_SETTINGS if key in args and key != skip]
-    keys = sorted(key for key in args if key not in _SCHEDULED_TASK_SETTINGS and key != skip)
-    extra: list[str] = []
-    remaining = _PREVIEW_EXTRA_CHARS
-    for index, key in enumerate(keys):
-        item = pair(key)
-        size = len(item) + (2 if extra else 0)
-        suffix = 5 if index < len(keys) - 1 else 0
-        if size + suffix > remaining:
-            extra.append("...")
-            break
-        extra.append(item)
-        remaining -= size
-    return ", ".join([*known, *extra])
-
-
-def scheduled_task_review_error(
-    args: dict[str, object], *, action: str, require_complete: bool = True
-) -> str | None:
-    """Validate review values, allowing omitted fields only for legacy callers."""
-    missing = sorted(_SCHEDULED_TASK_REVIEW_FIELDS.difference(args))
-    if require_complete and missing:
-        hint = (
-            "List the task and retry with its full prompt and permission_mode."
-            if action == "update"
-            else f"Retry with prompt and permission_mode: {_PERMISSION_MODE_VALUES}."
-        )
-        return f"Missing review fields ({', '.join(missing)}). {hint}"
+def scheduled_task_arguments_error(args: dict[str, object], *, action: str) -> str | None:
+    """Validate the prompt and permission_mode that a scheduled-task create or update sends."""
     if "prompt" in args or action == "create":
         prompt = args.get("prompt")
         if not isinstance(prompt, str) or not prompt.strip():
@@ -486,94 +406,6 @@ def scheduled_task_review_error(
     if action == "update" and not args.get("scheduled_task_id"):
         return "Provide the scheduled_task_id of the automation to update."
     return None
-
-
-def _scheduled_task_review(args: dict[str, object], *, action: str, subject: str) -> str:
-    """Render supplied instructions in full and identify legacy omissions."""
-    prompt = args.get("prompt", "(unchanged; not supplied by legacy caller)")
-    raw_permission_mode = args.get("permission_mode")
-    permission_mode = (
-        "agent default (no task override)"
-        if raw_permission_mode is None
-        else str(raw_permission_mode)
-    )
-    if isinstance(raw_permission_mode, str) and raw_permission_mode in (
-        APPROVAL_SKIPPING_PERMISSION_MODES
-    ):
-        permission_mode += " (skips approval prompts, so unattended runs act without asking)"
-    legacy_notice = ""
-    if action == "update" and _SCHEDULED_TASK_REVIEW_FIELDS.difference(args):
-        legacy_notice = (
-            "Legacy partial update: some review values were not supplied. "
-            "Inspect the existing automation before approving.\n"
-        )
-        if "permission_mode" not in args:
-            permission_mode = (
-                "existing override retained if agent_id is unchanged; "
-                "cleared to agent default (no task override) if agent_id changes "
-                "(not supplied by legacy caller)"
-                if "agent_id" in args
-                else "unchanged (not supplied by legacy caller)"
-            )
-    if args.get("session_mode") == "continue":
-        permission_mode += "; a continued session keeps its own permission mode"
-    settings = _scheduled_task_settings(args, skip="prompt")
-    return (
-        f"Agent wants to {action} {subject}.\n"
-        f"{legacy_notice}"
-        f"Task permission setting: {permission_mode}\n"
-        f"Settings: {settings or '(none)'}\n"
-        "Full automation instructions:\n"
-        f"{prompt}\n"
-        "Approve?"
-    )
-
-
-def ask_on_scheduled_task_change(event: PolicyEvent) -> PolicyResponse:
-    """ASK for user approval before an agent creates or updates a scheduled task.
-
-    Matches ``event["target"]`` (the dispatched tool identity) rather than
-    ``data["name"]``, which an earlier policy may have transformed. Reads
-    and ``sys_scheduled_task_delete`` are not gated here: deleting a task
-    only removes future runs instead of scheduling new unattended work.
-
-    :param event: Policy event dict.
-    :returns: ASK if a scheduled task is being created or updated, ALLOW
-        otherwise.
-    """
-    if event.get("type") != "tool_call":
-        return _ALLOW
-    tool = event.get("target")
-    if tool not in SCHEDULED_TASK_APPROVAL_TOOLS:
-        return _ALLOW
-    data = event.get("data")
-    args = data.get("arguments") if isinstance(data, dict) else None
-    if not isinstance(args, dict):
-        args = {}
-    action = "create" if tool == "sys_scheduled_task_create" else "update"
-    # Older runners expose optional review fields. Current runners enforce the
-    # complete contract before dispatch, including when paired with an old server.
-    error = scheduled_task_review_error(args, action=action, require_complete=False)
-    if error:
-        return {"result": "DENY", "reason": f"Cannot {action} a scheduled task. {error}"}
-    if action == "create":
-        name = _clip(str(args.get("name") or "(unnamed)"))
-        review = _scheduled_task_review(
-            args,
-            action="create",
-            subject=f"scheduled task {name!r}",
-        )
-    else:
-        task_id = _clip(str(args.get("scheduled_task_id") or "(no id)"))
-        review = _scheduled_task_review(
-            args,
-            action="update",
-            subject=f"scheduled task {task_id}",
-        )
-    return {
-        "result": "ASK",
-        "reason": review,
-    }
 
 
 # ── Skill blocking ──────────────────────────────────────────────────────────
