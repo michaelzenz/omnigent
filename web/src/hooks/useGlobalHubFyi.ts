@@ -10,6 +10,7 @@ export interface FyiEvent {
   title: string;
   /** The session the event came from, or ``null``. */
   source_session_id: string | null;
+  source_key: string | null;
   created_at: number;
 }
 

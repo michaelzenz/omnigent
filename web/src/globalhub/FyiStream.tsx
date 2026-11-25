@@ -1,7 +1,12 @@
 import { useState } from "react";
-import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { type FyiCluster, useDismissFyiCluster, useFyiClusters } from "@/hooks/useGlobalHubFyi";
+import {
+  type FyiCluster,
+  type FyiEvent,
+  useDismissFyiCluster,
+  useFyiClusters,
+} from "@/hooks/useGlobalHubFyi";
 import { BOARD_COLUMN_CLASS } from "./boardLayout";
 import { OpenSessionLink } from "./OpenSessionLink";
 
@@ -69,12 +74,7 @@ function FyiClusterCard({ cluster }: { cluster: FyiCluster }) {
               <li key={event.id} className="flex items-center gap-2 text-sm">
                 <span className="size-1.5 shrink-0 rounded-full bg-foreground/45" aria-hidden />
                 <span className="min-w-0 flex-1 leading-snug break-words">{event.title}</span>
-                {event.source_session_id && (
-                  <OpenSessionLink
-                    sessionId={event.source_session_id}
-                    label={`Open the session for ${event.title}`}
-                  />
-                )}
+                <SignalLink event={event} />
               </li>
             ))}
           </ul>
@@ -96,6 +96,33 @@ function FyiClusterCard({ cluster }: { cluster: FyiCluster }) {
         </Button>
       </footer>
     </article>
+  );
+}
+
+function SignalLink({ event }: { event: FyiEvent }) {
+  if (event.event_type.startsWith("watch.")) {
+    const url = event.source_key;
+    if (!url || !/^https?:\/\//.test(url)) return null;
+    return (
+      <Button asChild variant="outline" size="icon-sm" className="text-muted-foreground">
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`Open the source of ${event.title}`}
+          title="Open source"
+        >
+          <ExternalLinkIcon aria-hidden />
+        </a>
+      </Button>
+    );
+  }
+  if (!event.source_session_id) return null;
+  return (
+    <OpenSessionLink
+      sessionId={event.source_session_id}
+      label={`Open the session for ${event.title}`}
+    />
   );
 }
 

@@ -68,6 +68,32 @@ describe("FyiStream", () => {
     expect(first.queryByText("Manual note")).toBeNull();
   });
 
+  it("links a watcher's signal to its source, not to the watcher session", async () => {
+    renderStream([
+      fyiCluster("c1", {
+        events: [
+          fyiEvent("e1", {
+            event_type: "watch.changed",
+            title: "alice sent a direct message",
+            source_session_id: "s-watcher",
+            source_key: "https://chat.example.com/archives/D0123",
+          }),
+          fyiEvent("e2", {
+            event_type: "watch.new",
+            title: "A ticket was assigned to you",
+            source_session_id: "s-watcher",
+            source_key: "ES-1234",
+          }),
+        ],
+      }),
+    ]);
+
+    const card = within(await screen.findByTestId("fyi-cluster-c1"));
+    expect(card.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
+      "https://chat.example.com/archives/D0123",
+    ]);
+  });
+
   it("dismisses a cluster", async () => {
     renderStream([fyiCluster("c1", { events: [fyiEvent("e1")] })]);
 

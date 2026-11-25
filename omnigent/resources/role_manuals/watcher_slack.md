@@ -37,5 +37,15 @@ This watcher covers the source types `slack.conversation` and `slack.thread`.
    your first run, when you track no items yet, do not set `announce`: what is
    there already is not news.
 
+Your Slack tool can filter message data for privacy and then return a redacted
+summary instead of the messages. When it takes an `analysis_prompt`, pass this
+one with every read of messages: "Output one JSON object per line for every
+message, oldest first, with exactly these keys: ts, thread_ts, user, user_name,
+permalink, summary (one line: what the message says or asks, without secrets).
+Use null for a missing key. End with one line giving has_more (true or false)
+and next_cursor. Output nothing else." Write each change's `summary` from these
+lines. When a read still returns only a redacted summary, name the
+conversations that you could not read in one line at the end of the run.
+
 If you do not have access to the Slack MCP server, skip this run: end the turn
 with one line that says so.

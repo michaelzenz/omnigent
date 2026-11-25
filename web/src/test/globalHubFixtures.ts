@@ -125,6 +125,7 @@ export function fyiEvent(id: string, fields: Partial<FyiEvent> = {}): FyiEvent {
     event_type: "session.turn.finished",
     title: `Session turn finished: Session ${id}`,
     source_session_id: `s-${id}`,
+    source_key: null,
     created_at: 1_800_000_000,
     ...fields,
   };

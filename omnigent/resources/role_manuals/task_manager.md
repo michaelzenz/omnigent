@@ -425,3 +425,9 @@ pmv2_api(
   body={"event_ids": ["<id>"], "headline": "<headline>", "cluster_id": "<optional-existing-cluster-id>"}
 )
 ```
+
+A watcher's event comes from the watcher's session, but it is about an outside
+item: a Slack thread or DM, a pull request or a ticket. The card links each
+watcher event to that item. In the headline, say who did what in the item, and
+when you give a link, use the item's link (`source_key`), never the watcher's
+session.
