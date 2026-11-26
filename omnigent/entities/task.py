@@ -31,6 +31,7 @@ RESERVED_SOURCE_TYPE_PREFIX = "omnigent."
 WATCHER_ROLE_KEY_PREFIX = "watcher:"
 #: The most offsets one tracked item keeps.
 MAX_WATCH_ITEM_OFFSETS = 10
+MAX_WATCHER_PROBLEM_NOTE_WORDS = 30
 #: The longest internal note a task keeps; managers read the notes of up to 10 tasks at once.
 MAX_TASK_INTERNAL_NOTE_CHARS = 2_000
 #: A manager with this many live tasks is full, so the broker's manager list leaves it out.
@@ -392,6 +393,21 @@ class RoleSchedule:
         return self.next_run_at is not None
 
 
+@dataclass(frozen=True)
+class WatcherProblemSource:
+    source: str
+    reason: str
+    source_key: str | None = None
+
+
+@dataclass(frozen=True)
+class WatcherProblem:
+    reported_at: int
+    sources: tuple[WatcherProblemSource, ...] = ()
+    note: str | None = None
+    run_error: str | None = None
+
+
 @dataclass
 class Watcher:
     """
@@ -413,6 +429,8 @@ class Watcher:
         its first run.
     :param builtin: Whether it is the built-in fallback watcher, which checks
         the source types with no assigned watcher. The user cannot delete it.
+    :param problem: What stopped its latest run from reading its sources, or
+        ``None`` when the run worked.
     """
 
     id: str
@@ -425,6 +443,7 @@ class Watcher:
     model: str | None = None
     conversation_id: str | None = None
     builtin: bool = False
+    problem: WatcherProblem | None = None
 
     @property
     def role_key(self) -> str:

@@ -2,9 +2,36 @@
 
 from typing import Any
 
+from omnigent.entities import MAX_WATCHER_PROBLEM_NOTE_WORDS
 from omnigent.tools.base import Tool
 
-WATCH_ITEMS_ACTIONS = ("list", "observe", "done")
+WATCH_ITEMS_ACTIONS = ("list", "observe", "done", "problem")
+
+_PROBLEM_SOURCE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "source": {
+            "type": "string",
+            "description": 'The source type, e.g. "slack.conversation".',
+        },
+        "source_key": {
+            "type": "string",
+            "description": (
+                "The item that you could not read, e.g. a conversation link; leave it out "
+                "when you could read no item of this source type."
+            ),
+        },
+        "reason": {
+            "type": "string",
+            "description": (
+                'What fails, in a few words, e.g. "the privacy filter hides the message '
+                'text" or "no access to the Slack MCP server".'
+            ),
+        },
+    },
+    "required": ["source", "reason"],
+    "additionalProperties": False,
+}
 
 _ITEM_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -86,7 +113,8 @@ class WatchItemsTool(Tool):
             "them; while has_more is true, pass the page's last_id as after for the next "
             "page. 'done' marks items finished, e.g. merged pull requests, and tells the "
             "sessions that follow them; an observation that changes a done item's offsets "
-            "reopens it."
+            "reopens it. 'problem' reports the sources that you could not read in this run; "
+            "the board shows them to the user until a run ends without a report."
         )
 
     def get_schema(self) -> dict[str, Any]:
@@ -103,7 +131,24 @@ class WatchItemsTool(Tool):
                             "enum": list(WATCH_ITEMS_ACTIONS),
                             "description": (
                                 "'list' reads your items, 'observe' reports what you see "
-                                "now, and 'done' marks items finished."
+                                "now, 'done' marks items finished, and 'problem' reports "
+                                "the sources that you could not read."
+                            ),
+                        },
+                        "sources": {
+                            "type": "array",
+                            "description": (
+                                "For 'problem': each source that you could not read in this "
+                                "run, with what fails. Each call replaces your report, so "
+                                "send all of them in one call; an empty list clears it."
+                            ),
+                            "items": _PROBLEM_SOURCE_SCHEMA,
+                        },
+                        "note": {
+                            "type": "string",
+                            "description": (
+                                f"For 'problem': at most {MAX_WATCHER_PROBLEM_NOTE_WORDS} "
+                                "words for the user, only when it helps, e.g. how to fix it."
                             ),
                         },
                         "items": {

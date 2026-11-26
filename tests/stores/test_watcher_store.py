@@ -6,6 +6,7 @@ import uuid
 
 import pytest
 
+from omnigent.entities import Watcher, WatcherProblem, WatcherProblemSource
 from omnigent.stores.role_schedule_store.sqlalchemy_store import SqlAlchemyRoleScheduleStore
 from omnigent.stores.subscription_store.sqlalchemy_store import SqlAlchemySubscriptionStore
 from omnigent.stores.watch_item_store import WatchObservation
@@ -138,3 +139,80 @@ def test_delete_removes_the_watcher_and_only_its_own_schedule_items_and_source_t
         (assignment.source_type, assignment.watcher_id)
         for assignment in assignments.source_watchers(owner_user_id=ALICE)
     ] == [("jira.issue", other.id)]
+
+
+_UNREADABLE = WatcherProblemSource(source="slack.conversation", reason="no access")
+_RUN_FAILED = "auth command failed"
+
+
+def _watcher_with_session(store: SqlAlchemyWatcherStore) -> Watcher:
+    created = store.create(uuid.uuid4().hex, owner_user_id=ALICE, name="Slack watcher")
+    watcher = store.update(created.id, owner_user_id=ALICE, conversation_id=SESSION_ID)
+    assert watcher is not None
+    return watcher
+
+
+def test_a_problem_report_round_trips_and_dismiss_clears_only_the_named_watchers(
+    db_uri: str,
+) -> None:
+    store = SqlAlchemyWatcherStore(db_uri)
+    slack = _watcher_with_session(store)
+    jira = store.create(uuid.uuid4().hex, owner_user_id=ALICE, name="Jira watcher")
+    report = WatcherProblem(
+        reported_at=100,
+        sources=(
+            WatcherProblemSource(
+                source="slack.conversation",
+                reason="the privacy filter hides the text",
+                source_key="https://chat.example.com/archives/D0123",
+            ),
+        ),
+        note="Ask the admin for access.",
+    )
+    store.set_problem(slack.id, report, owner_user_id=ALICE)
+    store.set_problem(
+        jira.id, WatcherProblem(reported_at=100, note="No access."), owner_user_id=ALICE
+    )
+
+    saved = store.get(slack.id, owner_user_id=ALICE)
+    assert saved is not None and saved.problem == report
+    assert store.set_problem(slack.id, None, owner_user_id=BOB) is None
+    assert store.clear_problems([slack.id], owner_user_id=BOB) == 0
+    assert store.clear_problems([slack.id, slack.id], owner_user_id=ALICE) == 1
+    cleared = store.get(slack.id, owner_user_id=ALICE)
+    untouched = store.get(jira.id, owner_user_id=ALICE)
+    assert cleared is not None and cleared.problem is None
+    assert untouched is not None and untouched.problem is not None
+
+
+@pytest.mark.parametrize(
+    ("reported_at", "error", "expected"),
+    [
+        (None, None, None),
+        (50, None, None),
+        (150, None, WatcherProblem(reported_at=150, sources=(_UNREADABLE,))),
+        (50, _RUN_FAILED, WatcherProblem(reported_at=200, run_error=_RUN_FAILED)),
+        (
+            150,
+            _RUN_FAILED,
+            WatcherProblem(reported_at=200, sources=(_UNREADABLE,), run_error=_RUN_FAILED),
+        ),
+    ],
+    ids=["no-report", "earlier-run", "this-run", "failed-run", "failed-after-report"],
+)
+def test_a_run_end_settles_the_problem_report(
+    db_uri: str, reported_at: int | None, error: str | None, expected: WatcherProblem | None
+) -> None:
+    store = SqlAlchemyWatcherStore(db_uri)
+    watcher = _watcher_with_session(store)
+    if reported_at is not None:
+        store.set_problem(
+            watcher.id,
+            WatcherProblem(reported_at=reported_at, sources=(_UNREADABLE,)),
+            owner_user_id=ALICE,
+        )
+
+    settled = store.settle_run_problem(SESSION_ID, started_at=100, error=error, now=200)
+
+    assert settled is not None and settled.problem == expected
+    assert store.settle_run_problem(uuid.uuid4().hex, started_at=100, error=None, now=200) is None

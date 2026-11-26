@@ -12,6 +12,7 @@ import { PriorityFilter } from "@/globalhub/PriorityFilter";
 import { SystemNoticeCard } from "@/globalhub/SystemNoticeCard";
 import { TaskBoard } from "@/globalhub/TaskBoard";
 import { usePriorityFilter } from "@/globalhub/usePriorityFilter";
+import { WatcherProblemsCard } from "@/globalhub/WatcherProblemsCard";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useGlobalHubSettings } from "@/hooks/useGlobalHubSettings";
 import { useBoardPriorityCounts } from "@/hooks/useGlobalHubTasks";
@@ -114,6 +115,7 @@ export function GlobalHubPage() {
                 {!query && (
                   <>
                     <SystemNoticeCard />
+                    <WatcherProblemsCard />
                     <FyiStream />
                   </>
                 )}

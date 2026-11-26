@@ -14,7 +14,7 @@ from omnigent.agent_tasks.board_stores import open_board_stores
 from omnigent.agent_tasks.role_sessions import RoleSessionStores, ensure_role_session
 from omnigent.agent_tasks.roles import BROKER_ROLE_KEY, builtin_role
 from omnigent.db.db_models import current_workspace_id, workspace_scope
-from omnigent.entities import AgentQueueItem, Conversation
+from omnigent.entities import AgentQueueItem, Conversation, WatcherProblem
 from omnigent.server.agent_queue_dispatcher import (
     TASK_IDLE_AFTER_S,
     WORKER_MESSAGE_KIND,
@@ -412,3 +412,72 @@ async def test_a_claim_left_by_a_stopped_server_goes_back_when_the_dispatcher_st
     await harness.run()
 
     assert harness.sent == [(broker, "2 new events", ALICE)]
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("idle", None),
+        ("failed", WatcherProblem(reported_at=NOW + 30, run_error="auth command failed")),
+    ],
+    ids=["worked", "failed"],
+)
+async def test_a_watchers_run_end_settles_its_problem_report(
+    harness: _Harness, status: str, expected: WatcherProblem | None
+) -> None:
+    watchers = harness.board.watchers
+    session = harness.sessions.conversation_store.create_conversation(title="Slack watcher")
+    watcher = watchers.create(uuid.uuid4().hex, owner_user_id=ALICE, name="Slack watcher")
+    watchers.update(watcher.id, owner_user_id=ALICE, conversation_id=session.id)
+    watchers.set_problem(
+        watcher.id, WatcherProblem(reported_at=NOW - 60, note="Old report."), owner_user_id=ALICE
+    )
+    harness.sessions.conversation_store.set_labels(
+        session.id,
+        {
+            "omnigent.last_task_error_code": "runner_error",
+            "omnigent.last_task_error_message": "auth command failed",
+        },
+    )
+    item_id = harness.enqueue(session.id)
+
+    await harness.run()
+    harness.now = NOW + 30
+    harness.dispatcher.turn_ended(session.id, status)
+
+    def settled() -> bool:
+        current = watchers.get(watcher.id, owner_user_id=ALICE)
+        return current is not None and current.problem == expected
+
+    await _until(lambda: harness.state(item_id) == "done")
+    await _until(settled)
+
+
+async def test_a_watchers_failed_run_is_recorded_when_its_turn_end_was_missed(
+    harness: _Harness,
+) -> None:
+    conversations = harness.sessions.conversation_store
+    watchers = harness.board.watchers
+    session = conversations.create_conversation(title="Slack watcher")
+    watcher = watchers.create(uuid.uuid4().hex, owner_user_id=ALICE, name="Slack watcher")
+    watchers.update(watcher.id, owner_user_id=ALICE, conversation_id=session.id)
+    conversations.set_labels(
+        session.id,
+        {
+            "omnigent.last_task_error_code": "runner_error",
+            "omnigent.last_task_error_message": "auth command failed",
+        },
+    )
+    item_id = harness.enqueue(session.id)
+    await harness.run()
+    conversations.set_session_live_status(session.id, "failed")
+
+    harness.now = NOW + 30
+    await harness.run()
+    harness.now = NOW + 90
+    await harness.run()
+
+    current = watchers.get(watcher.id, owner_user_id=ALICE)
+    assert harness.state(item_id) == "done"
+    assert current is not None
+    assert current.problem == WatcherProblem(reported_at=NOW + 90, run_error="auth command failed")

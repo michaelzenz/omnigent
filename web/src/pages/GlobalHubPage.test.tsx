@@ -34,6 +34,9 @@ vi.mock("@/globalhub/SystemNoticeCard", () => ({
 vi.mock("@/globalhub/FyiStream", () => ({
   FyiStream: () => <div data-testid="globalhub-fyi-stream" />,
 }));
+vi.mock("@/globalhub/WatcherProblemsCard", () => ({
+  WatcherProblemsCard: () => <div data-testid="globalhub-watcher-problems-card" />,
+}));
 vi.mock("@/globalhub/BoardConfigDialog", () => ({ BoardConfigButton: () => null }));
 vi.mock("@/globalhub/GlobalHubChatPanel", () => ({ GlobalHubChatPanel: () => null }));
 
@@ -87,9 +90,11 @@ describe("GlobalHubPage", () => {
     const queryWhileTyping = board.dataset.query;
     await waitFor(() => expect(board.dataset.query).toBe("retries fix"));
     // A search shows the board's matches without the notice and the FYI stream.
-    const shownWhileSearching = ["globalhub-system-notice", "globalhub-fyi-stream"].filter(
-      (testId) => screen.queryByTestId(testId) !== null,
-    );
+    const shownWhileSearching = [
+      "globalhub-system-notice",
+      "globalhub-watcher-problems-card",
+      "globalhub-fyi-stream",
+    ].filter((testId) => screen.queryByTestId(testId) !== null);
     fireEvent.keyDown(search, { key: "Escape" });
 
     expect(shownWhileSearching).toEqual([]);
@@ -97,6 +102,7 @@ describe("GlobalHubPage", () => {
     expect(search).toHaveValue("");
     await waitFor(() => expect(board.dataset.query).toBe(""));
     expect(screen.getByTestId("globalhub-system-notice")).toBeInTheDocument();
+    expect(screen.getByTestId("globalhub-watcher-problems-card")).toBeInTheDocument();
     expect(screen.getByTestId("globalhub-fyi-stream")).toBeInTheDocument();
   });
 

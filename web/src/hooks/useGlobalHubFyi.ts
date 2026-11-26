@@ -25,21 +25,52 @@ export interface FyiCluster {
   events: FyiEvent[];
 }
 
-const FYI_QUERY_KEY = ["globalhub-fyi"] as const;
+export interface WatcherProblemSource {
+  source: string;
+  source_key: string | null;
+  reason: string;
+}
 
-async function fetchFyiClusters(): Promise<FyiCluster[]> {
+export interface WatcherProblem {
+  watcher_id: string;
+  watcher_name: string;
+  session_id: string | null;
+  sources: WatcherProblemSource[];
+  note: string | null;
+  run_error: string | null;
+  reported_at: number;
+}
+
+interface BoardPending {
+  fyi: FyiCluster[];
+  watcher_problems?: WatcherProblem[];
+}
+
+const BOARD_PENDING_QUERY_KEY = ["globalhub-fyi"] as const;
+
+async function fetchBoardPending(): Promise<BoardPending> {
   const res = await authenticatedFetch("/v1/agent-tasks/board/pending");
   if (!res.ok) throw await apiErrorFromResponse(res);
-  return ((await res.json()) as { fyi: FyiCluster[] }).fyi;
+  return (await res.json()) as BoardPending;
 }
 
 /** The user's pending FYI clusters, oldest first. */
 export function useFyiClusters() {
   return useQuery({
-    queryKey: FYI_QUERY_KEY,
-    queryFn: fetchFyiClusters,
+    queryKey: BOARD_PENDING_QUERY_KEY,
+    queryFn: fetchBoardPending,
     // Managers file events in the background.
     refetchInterval: 10_000,
+    select: (pending) => pending.fyi,
+  });
+}
+
+export function useWatcherProblems() {
+  return useQuery({
+    queryKey: BOARD_PENDING_QUERY_KEY,
+    queryFn: fetchBoardPending,
+    refetchInterval: 10_000,
+    select: (pending) => pending.watcher_problems ?? [],
   });
 }
 
@@ -54,6 +85,21 @@ export function useDismissFyiCluster() {
       );
       if (!res.ok) throw await apiErrorFromResponse(res);
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: FYI_QUERY_KEY }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: BOARD_PENDING_QUERY_KEY }),
+  });
+}
+
+export function useDismissWatcherProblems() {
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, string[]>({
+    mutationFn: async (watcherIds) => {
+      const res = await authenticatedFetch("/v1/agent-tasks/board/watcher-problems/dismiss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ watcher_ids: watcherIds }),
+      });
+      if (!res.ok) throw await apiErrorFromResponse(res);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: BOARD_PENDING_QUERY_KEY }),
   });
 }

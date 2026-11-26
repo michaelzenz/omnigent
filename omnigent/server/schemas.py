@@ -50,6 +50,7 @@ from omnigent.entities.task import (
     MAX_MANAGER_DESCRIPTION_CHARS,
     MAX_TASK_INTERNAL_NOTE_CHARS,
     MAX_WATCH_ITEM_OFFSETS,
+    MAX_WATCHER_PROBLEM_NOTE_WORDS,
 )
 from omnigent.inner.native_attachments import reject_authored_framework_notices
 from omnigent.onboarding.sandboxes.profiles import SandboxProfileSummary
@@ -6760,6 +6761,51 @@ class FinishWatchItemsResponse(BaseModel):
     missing: list[WatchItemKey]
 
 
+_WATCHER_PROBLEM_SOURCES_MAX = 20
+_WATCHER_PROBLEM_REASON_MAX_CHARS = 200
+_WATCHER_PROBLEM_NOTE_MAX_CHARS = 300
+
+
+class WatcherProblemSourceInput(BaseModel):
+    source: _WatchItemSource
+    source_key: _WatchItemSourceKey | None = None
+    reason: str = Field(..., max_length=_WATCHER_PROBLEM_REASON_MAX_CHARS)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("source_key", mode="before")
+    @classmethod
+    def _blank_key_is_none(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_given(cls, reason: str) -> str:
+        return _strip_required_text(reason)
+
+
+class ReportWatcherProblemRequest(BaseModel):
+    sources: list[WatcherProblemSourceInput] = Field(
+        default_factory=list, max_length=_WATCHER_PROBLEM_SOURCES_MAX
+    )
+    note: str | None = Field(default=None, max_length=_WATCHER_PROBLEM_NOTE_MAX_CHARS)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("note")
+    @classmethod
+    def _note_is_short(cls, note: str | None) -> str | None:
+        if note is None or not note.strip():
+            return None
+        if len(note.split()) > MAX_WATCHER_PROBLEM_NOTE_WORDS:
+            raise ValueError(f"the note has at most {MAX_WATCHER_PROBLEM_NOTE_WORDS} words")
+        return note.strip()
+
+
+class ReportWatcherProblemResponse(BaseModel):
+    reported: bool
+
+
 class WatchItemResponse(BaseModel):
     """One item a watcher tracks, with the offsets it saw last.
 
@@ -7252,14 +7298,42 @@ class AgentFyiClusterResponse(BaseModel):
     events: list[AgentTaskEventResponse]
 
 
+class AgentTaskWatcherProblemSource(BaseModel):
+    source: str
+    source_key: str | None
+    reason: str
+
+
+class AgentTaskWatcherProblem(BaseModel):
+    watcher_id: str
+    watcher_name: str
+    session_id: str | None
+    sources: list[AgentTaskWatcherProblemSource]
+    note: str | None
+    run_error: str | None
+    reported_at: int
+
+
 class AgentTaskBoardPending(BaseModel):
     """What waits for the caller on their GlobalHub board.
 
-    ``fyi`` lists the pending FYI clusters, oldest first.
+    ``fyi`` lists the pending FYI clusters, oldest first. ``watcher_problems``
+    lists the watchers whose latest run could not read its sources.
     """
 
     object: Literal["agent.task.board"] = "agent.task.board"
     fyi: list[AgentFyiClusterResponse]
+    watcher_problems: list[AgentTaskWatcherProblem] = Field(default_factory=list)
+
+
+class DismissWatcherProblemsRequest(BaseModel):
+    watcher_ids: list[str] = Field(..., min_length=1, max_length=100)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DismissWatcherProblemsResponse(BaseModel):
+    dismissed: int
 
 
 class FileAgentTaskEventsRequest(BaseModel):

@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import builtins
 from abc import ABC, abstractmethod
+from collections.abc import Collection
 from typing import Any
 
-from omnigent.entities import Watcher
+from omnigent.entities import Watcher, WatcherProblem
 
 #: Sentinel for "leave unchanged" where ``None`` is itself a value to store.
 UNSET: Any = object()
@@ -90,6 +91,21 @@ class WatcherStore(ABC):
 
         :returns: The updated watcher, or ``None`` when missing or someone else's.
         """
+
+    @abstractmethod
+    def set_problem(
+        self, watcher_id: str, problem: WatcherProblem | None, *, owner_user_id: str | None
+    ) -> Watcher | None: ...
+
+    @abstractmethod
+    def clear_problems(
+        self, watcher_ids: Collection[str], *, owner_user_id: str | None
+    ) -> int: ...
+
+    @abstractmethod
+    def settle_run_problem(
+        self, conversation_id: str, *, started_at: int, error: str | None, now: int
+    ) -> Watcher | None: ...
 
     @abstractmethod
     def delete(self, watcher_id: str, *, owner_user_id: str | None) -> Watcher | None:

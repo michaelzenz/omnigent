@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import builtins
-from typing import Any
+import json
+from collections.abc import Collection
+from typing import Any, cast
 
-from sqlalchemy import ColumnElement, and_, asc, delete, select
+from sqlalchemy import ColumnElement, and_, asc, delete, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from omnigent.db.account_authority import require_active_account
@@ -22,8 +25,41 @@ from omnigent.db.utils import (
     now_epoch,
     run_write_transaction,
 )
-from omnigent.entities import Watcher
+from omnigent.entities import Watcher, WatcherProblem, WatcherProblemSource
 from omnigent.stores.watcher_store import UNSET, WatcherStore
+
+
+def _decode_problem(raw: str | None) -> WatcherProblem | None:
+    if not raw:
+        return None
+    data = json.loads(raw)
+    return WatcherProblem(
+        reported_at=int(data["reported_at"]),
+        sources=tuple(
+            WatcherProblemSource(
+                source=item["source"], reason=item["reason"], source_key=item.get("source_key")
+            )
+            for item in data.get("sources", [])
+        ),
+        note=data.get("note"),
+        run_error=data.get("run_error"),
+    )
+
+
+def _encode_problem(problem: WatcherProblem | None) -> str | None:
+    if problem is None:
+        return None
+    return json.dumps(
+        {
+            "reported_at": problem.reported_at,
+            "sources": [
+                {"source": item.source, "source_key": item.source_key, "reason": item.reason}
+                for item in problem.sources
+            ],
+            "note": problem.note,
+            "run_error": problem.run_error,
+        }
+    )
 
 
 def _to_entity(row: SqlWatcher) -> Watcher:
@@ -38,6 +74,7 @@ def _to_entity(row: SqlWatcher) -> Watcher:
         model=row.model,
         conversation_id=row.conversation_id,
         builtin=row.builtin,
+        problem=_decode_problem(row.problem),
     )
 
 
@@ -186,6 +223,77 @@ class SqlAlchemyWatcherStore(WatcherStore):
             return _to_entity(row)
 
         return run_write_transaction(self._session_immediate, "update_watcher", write)
+
+    def set_problem(
+        self, watcher_id: str, problem: WatcherProblem | None, *, owner_user_id: str | None
+    ) -> Watcher | None:
+        def write(session: Session) -> Watcher | None:
+            require_active_account(session, owner_user_id)
+            row = _owned_row(session, watcher_id, owner_user_id)
+            if row is None:
+                return None
+            row.problem = _encode_problem(problem)
+            return _to_entity(row)
+
+        return run_write_transaction(self._session_immediate, "set_watcher_problem", write)
+
+    def clear_problems(self, watcher_ids: Collection[str], *, owner_user_id: str | None) -> int:
+        ids = list(dict.fromkeys(watcher_ids))
+        if not ids:
+            return 0
+
+        def write(session: Session) -> int:
+            require_active_account(session, owner_user_id)
+            result = cast(
+                CursorResult[tuple[object]],
+                session.execute(
+                    update(SqlWatcher)
+                    .where(
+                        _owned(owner_user_id),
+                        SqlWatcher.id.in_(ids),
+                        SqlWatcher.problem.is_not(None),
+                    )
+                    .values(problem=None)
+                    .execution_options(synchronize_session=False)
+                ),
+            )
+            return result.rowcount
+
+        return run_write_transaction(self._session_immediate, "clear_watcher_problems", write)
+
+    def settle_run_problem(
+        self, conversation_id: str, *, started_at: int, error: str | None, now: int
+    ) -> Watcher | None:
+        stmt = select(SqlWatcher).where(
+            SqlWatcher.workspace_id == current_workspace_id(),
+            SqlWatcher.conversation_id == conversation_id,
+        )
+        with self._session("select_watcher_at_run_end") as session:
+            found = session.execute(stmt).scalars().first()
+            if found is None:
+                return None
+            if found.problem is None and error is None:
+                return _to_entity(found)
+
+        def write(session: Session) -> Watcher | None:
+            row = session.execute(stmt).scalars().first()
+            if row is None:
+                return None
+            current = _decode_problem(row.problem)
+            kept = current if current is not None and current.reported_at >= started_at else None
+            if error is not None:
+                kept = WatcherProblem(
+                    reported_at=now,
+                    sources=kept.sources if kept is not None else (),
+                    note=kept.note if kept is not None else None,
+                    run_error=error,
+                )
+            encoded = _encode_problem(kept)
+            if row.problem != encoded:
+                row.problem = encoded
+            return _to_entity(row)
+
+        return run_write_transaction(self._session_immediate, "settle_watcher_run_problem", write)
 
     def delete(self, watcher_id: str, *, owner_user_id: str | None) -> Watcher | None:
         """Delete the owner's watcher, its schedule, its tracked items and its source types."""

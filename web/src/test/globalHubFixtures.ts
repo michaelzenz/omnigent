@@ -1,4 +1,4 @@
-import type { FyiCluster, FyiEvent } from "@/hooks/useGlobalHubFyi";
+import type { FyiCluster, FyiEvent, WatcherProblem } from "@/hooks/useGlobalHubFyi";
 import type { SystemNotice, SystemNoticeInput } from "@/hooks/useGlobalHubNotice";
 import type {
   AgentTaskAsset,
@@ -127,6 +127,19 @@ export function fyiEvent(id: string, fields: Partial<FyiEvent> = {}): FyiEvent {
     source_session_id: `s-${id}`,
     source_key: null,
     created_at: 1_800_000_000,
+    ...fields,
+  };
+}
+
+export function watcherProblem(id: string, fields: Partial<WatcherProblem> = {}): WatcherProblem {
+  return {
+    watcher_id: id,
+    watcher_name: `Watcher ${id}`,
+    session_id: `s-${id}`,
+    sources: [],
+    note: null,
+    run_error: null,
+    reported_at: 1_800_000_000,
     ...fields,
   };
 }

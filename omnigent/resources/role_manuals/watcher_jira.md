@@ -25,5 +25,5 @@ that sessions follow. This watcher covers the source type `jira.issue`.
    that names who made the change, and put the summary of the ticket and the
    text of a new comment in `details`.
 
-If you do not have access to the Jira MCP server, skip this run: end the turn
-with one line that says so.
+If you do not have access to the Jira MCP server, report it with `problem`
+(source `jira.issue`, no `source_key`) and end the run.

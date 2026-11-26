@@ -44,8 +44,8 @@ message, oldest first, with exactly these keys: ts, thread_ts, user, user_name,
 permalink, summary (one line: what the message says or asks, without secrets).
 Use null for a missing key. End with one line giving has_more (true or false)
 and next_cursor. Output nothing else." Write each change's `summary` from these
-lines. When a read still returns only a redacted summary, name the
-conversations that you could not read in one line at the end of the run.
+lines. When a read still returns only a redacted summary, report those
+conversations with `problem`, and do not observe a change for them.
 
-If you do not have access to the Slack MCP server, skip this run: end the turn
-with one line that says so.
+If you do not have access to the Slack MCP server, report it with `problem`
+(source `slack.conversation`, no `source_key`) and end the run.

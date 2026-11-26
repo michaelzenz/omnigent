@@ -28,7 +28,7 @@ from omnigent.agent_tasks.role_sessions import RoleSessionStores, is_role_sessio
 from omnigent.agent_tasks.roles import session_role
 from omnigent.agent_tasks.task_search_index import TaskSearchIndex
 from omnigent.db.db_models import workspace_scope
-from omnigent.entities import AgentQueueItem
+from omnigent.entities import AgentQueueItem, Conversation
 from omnigent.server.agent_task_delivery import (
     SendResult,
     SessionSendDeps,
@@ -55,6 +55,7 @@ _STALE_SWEEP_INTERVAL_S = 60
 SEARCH_REFRESH_INTERVAL_S = 30
 _BASE_RETRY_DELAY_S = 30
 _MAX_RETRY_DELAY_S = 5 * 60
+_RUN_ERROR_MAX_CHARS = 200
 WORKER_MESSAGE_KIND = "worker_message"
 EVENTS_KIND = "events"
 
@@ -75,6 +76,20 @@ class Packager(Protocol):
 def retry_delay_s(attempts: int) -> int:
     """Return the wait after a failed send, given how many sends failed before it."""
     return min(_BASE_RETRY_DELAY_S * 2**attempts, _MAX_RETRY_DELAY_S)
+
+
+def _turn_failed(conv: Conversation) -> bool:
+    from omnigent.server.routes import sessions
+
+    return sessions._session_status_cache.get(conv.id, conv.live_status) == "failed"
+
+
+def _run_error(conv: Conversation | None) -> str:
+    from omnigent.server.routes._sessions.helpers import _last_task_error_from_labels
+
+    error = _last_task_error_from_labels(conv.labels) if conv is not None else None
+    message = error["message"] if error is not None else "The run failed."
+    return message[:_RUN_ERROR_MAX_CHARS]
 
 
 class AgentQueueDispatcher:
@@ -126,6 +141,7 @@ class AgentQueueDispatcher:
         self._tasks: set[asyncio.Task[Any]] = set()
         # Sessions with a sent item, refreshed from the queue on every pass.
         self._in_flight: set[str] = set()
+        self._sent_at: dict[str, int] = {}
         # When each sent item's session was first seen idle after the send.
         self._idle_since: dict[str, int] = {}
         self._last_stale_sweep: int | None = None
@@ -153,8 +169,11 @@ class AgentQueueDispatcher:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     def turn_ended(self, session_id: str, status: str) -> None:
-        """Free a session whose turn ended or failed for its next item; a no-op outside a loop."""
-        del status
+        """Free a session whose turn ended or failed for its next item; a no-op outside a loop.
+
+        A watcher's run also settles its problem report: a report from an earlier
+        run clears, and a failed run records why it failed.
+        """
         if session_id not in self._in_flight:
             return
         try:
@@ -162,9 +181,27 @@ class AgentQueueDispatcher:
         except RuntimeError:
             return
         self._in_flight.discard(session_id)
+        started_at = self._sent_at.pop(session_id, None)
         self._track(
-            loop.create_task(asyncio.to_thread(self._queue.mark_done_for_session, session_id))
+            loop.create_task(asyncio.to_thread(self._end_turn, session_id, status, started_at))
         )
+
+    def _end_turn(self, session_id: str, status: str, started_at: int | None) -> None:
+        self._queue.mark_done_for_session(session_id)
+        if started_at is None:
+            return
+        error = None
+        if status == "failed":
+            error = _run_error(self._send_deps.conversation_store.get_conversation(session_id))
+        self._settle_watcher_run(session_id, started_at, error)
+
+    def _settle_watcher_run(self, session_id: str, started_at: int, error: str | None) -> None:
+        try:
+            self._watchers.settle_run_problem(
+                session_id, started_at=started_at, error=error, now=int(self._clock())
+            )
+        except Exception:
+            _logger.exception("GlobalHub could not settle the problem report of %s", session_id)
 
     async def run_once(self) -> list[asyncio.Task[Any]]:
         """Run one pass and return the deliveries it started."""
@@ -220,6 +257,13 @@ class AgentQueueDispatcher:
         """Mark done the sent items whose turn lost its runner, or whose session stayed idle."""
         sent = await asyncio.to_thread(self._queue.list_sent_all_workspaces)
         self._in_flight = {item.target_session_id for item in sent}
+        sent_at: dict[str, int] = {}
+        for item in sent:
+            started = item.sent_at if item.sent_at is not None else now
+            sent_at[item.target_session_id] = min(
+                sent_at.get(item.target_session_id, started), started
+            )
+        self._sent_at = sent_at
         by_workspace: defaultdict[int, list[AgentQueueItem]] = defaultdict(list)
         for item in sent:
             by_workspace[item.workspace_id].append(item)
@@ -240,6 +284,7 @@ class AgentQueueDispatcher:
         orphaned = set(await self._settle_orphans(targets.values(), deps=self._send_deps))
         idle_since: dict[str, int] = {}
         for item in sent:
+            run_end: tuple[int, str | None] | None = None
             if item.target_session_id in orphaned:
                 _logger.info(
                     "GlobalHub settled session %s, whose turn lost its runner",
@@ -253,10 +298,15 @@ class AgentQueueDispatcher:
                 if now - since < IDLE_FALLBACK_S:
                     idle_since[item.id] = since
                     continue
+                if item.sent_at is not None:
+                    failed = conv is not None and _turn_failed(conv)
+                    run_end = (item.sent_at, _run_error(conv) if failed else None)
             await asyncio.to_thread(
                 self._queue.mark_done, item.id, owner_user_id=item.owner_user_id
             )
             self._in_flight.discard(item.target_session_id)
+            if run_end is not None:
+                await asyncio.to_thread(self._settle_watcher_run, item.target_session_id, *run_end)
         return idle_since
 
     async def _deliver_in_workspace(self, item: AgentQueueItem) -> None:
@@ -272,6 +322,7 @@ class AgentQueueDispatcher:
         await asyncio.to_thread(self._settle, item, result)
         if result is not None and result.outcome == "sent":
             self._in_flight.add(item.target_session_id)
+            self._sent_at.setdefault(item.target_session_id, int(self._clock()))
 
     async def _attempt(self, item: AgentQueueItem) -> SendResult | None:
         """Send the item; ``None`` when it has nothing left to say."""

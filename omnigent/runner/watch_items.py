@@ -9,6 +9,7 @@ from omnigent.runner.pmv2_api import send_board_request
 from omnigent.tools.builtins.watch_items import WATCH_ITEMS_ACTIONS
 
 _ROUTE = "/v1/agent-tasks/watchers/self/items"
+_PROBLEM_ROUTE = "/v1/agent-tasks/watchers/self/problem"
 _LIST_QUERY_FIELDS = ("status", "source", "limit", "after")
 
 
@@ -16,13 +17,14 @@ async def execute_watch_items(
     args: dict[str, Any], client: httpx.AsyncClient | None, source_id: str | None
 ) -> str:
     """
-    List, observe or finish the calling watcher's tracked items.
+    List, observe or finish the calling watcher's tracked items, or report what it could not read.
 
     The server finds the watcher from the calling session, which the runner's
     tunnel token confirms.
 
     :param args: Tool arguments: ``action``; ``items`` for ``observe`` and
-        ``done``; ``status``, ``source``, ``limit`` and ``after`` for ``list``.
+        ``done``; ``status``, ``source``, ``limit`` and ``after`` for ``list``;
+        ``sources`` and ``note`` for ``problem``.
     :param client: HTTP client pointed at the Omnigent server.
     :param source_id: The calling session.
     :returns: The server's JSON response, or JSON with an ``error``.
@@ -36,6 +38,13 @@ async def execute_watch_items(
         query = {field: args[field] for field in _LIST_QUERY_FIELDS if args.get(field) is not None}
         return await send_board_request(
             client, "GET", _ROUTE, source_id, tool_name="watch_items", params=query or None
+        )
+    if action == "problem":
+        body: dict[str, Any] = {"sources": args.get("sources") or []}
+        if args.get("note") is not None:
+            body["note"] = args["note"]
+        return await send_board_request(
+            client, "POST", _PROBLEM_ROUTE, source_id, tool_name="watch_items", json_body=body
         )
     items = args.get("items")
     if not isinstance(items, list) or not items:

@@ -1888,7 +1888,7 @@
         "type": "object"
       },
       "AgentTaskBoardPending": {
-        "description": "What waits for the caller on their GlobalHub board.\n\n`fyi` lists the pending FYI clusters, oldest first.",
+        "description": "What waits for the caller on their GlobalHub board.\n\n`fyi` lists the pending FYI clusters, oldest first. `watcher_problems`\nlists the watchers whose latest run could not read its sources.",
         "properties": {
           "fyi": {
             "items": {
@@ -1902,6 +1902,13 @@
             "default": "agent.task.board",
             "title": "Object",
             "type": "string"
+          },
+          "watcher_problems": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTaskWatcherProblem"
+            },
+            "title": "Watcher Problems",
+            "type": "array"
           }
         },
         "required": [
@@ -2731,6 +2738,104 @@
           "queued"
         ],
         "title": "AgentTaskSpawnManagersRequested",
+        "type": "object"
+      },
+      "AgentTaskWatcherProblem": {
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reported_at": {
+            "format": "int64",
+            "title": "Reported At",
+            "type": "integer"
+          },
+          "run_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Error"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTaskWatcherProblemSource"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "watcher_id": {
+            "title": "Watcher Id",
+            "type": "string"
+          },
+          "watcher_name": {
+            "title": "Watcher Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "watcher_id",
+          "watcher_name",
+          "session_id",
+          "sources",
+          "note",
+          "run_error",
+          "reported_at"
+        ],
+        "title": "AgentTaskWatcherProblem",
+        "type": "object"
+      },
+      "AgentTaskWatcherProblemSource": {
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "source_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Key"
+          }
+        },
+        "required": [
+          "source",
+          "source_key",
+          "reason"
+        ],
+        "title": "AgentTaskWatcherProblemSource",
         "type": "object"
       },
       "AgentTaskWorkerList": {
@@ -5500,6 +5605,39 @@
           "comment_ids"
         ],
         "title": "DeleteAgentTextCommentsRequest",
+        "type": "object"
+      },
+      "DismissWatcherProblemsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "watcher_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Watcher Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "watcher_ids"
+        ],
+        "title": "DismissWatcherProblemsRequest",
+        "type": "object"
+      },
+      "DismissWatcherProblemsResponse": {
+        "properties": {
+          "dismissed": {
+            "format": "int64",
+            "title": "Dismissed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dismissed"
+        ],
+        "title": "DismissWatcherProblemsResponse",
         "type": "object"
       },
       "ElicitationRequestEvent": {
@@ -11078,6 +11216,46 @@
           "source_key"
         ],
         "title": "RemoveSessionSubscriptionRequest",
+        "type": "object"
+      },
+      "ReportWatcherProblemRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/WatcherProblemSourceInput"
+            },
+            "maxItems": 20,
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "title": "ReportWatcherProblemRequest",
+        "type": "object"
+      },
+      "ReportWatcherProblemResponse": {
+        "properties": {
+          "reported": {
+            "title": "Reported",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reported"
+        ],
+        "title": "ReportWatcherProblemResponse",
         "type": "object"
       },
       "ResetSessionModelOverrideRequest": {
@@ -22133,6 +22311,39 @@
         "title": "WatchItemResponse",
         "type": "object"
       },
+      "WatcherProblemSourceInput": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "maxLength": 200,
+            "title": "Reason",
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 64,
+            "title": "Source",
+            "type": "string"
+          },
+          "source_key": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Key"
+          }
+        },
+        "required": [
+          "source",
+          "reason"
+        ],
+        "title": "WatcherProblemSourceInput",
+        "type": "object"
+      },
       "WorkflowDeleted": {
         "description": "Response for `DELETE /v1/workflows/{workflow_id}`.",
         "properties": {
@@ -23096,7 +23307,7 @@
     },
     "/v1/agent-tasks/board/pending": {
       "get": {
-        "description": "List the caller's pending FYI clusters, oldest first, each with its events.",
+        "description": "List the caller's pending FYI clusters, oldest first, each with its events.\n\nAlso list the caller's watchers whose latest run could not read its sources.",
         "operationId": "list_board_pending_v1_agent_tasks_board_pending_get",
         "responses": {
           "200": {
@@ -23133,6 +23344,47 @@
           }
         },
         "summary": "Read Roles",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/board/watcher-problems/dismiss": {
+      "post": {
+        "operationId": "dismiss_watcher_problems_v1_agent_tasks_board_watcher_problems_dismiss_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DismissWatcherProblemsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DismissWatcherProblemsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dismiss Watcher Problems",
         "tags": [
           "agent-tasks"
         ]
@@ -24368,6 +24620,47 @@
           }
         },
         "summary": "Observe Own Items",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/watchers/self/problem": {
+      "post": {
+        "operationId": "report_own_problem_v1_agent_tasks_watchers_self_problem_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportWatcherProblemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportWatcherProblemResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Report Own Problem",
         "tags": [
           "agent-tasks"
         ]

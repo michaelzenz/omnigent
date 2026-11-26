@@ -1,7 +1,8 @@
 """FYI clusters on the caller's GlobalHub board.
 
 A manager files events that need no task into a cluster; the board lists the
-pending clusters, and the user dismisses them.
+pending clusters, and the user dismisses them. The board also lists the
+watchers whose latest run could not read its sources.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import cast
 from fastapi import APIRouter, Request
 
 from omnigent.agent_tasks.board_stores import BoardStores
-from omnigent.entities import FyiCluster, TaskEvent
+from omnigent.entities import FyiCluster, TaskEvent, Watcher
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
@@ -23,6 +24,10 @@ from omnigent.server.schemas import (
     AgentFyiClusterResponse,
     AgentFyiClusterState,
     AgentTaskBoardPending,
+    AgentTaskWatcherProblem,
+    AgentTaskWatcherProblemSource,
+    DismissWatcherProblemsRequest,
+    DismissWatcherProblemsResponse,
     FileAgentTaskEventsRequest,
 )
 
@@ -43,16 +48,20 @@ def create_agent_task_fyi_router(
     router = APIRouter()
     events = board.events
     clusters = board.fyi_clusters
+    watchers = board.watchers
 
     def filed_events(cluster: FyiCluster, user_id: str | None) -> list[TaskEvent]:
         return events.list(owner_user_id=user_id, fyi_cluster_ids=[cluster.id])
 
     @router.get("/agent-tasks/board/pending", response_model=AgentTaskBoardPending)
     async def list_board_pending(request: Request) -> AgentTaskBoardPending:
-        """List the caller's pending FYI clusters, oldest first, each with its events."""
+        """List the caller's pending FYI clusters, oldest first, each with its events.
+
+        Also list the caller's watchers whose latest run could not read its sources.
+        """
         user_id = require_user(request, auth_provider)
 
-        def load() -> list[tuple[FyiCluster, list[TaskEvent]]]:
+        def load() -> tuple[list[tuple[FyiCluster, list[TaskEvent]]], list[Watcher]]:
             pending = clusters.list(owner_user_id=user_id, states=["pending"])
             filed: defaultdict[str, list[TaskEvent]] = defaultdict(list)
             if pending:
@@ -60,12 +69,34 @@ def create_agent_task_fyi_router(
                 for event in events.list(owner_user_id=user_id, fyi_cluster_ids=cluster_ids):
                     if event.fyi_cluster_id is not None:
                         filed[event.fyi_cluster_id].append(event)
-            return [(cluster, filed[cluster.id]) for cluster in pending]
+            troubled = [
+                watcher
+                for watcher in watchers.list(owner_user_id=user_id)
+                if watcher.problem is not None
+            ]
+            troubled.sort(
+                key=lambda watcher: watcher.problem.reported_at if watcher.problem else 0
+            )
+            return [(cluster, filed[cluster.id]) for cluster in pending], troubled
 
-        listed = await asyncio.to_thread(load)
+        listed, troubled = await asyncio.to_thread(load)
         return AgentTaskBoardPending(
-            fyi=[_cluster_response(cluster, filed) for cluster, filed in listed]
+            fyi=[_cluster_response(cluster, filed) for cluster, filed in listed],
+            watcher_problems=[_watcher_problem_response(watcher) for watcher in troubled],
         )
+
+    @router.post(
+        "/agent-tasks/board/watcher-problems/dismiss",
+        response_model=DismissWatcherProblemsResponse,
+    )
+    async def dismiss_watcher_problems(
+        request: Request, body: DismissWatcherProblemsRequest
+    ) -> DismissWatcherProblemsResponse:
+        user_id = require_user(request, auth_provider)
+        dismissed = await asyncio.to_thread(
+            watchers.clear_problems, body.watcher_ids, owner_user_id=user_id
+        )
+        return DismissWatcherProblemsResponse(dismissed=dismissed)
 
     @router.post("/task-events/fyi-clusters", response_model=AgentFyiClusterResponse)
     async def file_events(
@@ -145,6 +176,25 @@ def create_agent_task_fyi_router(
         return _cluster_response(cluster, filed)
 
     return router
+
+
+def _watcher_problem_response(watcher: Watcher) -> AgentTaskWatcherProblem:
+    problem = watcher.problem
+    assert problem is not None
+    return AgentTaskWatcherProblem(
+        watcher_id=watcher.id,
+        watcher_name=watcher.name,
+        session_id=watcher.conversation_id,
+        sources=[
+            AgentTaskWatcherProblemSource(
+                source=item.source, source_key=item.source_key, reason=item.reason
+            )
+            for item in problem.sources
+        ],
+        note=problem.note,
+        run_error=problem.run_error,
+        reported_at=problem.reported_at,
+    )
 
 
 def _cluster_response(cluster: FyiCluster, filed: list[TaskEvent]) -> AgentFyiClusterResponse:

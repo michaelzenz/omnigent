@@ -32,5 +32,5 @@ source type `github.pull_request`.
    made the change, and put the names of the failing checks or the text of the
    comment in `details`.
 
-If you do not have access to the GitHub MCP server, skip this run: end the turn
-with one line that says so.
+If you do not have access to the GitHub MCP server, report it with `problem`
+(source `github.pull_request`, no `source_key`) and end the run.

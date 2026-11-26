@@ -17,7 +17,13 @@ from fastapi import APIRouter, Query, Request
 from omnigent.agent_tasks.board_stores import BoardStores
 from omnigent.agent_tasks.role_sessions import RoleSessionStores
 from omnigent.db.utils import now_epoch
-from omnigent.entities import Conversation, Watcher, WatchItem
+from omnigent.entities import (
+    Conversation,
+    Watcher,
+    WatcherProblem,
+    WatcherProblemSource,
+    WatchItem,
+)
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._agent_task_callers import runner_bound_caller
@@ -27,6 +33,8 @@ from omnigent.server.schemas import (
     FinishWatchItemsResponse,
     ObserveWatchItemsRequest,
     ObserveWatchItemsResponse,
+    ReportWatcherProblemRequest,
+    ReportWatcherProblemResponse,
     WatchItemChange,
     WatchItemKey,
     WatchItemList,
@@ -196,6 +204,32 @@ def create_agent_task_watch_items_router(
             done=len(finished) - len(missing),
             missing=[WatchItemKey(source=source, source_key=key) for source, key in missing],
         )
+
+    @router.post("/agent-tasks/watchers/self/problem", response_model=ReportWatcherProblemResponse)
+    async def report_own_problem(
+        request: Request, body: ReportWatcherProblemRequest
+    ) -> ReportWatcherProblemResponse:
+        user_id = require_user(request, auth_provider)
+        sources = tuple(
+            WatcherProblemSource(
+                source=_source_type(item.source),
+                source_key=_source_key(item.source_key) if item.source_key is not None else None,
+                reason=item.reason,
+            )
+            for item in body.sources
+        )
+        problem = (
+            WatcherProblem(reported_at=now_epoch(), sources=sources, note=body.note)
+            if sources or body.note
+            else None
+        )
+
+        def report() -> None:
+            watcher, _ = calling_watcher(request, user_id)
+            board.watchers.set_problem(watcher.id, problem, owner_user_id=user_id)
+
+        await asyncio.to_thread(report)
+        return ReportWatcherProblemResponse(reported=problem is not None)
 
     @router.get("/agent-tasks/watchers/{watcher_id}/items", response_model=WatchItemList)
     async def list_watcher_items(

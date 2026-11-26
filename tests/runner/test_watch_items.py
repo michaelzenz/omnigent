@@ -11,6 +11,8 @@ from omnigent.runner.watch_items import execute_watch_items
 
 SOURCE_ID = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
 ROUTE = "/v1/agent-tasks/watchers/self/items"
+PROBLEM_ROUTE = "/v1/agent-tasks/watchers/self/problem"
+UNREADABLE = {"source": "slack.conversation", "reason": "no access"}
 EMPTY = {"object": "list", "data": [], "total": 0}
 ITEM = {
     "source": "github.pull_request",
@@ -47,14 +49,22 @@ async def test_each_action_calls_its_route_as_the_calling_session() -> None:
         await execute_watch_items(
             {"action": "done", "items": [ITEM, {**ITEM, "summary": "Merged"}]}, client, SOURCE_ID
         ),
+        await execute_watch_items(
+            {"action": "problem", "sources": [UNREADABLE], "note": "Sign in."}, client, SOURCE_ID
+        ),
+        await execute_watch_items({"action": "problem"}, client, SOURCE_ID),
     ]
 
-    assert [json.loads(output) for output in outputs] == [EMPTY] * 3
+    assert [json.loads(output) for output in outputs] == [EMPTY] * 5
     assert [(request.method, request.url.path) for request in requests] == [
         ("GET", ROUTE),
         ("POST", f"{ROUTE}/observe"),
         ("POST", f"{ROUTE}/done"),
+        ("POST", PROBLEM_ROUTE),
+        ("POST", PROBLEM_ROUTE),
     ]
+    assert json.loads(requests[3].content) == {"sources": [UNREADABLE], "note": "Sign in."}
+    assert json.loads(requests[4].content) == {"sources": []}
     assert dict(requests[0].url.params) == {
         "status": "all",
         "source": "github.pull_request",

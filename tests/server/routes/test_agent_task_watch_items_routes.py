@@ -311,3 +311,64 @@ async def test_a_done_item_tells_the_sessions_that_follow_it_and_reopens_when_it
         follower,
     )
     assert [row["source_key"] for row in active["data"]] == [PR]
+
+
+async def test_a_watchers_problem_report_shows_on_the_board_until_cleared_or_dismissed(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    watcher_id, own_runner = await _watcher_session(auth_client, db_uri)
+    own_problem = f"{WATCHERS}/self/problem"
+    pending = "/v1/agent-tasks/board/pending"
+    dismiss = "/v1/agent-tasks/board/watcher-problems/dismiss"
+    report = {
+        "sources": [
+            {
+                "source": "slack.conversation",
+                "source_key": "https://chat.example.com/archives/D0123",
+                "reason": " the privacy filter hides the text ",
+            },
+            {"source": "slack.thread", "reason": "no access to the MCP server"},
+        ],
+        "note": "Sign in to the Slack MCP server on the host.",
+    }
+
+    long_note = await auth_client.post(
+        own_problem, json={**report, "note": " ".join(["word"] * 31)}, headers=own_runner
+    )
+    from_user = await auth_client.post(own_problem, json=report, headers=ALICE)
+    reported = await auth_client.post(own_problem, json=report, headers=own_runner)
+    shown = (await auth_client.get(pending, headers=ALICE)).json()["watcher_problems"]
+    bobs = (await auth_client.get(pending, headers=BOB)).json()["watcher_problems"]
+
+    assert (long_note.status_code, from_user.status_code) == (422, 403)
+    assert reported.json() == {"reported": True}
+    assert bobs == []
+    [problem] = shown
+    assert (problem["watcher_id"], problem["session_id"], problem["run_error"]) == (
+        watcher_id,
+        own_runner[ORCHESTRATION_SOURCE_HEADER],
+        None,
+    )
+    assert problem["note"] == "Sign in to the Slack MCP server on the host."
+    assert problem["sources"] == [
+        {
+            "source": "slack.conversation",
+            "source_key": "https://chat.example.com/archives/D0123",
+            "reason": "the privacy filter hides the text",
+        },
+        {"source": "slack.thread", "source_key": None, "reason": "no access to the MCP server"},
+    ]
+
+    cleared = await auth_client.post(own_problem, json={"sources": []}, headers=own_runner)
+    after_clear = (await auth_client.get(pending, headers=ALICE)).json()["watcher_problems"]
+    await auth_client.post(own_problem, json=report, headers=own_runner)
+    by_bob = await auth_client.post(dismiss, json={"watcher_ids": [watcher_id]}, headers=BOB)
+    by_alice = await auth_client.post(dismiss, json={"watcher_ids": [watcher_id]}, headers=ALICE)
+    after_dismiss = (await auth_client.get(pending, headers=ALICE)).json()["watcher_problems"]
+
+    assert (cleared.json(), after_clear) == ({"reported": False}, [])
+    assert (by_bob.json(), by_alice.json(), after_dismiss) == (
+        {"dismissed": 0},
+        {"dismissed": 1},
+        [],
+    )

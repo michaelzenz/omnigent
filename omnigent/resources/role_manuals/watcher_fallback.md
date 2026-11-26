@@ -14,5 +14,5 @@ such sources exist, and lists them in `[Followed sources]`.
 4. Mark a source `done` when it is finished, e.g. merged, closed or resolved,
    with the reason as `summary`. For a listed done source, observe only its
    `state` offset, to see whether it reopened.
-5. End the run with one line that names the source types that you could not
-   read, if any, so the user can add a watcher for them.
+5. Report the source types that you could not read, if any, with `problem`, so
+   the user can add a watcher for them.

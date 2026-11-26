@@ -1490,6 +1490,8 @@ class SqlWatcher(OmnigentBase):
         cannot delete.
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last change.
+    :param problem: JSON of what stopped the latest run from reading its sources,
+        or ``None`` when the run worked.
     """
 
     __tablename__ = "watchers"
@@ -1512,6 +1514,7 @@ class SqlWatcher(OmnigentBase):
     builtin: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    problem: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         # One owner's watchers in creation order.
