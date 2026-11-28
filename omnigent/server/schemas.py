@@ -7460,12 +7460,18 @@ class SessionSubscriptionRemoved(BaseModel):
     removed: bool
 
 
+SourceRouting = Literal["followers", "broker"]
+
+
 class SourceTypeResponse(BaseModel):
-    """A source type in use, with the watcher that checks it.
+    """A source type in use, with the watcher that checks it and its routing.
 
     ``watcher_id`` and ``watcher_name`` are null when no watcher is assigned;
     the fallback watcher then checks the type. ``subscriptions`` counts the
-    subscriptions of the type.
+    subscriptions of the type. With ``routing`` ``broker``, each event of the
+    type goes only to the broker; with ``followers``, each event goes to the
+    sessions that follow its source. ``routing`` is null until the custodian or
+    the user sets it, and the type then routes like ``followers``.
     """
 
     object: Literal["source_type"] = "source_type"
@@ -7473,6 +7479,7 @@ class SourceTypeResponse(BaseModel):
     watcher_id: str | None
     watcher_name: str | None
     subscriptions: int
+    routing: SourceRouting | None = None
 
 
 class SourceTypeList(BaseModel):
@@ -7486,6 +7493,19 @@ class AssignSourceTypeRequest(BaseModel):
     """Assign a source type to the watcher whose manual covers it."""
 
     watcher_id: str = Field(min_length=1, max_length=64)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SetSourceTypeRoutingRequest(BaseModel):
+    """Set how the events of a source type route.
+
+    ``broker`` sends each event only to the broker, for a stream in which one
+    source carries many topics, e.g. a chat conversation; ``followers`` sends
+    each event to the sessions that follow its source.
+    """
+
+    routing: SourceRouting
 
     model_config = ConfigDict(extra="forbid")
 

@@ -43,13 +43,14 @@ routes work, and managers own task decisions.
 3. **Source types** — when sessions start to follow a new type of source, or
    when the user creates or deletes a watcher, a
    `[System: assign source types to watchers]` message lists the types that
-   no watcher checks.
+   no watcher checks and the types without a routing.
 
 ## Assigning source types
 
 Sessions follow outside sources, e.g. pull requests, and a watcher checks
 each source type, e.g. `github.pull_request`. The message lists each type
-without a watcher, with an example key, and the user's watchers.
+without a watcher, with an example key, and the user's watchers. It also lists
+each type without a routing.
 
 1. Read the manual of each watcher that could fit:
    `pmv2_read(path="/v1/agent-tasks/watchers/<watcher id>")`.
@@ -62,8 +63,21 @@ source_watchers(action="assign", source_type="<type>", watcher_id="<watcher id>"
 
 3. Leave a type unassigned when no manual covers it. The built-in fallback
    watcher then checks it as well as it can.
+4. Set the routing of each type without a routing:
 
-`source_watchers(action="list")` lists every type in use with its watcher. To
+```
+source_watchers(action="route", source_type="<type>", routing="broker")
+```
+
+   Use `broker` for a stream in which one source carries many topics, e.g. a
+   direct message, a group chat, a channel or an inbox. Each event of the type
+   then goes only to the broker, which routes it by its topic, and the
+   sessions that follow the source give it context. Use `followers` for a
+   source about one piece of work, e.g. a pull request, a ticket, a document
+   or a thread. Its events go to the sessions that follow it.
+
+`source_watchers(action="list")` lists every type in use with its watcher and
+its routing. To
 give a type back to the fallback watcher, call
 `source_watchers(action="unassign", source_type="<type>")`.
 

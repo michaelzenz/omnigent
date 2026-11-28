@@ -3,9 +3,8 @@
 A session subscribes to a source: a type such as ``"github.pull_request"`` and
 a key such as the pull request URL. Each event about the key goes to every
 session that follows it; an event that no session follows goes to the broker.
-An event about a whole Slack conversation, e.g. a direct message or a channel,
-goes only to the broker, because one conversation can carry unrelated topics; a
-reply in a Slack thread goes to the sessions that follow the thread.
+A source type with ``broker`` routing, e.g. a chat conversation that can carry
+unrelated topics, sends each event only to the broker.
 Keys match exactly, so the store keeps one spelling of each: a trimmed key,
 and for a web address, no fragment and no final slash. The custodian assigns
 each source type to the watcher whose manual covers it; the fallback watcher
@@ -35,8 +34,9 @@ MAX_SUBSCRIPTION_NOTE_CHARS = 3000
 #: The longest link that a subscription stores.
 MAX_SOURCE_URL_CHARS = 2048
 _SOURCE_TYPE = re.compile(r"[a-z0-9][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)+")
-_SLACK_SOURCE_TYPE_PREFIX = "slack."
-_SLACK_MESSAGE_ID = re.compile(r"/p\d{10,}|\d{10}\.\d{6}")
+FOLLOWERS_ROUTING = "followers"
+BROKER_ROUTING = "broker"
+SOURCE_ROUTINGS = (FOLLOWERS_ROUTING, BROKER_ROUTING)
 
 
 class SourceError(ValueError):
@@ -121,12 +121,6 @@ def is_reserved_source_type(source_type: str) -> bool:
     return source_type.startswith(RESERVED_SOURCE_TYPE_PREFIX)
 
 
-def is_slack_conversation(source_type: str, source_key: str) -> bool:
-    return source_type.startswith(_SLACK_SOURCE_TYPE_PREFIX) and not _SLACK_MESSAGE_ID.search(
-        source_key
-    )
-
-
 @dataclass(frozen=True)
 class SubscribeResult:
     """
@@ -144,16 +138,19 @@ class SubscribeResult:
 @dataclass(frozen=True)
 class SourceTypeUse:
     """
-    One source type of the owner, with its watcher.
+    One source type of the owner, with its watcher and its routing.
 
     :param source_type: E.g. ``"github.pull_request"``.
     :param watcher_id: The assigned watcher, or ``None`` for the fallback watcher.
     :param subscriptions: How many subscriptions have the type.
+    :param routing: ``"followers"`` or ``"broker"``, or ``None`` until someone
+        sets it; a type without a routing routes like ``"followers"``.
     """
 
     source_type: str
     watcher_id: str | None
     subscriptions: int
+    routing: str | None = None
 
 
 class SubscriptionStore(ABC):
@@ -221,7 +218,7 @@ class SubscriptionStore(ABC):
 
     @abstractmethod
     def source_types(self, *, owner_user_id: str | None) -> builtins.list[SourceTypeUse]:
-        """List the owner's source types, from subscriptions and assignments, by name.
+        """List the owner's source types, from subscriptions, assignments and routings, by name.
 
         The server's own types are left out.
         """
@@ -277,3 +274,19 @@ class SubscriptionStore(ABC):
         self, watcher_id: str, *, owner_user_id: str | None
     ) -> builtins.list[str]:
         """List the source types assigned to a watcher, by name."""
+
+    @abstractmethod
+    def routing(self, *, owner_user_id: str | None, source_type: str) -> str | None:
+        """Return how the owner's source type routes, or ``None`` until someone sets it."""
+
+    @abstractmethod
+    def set_routing(self, *, owner_user_id: str | None, source_type: str, routing: str) -> str:
+        """Set how a source type routes its events: ``"followers"`` or ``"broker"``.
+
+        :raises SourceError: When the type is not valid, or is one of the server's own.
+        :raises ValueError: When the routing is neither of the two.
+        """
+
+    @abstractmethod
+    def clear_routing(self, *, owner_user_id: str | None, source_type: str) -> bool:
+        """Forget how a source type routes; return whether it had a routing."""

@@ -1689,6 +1689,28 @@ class SqlSourceWatcher(OmnigentBase):
     )
 
 
+class SqlSourceTypeSetting(OmnigentBase):
+    __tablename__ = "source_type_settings"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    routing: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("routing IN (1, 2)", name="ck_source_type_settings_routing"),
+        Index("ix_source_type_settings_type", "workspace_id", "owner_user_id", "source_type"),
+    )
+
+
 class SqlTaskEmbedding(OmnigentBase):
     """
     SQLAlchemy model for the ``task_embeddings`` table: the vectors of the GlobalHub board search.

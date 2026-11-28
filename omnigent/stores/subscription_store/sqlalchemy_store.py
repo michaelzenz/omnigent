@@ -14,7 +14,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from omnigent.db.account_authority import require_active_account
-from omnigent.db.db_models import SqlSourceWatcher, SqlSubscription, current_workspace_id
+from omnigent.db.db_models import (
+    SqlSourceTypeSetting,
+    SqlSourceWatcher,
+    SqlSubscription,
+    current_workspace_id,
+)
+from omnigent.db.enum_codecs import decode_source_routing, encode_source_routing
 from omnigent.db.utils import (
     get_or_create_engine,
     make_named_managed_session_maker,
@@ -70,6 +76,22 @@ def _owned_assignments(owner_user_id: str | None) -> ColumnElement[bool]:
         SqlSourceWatcher.workspace_id == current_workspace_id(),
         SqlSourceWatcher.owner_user_id == owner_user_id,
     )
+
+
+def _owned_settings(owner_user_id: str | None) -> ColumnElement[bool]:
+    return and_(
+        SqlSourceTypeSetting.workspace_id == current_workspace_id(),
+        SqlSourceTypeSetting.owner_user_id == owner_user_id,
+    )
+
+
+def source_routing(session: Session, *, owner_user_id: str | None, source_type: str) -> str | None:
+    code = session.execute(
+        select(SqlSourceTypeSetting.routing)
+        .where(_owned_settings(owner_user_id), SqlSourceTypeSetting.source_type == source_type)
+        .limit(1)
+    ).scalar()
+    return decode_source_routing(code) if code is not None else None
 
 
 _OLDEST_FIRST = (asc(SqlSubscription.created_at), asc(SqlSubscription.id))
@@ -277,13 +299,20 @@ class SqlAlchemySubscriptionStore(SubscriptionStore):
                     select(SqlSourceWatcher).where(_owned_assignments(owner_user_id))
                 ).scalars()
             }
+            routings = {
+                row.source_type: decode_source_routing(row.routing)
+                for row in session.execute(
+                    select(SqlSourceTypeSetting).where(_owned_settings(owner_user_id))
+                ).scalars()
+            }
         return [
             SourceTypeUse(
                 source_type=source_type,
                 watcher_id=assigned.get(source_type),
                 subscriptions=used.get(source_type, 0),
+                routing=routings.get(source_type),
             )
-            for source_type in sorted(set(used) | set(assigned))
+            for source_type in sorted(set(used) | set(assigned) | set(routings))
         ]
 
     def copy_session(
@@ -456,3 +485,67 @@ class SqlAlchemySubscriptionStore(SubscriptionStore):
         )
         with self._session("list_source_types_of_watcher") as session:
             return list(session.execute(stmt).scalars())
+
+    def routing(self, *, owner_user_id: str | None, source_type: str) -> str | None:
+        kind = normalize_source_type(source_type)
+        with self._session("read_source_type_routing") as session:
+            return source_routing(session, owner_user_id=owner_user_id, source_type=kind)
+
+    def set_routing(self, *, owner_user_id: str | None, source_type: str, routing: str) -> str:
+        kind = normalize_source_type(source_type)
+        if is_reserved_source_type(kind):
+            raise SourceError(f"the server routes the events of {kind!r} itself")
+        code = encode_source_routing(routing)
+        now = now_epoch()
+
+        def write(session: Session) -> str:
+            require_active_account(session, owner_user_id)
+            rows = (
+                session.execute(
+                    select(SqlSourceTypeSetting).where(
+                        _owned_settings(owner_user_id), SqlSourceTypeSetting.source_type == kind
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            row = rows[0] if rows else None
+            for extra in rows[1:]:
+                session.delete(extra)
+            if row is None:
+                session.add(
+                    SqlSourceTypeSetting(
+                        id=uuid.uuid4().hex,
+                        owner_user_id=owner_user_id,
+                        source_type=kind,
+                        routing=code,
+                        updated_at=now,
+                    )
+                )
+            elif row.routing != code:
+                row.routing = code
+                row.updated_at = now
+            return routing
+
+        return run_write_transaction(self._session_immediate, "set_source_type_routing", write)
+
+    def clear_routing(self, *, owner_user_id: str | None, source_type: str) -> bool:
+        kind = normalize_source_type(source_type)
+
+        def write(session: Session) -> bool:
+            require_active_account(session, owner_user_id)
+            return (
+                _deleted(
+                    session.execute(
+                        delete(SqlSourceTypeSetting)
+                        .where(
+                            _owned_settings(owner_user_id),
+                            SqlSourceTypeSetting.source_type == kind,
+                        )
+                        .execution_options(synchronize_session=False)
+                    )
+                )
+                > 0
+            )
+
+        return run_write_transaction(self._session_immediate, "clear_source_type_routing", write)

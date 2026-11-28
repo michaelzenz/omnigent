@@ -27,6 +27,7 @@ PR = "https://github.com/example-org/repo/pull/12"
 OTHER_PR = "https://github.com/example-org/repo/pull/13"
 NEW_PR = "https://github.com/example-org/repo/pull/14"
 SLACK_THREAD = "slack.thread"
+SLACK_CONVERSATION = "slack.conversation"
 SLACK_DM = "D0000000001"
 SLACK_THREAD_LINK = "https://example.com/archives/C0000000001/p1700000000000100"
 
@@ -161,15 +162,18 @@ async def test_an_event_goes_to_each_session_that_follows_its_key_but_not_its_re
     assert (unfollowed["state"], unfollowed["target_session_id"]) == ("unrouted", None)
 
 
-async def test_a_slack_conversation_event_goes_only_to_the_broker_and_a_thread_reply_to_followers(
+async def test_an_event_of_a_broker_routed_type_goes_only_to_the_broker(
     auth_client: httpx.AsyncClient, db_uri: str
 ) -> None:
+    SqlAlchemySubscriptionStore(db_uri).set_routing(
+        owner_user_id=ALICE_ID, source_type=SLACK_CONVERSATION, routing="broker"
+    )
     conversation_follower, thread_follower = uuid.uuid4().hex, uuid.uuid4().hex
     _follow(db_uri, conversation_follower, SLACK_DM)
     _follow(db_uri, thread_follower, SLACK_THREAD_LINK)
 
     message = await _create(
-        auth_client, "A question about the S3 fix", source=SLACK_THREAD, source_key=SLACK_DM
+        auth_client, "A question about the S3 fix", source=SLACK_CONVERSATION, source_key=SLACK_DM
     )
     reply = await _create(
         auth_client, "A reply in the thread", source=SLACK_THREAD, source_key=SLACK_THREAD_LINK

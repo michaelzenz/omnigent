@@ -27,9 +27,9 @@ from omnigent.server.schemas import (
 )
 from omnigent.stores import ConversationStore
 from omnigent.stores.subscription_store import (
+    BROKER_ROUTING,
     SourceError,
     is_reserved_source_type,
-    is_slack_conversation,
     normalize_source_key,
     normalize_source_type,
 )
@@ -68,9 +68,9 @@ def create_agent_task_events_router(
         the session the event came from, and the response is the first copy.
         When only that session follows the key, the event is recorded as
         handled. When no session follows the key, the broker routes the event.
-        An event about a whole Slack conversation, e.g. a direct message or a
-        channel, goes only to the broker. A report that names its source type
-        and source key is recorded once.
+        An event of a source type with ``broker`` routing goes only to the
+        broker. A report that names its source type and source key is recorded
+        once.
         """
         user_id = require_user(request, auth_provider)
         if body.event_type.startswith(_SESSION_EVENT_PREFIX):
@@ -101,14 +101,14 @@ def create_agent_task_events_router(
                 )
                 if earlier is not None:
                     return earlier
-            conversation = (
+            to_broker_only = (
                 source is not None
-                and source_key is not None
-                and is_slack_conversation(source, source_key)
+                and subscriptions.routing(owner_user_id=user_id, source_type=source)
+                == BROKER_ROUTING
             )
             followers = (
                 subscriptions.subscribers(owner_user_id=user_id, source_key=source_key)
-                if source_key is not None and not conversation
+                if source_key is not None and not to_broker_only
                 else []
             )
             reporter = (

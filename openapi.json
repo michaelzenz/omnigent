@@ -19014,6 +19014,25 @@
         "title": "SetSharingRequest",
         "type": "object"
       },
+      "SetSourceTypeRoutingRequest": {
+        "additionalProperties": false,
+        "description": "Set how the events of a source type route.\n\n`broker` sends each event only to the broker, for a stream in which one\nsource carries many topics, e.g. a chat conversation; `followers` sends\neach event to the sessions that follow its source.",
+        "properties": {
+          "routing": {
+            "enum": [
+              "followers",
+              "broker"
+            ],
+            "title": "Routing",
+            "type": "string"
+          }
+        },
+        "required": [
+          "routing"
+        ],
+        "title": "SetSourceTypeRoutingRequest",
+        "type": "object"
+      },
       "SideChatList": {
         "description": "Paginated list of side chats; `data` is a page of `SideChatSummary`.",
         "properties": {
@@ -19946,13 +19965,28 @@
         "type": "object"
       },
       "SourceTypeResponse": {
-        "description": "A source type in use, with the watcher that checks it.\n\n`watcher_id` and `watcher_name` are null when no watcher is assigned;\nthe fallback watcher then checks the type. `subscriptions` counts the\nsubscriptions of the type.",
+        "description": "A source type in use, with the watcher that checks it and its routing.\n\n`watcher_id` and `watcher_name` are null when no watcher is assigned;\nthe fallback watcher then checks the type. `subscriptions` counts the\nsubscriptions of the type. With `routing` `broker`, each event of the\ntype goes only to the broker; with `followers`, each event goes to the\nsessions that follow its source. `routing` is null until the custodian or\nthe user sets it, and the type then routes like `followers`.",
         "properties": {
           "object": {
             "const": "source_type",
             "default": "source_type",
             "title": "Object",
             "type": "string"
+          },
+          "routing": {
+            "anyOf": [
+              {
+                "enum": [
+                  "followers",
+                  "broker"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Routing"
           },
           "source_type": {
             "title": "Source Type",
@@ -23915,7 +23949,7 @@
     },
     "/v1/agent-tasks/source-types": {
       "get": {
-        "description": "List the caller's source types in use, by name, each with its watcher.",
+        "description": "List the caller's source types in use, by name, each with its watcher and routing.",
         "operationId": "list_source_types_v1_agent_tasks_source_types_get",
         "responses": {
           "200": {
@@ -23930,6 +23964,100 @@
           }
         },
         "summary": "List Source Types",
+        "tags": [
+          "agent-tasks"
+        ]
+      }
+    },
+    "/v1/agent-tasks/source-types/{source_type}/routing": {
+      "delete": {
+        "description": "Clear the routing of one of the caller's source types.\n\nThe type then routes like `followers`. Only the caller or their current\ncustodian session may clear it.",
+        "operationId": "clear_source_type_routing_v1_agent_tasks_source_types__source_type__routing_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_type",
+            "required": true,
+            "schema": {
+              "title": "Source Type",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceTypeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear Source Type Routing",
+        "tags": [
+          "agent-tasks"
+        ]
+      },
+      "post": {
+        "description": "Set how the events of one of the caller's source types route.\n\nOnly the caller or their current custodian session may set it. With\n`broker`, each event of the type goes only to the broker; with\n`followers`, each event goes to the sessions that follow its source.",
+        "operationId": "set_source_type_routing_v1_agent_tasks_source_types__source_type__routing_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source_type",
+            "required": true,
+            "schema": {
+              "title": "Source Type",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetSourceTypeRoutingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceTypeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Source Type Routing",
         "tags": [
           "agent-tasks"
         ]
@@ -37738,7 +37866,7 @@
     },
     "/v1/task-events": {
       "post": {
-        "description": "Record an event on the caller's board.\n\nEach session that follows the event's source key gets a copy, except\nthe session the event came from, and the response is the first copy.\nWhen only that session follows the key, the event is recorded as\nhandled. When no session follows the key, the broker routes the event.\nAn event about a whole Slack conversation, e.g. a direct message or a\nchannel, goes only to the broker. A report that names its source type\nand source key is recorded once.",
+        "description": "Record an event on the caller's board.\n\nEach session that follows the event's source key gets a copy, except\nthe session the event came from, and the response is the first copy.\nWhen only that session follows the key, the event is recorded as\nhandled. When no session follows the key, the broker routes the event.\nAn event of a source type with `broker` routing goes only to the\nbroker. A report that names its source type and source key is recorded\nonce.",
         "operationId": "create_event_v1_task_events_post",
         "requestBody": {
           "content": {

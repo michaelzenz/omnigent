@@ -37,6 +37,7 @@ WATCHERS = "/v1/agent-tasks/watchers"
 SOURCE_TYPES = "/v1/agent-tasks/source-types"
 PULL_REQUEST = "github.pull_request"
 TICKET = "jira.issue"
+CONVERSATION = "slack.conversation"
 PR = "https://github.com/example-org/repo/pull/12"
 OTHER_PR = "https://github.com/example-org/repo/pull/13"
 TICKET_PAGE = "https://example.com/browse/PROJ-12"
@@ -230,6 +231,7 @@ async def test_source_types_list_each_type_in_use_with_its_watcher(
         "watcher_id": watcher["id"],
         "watcher_name": "PR watcher",
         "subscriptions": 2,
+        "routing": None,
     }
     assert assigned.json() == pull_requests
     assert listed.json() == {
@@ -242,6 +244,7 @@ async def test_source_types_list_each_type_in_use_with_its_watcher(
                 "watcher_id": None,
                 "watcher_name": None,
                 "subscriptions": 1,
+                "routing": None,
             },
         ],
     }
@@ -319,3 +322,47 @@ async def test_only_the_user_or_their_custodian_assigns_a_source_type_to_a_watch
         fallback.id, [(PULL_REQUEST, PR), (TICKET, "PROJ-12")], owner_user_id=ALICE_ID
     )
     assert [item.source for item in still_tracked] == [TICKET]
+
+
+async def test_only_the_user_or_their_custodian_sets_and_clears_the_routing_of_a_source_type(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    placement = GlobalHubPlacement(host_id=HOST_ID, workspace="/Users/alice/globalhub")
+    settings = UserSettingsStore(db_uri)
+    settings.save_globalhub_placement(placement, user_id=ALICE_ID)
+    custodian_id = _session(db_uri, labels={ROLE_LABEL: CUSTODIAN_ROLE_VALUE}, placement=placement)
+    settings.save_globalhub_role_session("custodian", custodian_id, user_id=ALICE_ID)
+    custodian = _runner_headers(db_uri, custodian_id, "custodian-runner")
+    plain = _runner_headers(db_uri, _session(db_uri), "plain-runner")
+    path = f"{SOURCE_TYPES}/{CONVERSATION}/routing"
+    broker = {"routing": "broker"}
+
+    statuses = [
+        (await auth_client.post(path, json=broker, headers=plain)).status_code,
+        (await auth_client.delete(path, headers=plain)).status_code,
+        (await auth_client.post(path, json={"routing": "sometimes"}, headers=ALICE)).status_code,
+        (
+            await auth_client.post(
+                f"{SOURCE_TYPES}/{SESSION_EVENT_SOURCE}/routing", json=broker, headers=ALICE
+            )
+        ).status_code,
+    ]
+    by_custodian = await auth_client.post(path, json=broker, headers=custodian)
+    listed = await auth_client.get(SOURCE_TYPES, headers=ALICE)
+    for_bob = await auth_client.get(SOURCE_TYPES, headers=BOB)
+    cleared = await auth_client.delete(path, headers=ALICE)
+
+    assert statuses == [403, 403, 422, 400]
+    assert (by_custodian.status_code, by_custodian.json()["routing"]) == (200, "broker")
+    assert [(row["source_type"], row["routing"]) for row in listed.json()["data"]] == [
+        (CONVERSATION, "broker")
+    ]
+    assert for_bob.json()["data"] == []
+    assert cleared.json() == {
+        "object": "source_type",
+        "source_type": CONVERSATION,
+        "watcher_id": None,
+        "watcher_name": None,
+        "subscriptions": 0,
+        "routing": None,
+    }

@@ -36,15 +36,22 @@ async def test_each_action_calls_its_route_as_the_calling_session() -> None:
         await execute_source_watchers(
             {"action": "unassign", "source_type": "jira.issue"}, client, SOURCE_ID
         ),
+        await execute_source_watchers(
+            {"action": "route", "source_type": "slack.conversation", "routing": "broker"},
+            client,
+            SOURCE_ID,
+        ),
     ]
 
-    assert [json.loads(output) for output in outputs] == [EMPTY] * 3
+    assert [json.loads(output) for output in outputs] == [EMPTY] * 4
     assert [(request.method, request.url.path) for request in requests] == [
         ("GET", SOURCE_TYPES),
         ("POST", f"{SOURCE_TYPES}/jira.issue/watcher"),
         ("DELETE", f"{SOURCE_TYPES}/jira.issue/watcher"),
+        ("POST", f"{SOURCE_TYPES}/slack.conversation/routing"),
     ]
     assert json.loads(requests[1].content) == {"watcher_id": WATCHER_ID}
+    assert json.loads(requests[3].content) == {"routing": "broker"}
     assert {request.headers[ORCHESTRATION_SOURCE_HEADER] for request in requests} == {SOURCE_ID}
 
 
@@ -55,6 +62,8 @@ async def test_each_action_calls_its_route_as_the_calling_session() -> None:
         ({"action": "assign", "watcher_id": WATCHER_ID}, SOURCE_ID),
         ({"action": "assign", "source_type": "jira.issue"}, SOURCE_ID),
         ({"action": "unassign", "source_type": "  "}, SOURCE_ID),
+        ({"action": "route", "source_type": "slack.conversation"}, SOURCE_ID),
+        ({"action": "route", "source_type": "slack.conversation", "routing": "all"}, SOURCE_ID),
         ({"action": "list"}, None),
     ],
 )

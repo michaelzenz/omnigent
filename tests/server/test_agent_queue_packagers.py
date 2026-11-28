@@ -60,7 +60,7 @@ PLACEMENT = GlobalHubPlacement(
 ROUTE_PROMPT = "[System: route these events to tasks or managers]\n"
 PULL_REQUEST = "github.pull_request"
 TICKET = "jira.issue"
-SLACK_THREAD = "slack.thread"
+SLACK_CONVERSATION = "slack.conversation"
 SLACK_DM = "D0000000001"
 SLACK_CHANNEL = "C0000000001"
 PR = "https://github.com/example-org/repo/pull/12"
@@ -275,27 +275,31 @@ async def test_the_notice_carries_the_items_waiting_events_in_tag_clusters(
     assert writer.write(item) is None
 
 
-async def test_the_notice_lists_the_newest_followers_of_a_slack_conversation(
+async def test_the_notice_lists_the_newest_followers_of_a_broker_routed_source(
     board: BoardStores, sessions: RoleSessionStores
 ) -> None:
     broker = await _broker(sessions)
+    board.subscriptions.set_routing(
+        owner_user_id=ALICE, source_type=SLACK_CONVERSATION, routing="broker"
+    )
     worker_session = sessions.conversation_store.create_conversation(title="Fix S3").id
     task = board.tasks.create(next(_ids), owner_user_id=ALICE, title="S3 retries")
     board.workers.create(
         next(_ids), owner_user_id=ALICE, task_id=task.id, session_id=worker_session
     )
-    _follow(board, worker_session, SLACK_THREAD, SLACK_DM, note="Waits for the design reply")
+    _follow(board, worker_session, SLACK_CONVERSATION, SLACK_DM, note="Waits for the design reply")
     for _ in range(21):
-        _follow(board, uuid.uuid4().hex, SLACK_THREAD, SLACK_CHANNEL)
-    direct = _event(board, source=SLACK_THREAD, source_key=SLACK_DM)
-    channel = _event(board, source=SLACK_THREAD, source_key=SLACK_CHANNEL)
-    unfollowed = _event(board, source=PULL_REQUEST, source_key=PR)
+        _follow(board, uuid.uuid4().hex, SLACK_CONVERSATION, SLACK_CHANNEL)
+    _follow(board, uuid.uuid4().hex, PULL_REQUEST, PR)
+    direct = _event(board, source=SLACK_CONVERSATION, source_key=SLACK_DM)
+    channel = _event(board, source=SLACK_CONVERSATION, source_key=SLACK_CHANNEL)
+    pull_request = _event(board, source=PULL_REQUEST, source_key=PR)
     item = board.queue.enqueue(
         uuid.uuid4().hex,
         owner_user_id=ALICE,
         target_session_id=broker,
         kind="events",
-        event_ids=[direct, channel, unfollowed],
+        event_ids=[direct, channel, pull_request],
     )
     assert item is not None
 
@@ -313,7 +317,7 @@ async def test_the_notice_lists_the_newest_followers_of_a_slack_conversation(
     ]
     assert "more_followers" not in entries[direct]
     assert (len(entries[channel]["followed_by"]), entries[channel]["more_followers"]) == (20, 1)
-    assert "followed_by" not in entries[unfollowed]
+    assert "followed_by" not in entries[pull_request]
 
 
 async def test_routed_events_become_items_for_the_managers_session_they_went_to(
@@ -887,7 +891,7 @@ async def test_a_watcher_run_ends_the_subscriptions_to_sources_done_for_a_week(
     ]
 
 
-def test_the_custodian_hears_of_the_source_types_that_no_watcher_checks(
+def test_the_custodian_hears_of_the_source_types_without_a_watcher_or_a_routing(
     board: BoardStores,
 ) -> None:
     run = _queue_item("scheduled_run", {"role_key": CUSTODIAN_ROLE_KEY})
@@ -903,6 +907,7 @@ def test_the_custodian_hears_of_the_source_types_that_no_watcher_checks(
     board.subscriptions.assign_type(
         owner_user_id=ALICE, source_type=TICKET, watcher_id=ticket_watcher.id
     )
+    board.subscriptions.set_routing(owner_user_id=ALICE, source_type=TICKET, routing="followers")
     for source_type, source_key in (
         (PULL_REQUEST, PR),
         (PULL_REQUEST, PR),
@@ -927,6 +932,11 @@ def test_the_custodian_hears_of_the_source_types_that_no_watcher_checks(
             f"- {PULL_REQUEST}: 2 subscription(s), e.g. {PR}",
             "Watchers (read a manual with pmv2_read path /v1/agent-tasks/watchers/<id>):",
             f"- {ticket_watcher.id} Ticket watcher: Jira tickets",
+            'Types without a routing. Follow "Assigning source types" in the Custodian '
+            'manual: set each type with source_watchers action "route", to "broker" for a '
+            "stream in which one source carries many topics, e.g. a direct message, a "
+            'channel or an inbox, else to "followers":',
+            f"- {PULL_REQUEST}, e.g. {PR}",
         ]
     )
     assert run_text == f"{plain_run}\n\n{pending}"

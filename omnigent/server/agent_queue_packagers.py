@@ -54,7 +54,7 @@ from omnigent.entities import (
 )
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.agent_task_delivery import SessionSendDeps, session_has_live_turn
-from omnigent.stores.subscription_store import is_slack_conversation
+from omnigent.stores.subscription_store import BROKER_ROUTING
 
 _logger = logging.getLogger(__name__)
 
@@ -97,6 +97,12 @@ _SOURCE_TYPES_ADVICE = (
     '"Assigning source types" in the Custodian manual: assign each type to the watcher '
     "whose manual covers it with source_watchers, and leave a type unassigned when no "
     "manual covers it."
+)
+_SOURCE_ROUTING_ADVICE = (
+    'Types without a routing. Follow "Assigning source types" in the Custodian manual: set '
+    'each type with source_watchers action "route", to "broker" for a stream in which one '
+    "source carries many topics, e.g. a direct message, a channel or an inbox, else to "
+    '"followers":'
 )
 # The run message shows the items most in need of a check; the watcher pages
 # through the rest with its tool. About 5,000 tokens at most, so a large
@@ -446,16 +452,19 @@ class EventNoticeWriter:
         waiting = self._waiting_events(item, "unrouted")
         if not waiting:
             return None
+        owner = item.owner_user_id
+        routings: dict[str, str | None] = {}
         followed: dict[str, dict[str, Any]] = {}
         for event in waiting:
-            key = event.source_key
-            if (
-                key
-                and key not in followed
-                and event.source
-                and is_slack_conversation(event.source, key)
-            ):
-                followed[key] = self._followed_by(item.owner_user_id, key)
+            key, source = event.source_key, event.source
+            if not key or not source or key in followed:
+                continue
+            if source not in routings:
+                routings[source] = self._board.subscriptions.routing(
+                    owner_user_id=owner, source_type=source
+                )
+            if routings[source] == BROKER_ROUTING:
+                followed[key] = self._followed_by(owner, key)
         clusters = [
             {
                 "tags": _tags(cluster[0]),
@@ -719,35 +728,43 @@ class SourceTypesWriter:
 
 
 def _source_types_text(board: BoardStores, owner: str | None) -> str | None:
-    """List the source types without a watcher, with an example key each, and the watchers."""
-    unassigned = [
-        use
-        for use in board.subscriptions.source_types(owner_user_id=owner)
-        if use.watcher_id is None
-    ]
-    if not unassigned:
+    """List the types without a watcher, the watchers, and the types without a routing."""
+    uses = board.subscriptions.source_types(owner_user_id=owner)
+    unassigned = [use for use in uses if use.watcher_id is None]
+    unrouted = [use for use in uses if use.routing is None]
+    if not unassigned and not unrouted:
         return None
     examples: dict[str, str] = {}
-    for subscription in board.subscriptions.list_unassigned(owner_user_id=owner):
+    for subscription in board.subscriptions.list_for_types(
+        [use.source_type for use in uses], owner_user_id=owner
+    ):
         examples.setdefault(subscription.source_type, subscription.source_key)
-    watchers = [
-        watcher for watcher in board.watchers.list(owner_user_id=owner) if not watcher.builtin
-    ]
-    lines = [_SOURCE_TYPES_PROMPT, _SOURCE_TYPES_ADVICE, "Types without a watcher:"]
-    for use in unassigned:
-        example = examples.get(use.source_type, "")[:_SOURCE_TYPE_EXAMPLE_CHARS]
-        lines.append(
-            f"- {use.source_type}: {use.subscriptions} subscription(s)"
-            + (f", e.g. {example}" if example else "")
-        )
-    lines.append("Watchers (read a manual with pmv2_read path /v1/agent-tasks/watchers/<id>):")
-    if watchers:
+
+    def example(source_type: str) -> str:
+        text = examples.get(source_type, "")[:_SOURCE_TYPE_EXAMPLE_CHARS]
+        return f", e.g. {text}" if text else ""
+
+    lines = [_SOURCE_TYPES_PROMPT]
+    if unassigned:
+        watchers = [
+            watcher for watcher in board.watchers.list(owner_user_id=owner) if not watcher.builtin
+        ]
+        lines.extend([_SOURCE_TYPES_ADVICE, "Types without a watcher:"])
         lines.extend(
-            f"- {watcher.id} {watcher.name}: {watcher.description or '(no description)'}"
-            for watcher in watchers
+            f"- {use.source_type}: {use.subscriptions} subscription(s){example(use.source_type)}"
+            for use in unassigned
         )
-    else:
-        lines.append("(none; the fallback watcher checks every type)")
+        lines.append("Watchers (read a manual with pmv2_read path /v1/agent-tasks/watchers/<id>):")
+        if watchers:
+            lines.extend(
+                f"- {watcher.id} {watcher.name}: {watcher.description or '(no description)'}"
+                for watcher in watchers
+            )
+        else:
+            lines.append("(none; the fallback watcher checks every type)")
+    if unrouted:
+        lines.append(_SOURCE_ROUTING_ADVICE)
+        lines.extend(f"- {use.source_type}{example(use.source_type)}" for use in unrouted)
     return "\n".join(lines)
 
 

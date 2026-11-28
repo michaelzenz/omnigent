@@ -18,7 +18,6 @@ from omnigent.stores.subscription_store import (
     SourceError,
     SourceTypeUse,
     is_reserved_source_type,
-    is_slack_conversation,
     normalize_source_key,
     normalize_source_type,
 )
@@ -74,23 +73,31 @@ def test_a_source_type_is_one_lowercase_dotted_name() -> None:
     assert not is_reserved_source_type(PULL_REQUEST)
 
 
-def test_a_slack_key_without_a_message_names_a_whole_conversation() -> None:
-    conversations = (
-        "D0000000001",
-        "C0000000001",
-        "https://example.com/archives/D0000000001",
-        "https://example.com/archives/C0000000001",
-    )
-    threads = (
-        "https://example.com/archives/C0000000001/p1700000000000100",
-        "https://example.com/archives/D0000000001/p1700000000000100?thread_ts=1700000000.000100",
-        THREAD,
-    )
+def test_a_source_type_keeps_the_routing_set_last_until_it_is_cleared(
+    store: SqlAlchemySubscriptionStore,
+) -> None:
+    _follow(store, uuid.uuid4().hex, PULL_REQUEST, PR)
+    store.set_routing(owner_user_id=ALICE, source_type=" Slack.Conversation ", routing="broker")
+    store.set_routing(owner_user_id=ALICE, source_type=PULL_REQUEST, routing="broker")
+    store.set_routing(owner_user_id=ALICE, source_type=PULL_REQUEST, routing="followers")
+    for source_type, routing in (
+        (SESSION_EVENT_SOURCE, "broker"),
+        ("github", "broker"),
+        ("jira.issue", "sometimes"),
+    ):
+        with pytest.raises(ValueError):
+            store.set_routing(owner_user_id=ALICE, source_type=source_type, routing=routing)
 
-    assert all(is_slack_conversation("slack.conversation", key) for key in conversations)
-    assert all(is_slack_conversation("slack.thread", key) for key in conversations)
-    assert not any(is_slack_conversation("slack.thread", key) for key in threads)
-    assert not is_slack_conversation(PULL_REQUEST, "https://example.com/archives/D0000000001")
+    listed = [(use.source_type, use.routing) for use in store.source_types(owner_user_id=ALICE)]
+    cleared = store.clear_routing(owner_user_id=ALICE, source_type="slack.conversation")
+    cleared_again = store.clear_routing(owner_user_id=ALICE, source_type="slack.conversation")
+
+    assert listed == [(PULL_REQUEST, "followers"), ("slack.conversation", "broker")]
+    assert (cleared, cleared_again) == (True, False)
+    assert [use.source_type for use in store.source_types(owner_user_id=ALICE)] == [PULL_REQUEST]
+    assert store.routing(owner_user_id=ALICE, source_type="slack.conversation") is None
+    assert store.routing(owner_user_id=ALICE, source_type=PULL_REQUEST) == "followers"
+    assert store.routing(owner_user_id=BOB, source_type=PULL_REQUEST) is None
 
 
 def test_a_source_key_is_trimmed_and_a_web_address_loses_its_fragment_and_final_slash() -> None:

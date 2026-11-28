@@ -209,6 +209,11 @@ WATCH_ITEM_STATUS: dict[str, int] = {
     "done": 2,
 }
 
+SOURCE_ROUTING: dict[str, int] = {
+    "followers": 1,
+    "broker": 2,
+}
+
 # Journal entry kinds. The column has no CHECK, so a new kind needs no migration.
 JOURNAL_ENTRY_KIND: dict[str, int] = {
     "status": 1,
@@ -504,6 +509,14 @@ def encode_watch_item_status(name: str) -> int:
 def decode_watch_item_status(code: int) -> str:
     """Decode a ``watch_items.status`` int code to its name."""
     return _decode(WATCH_ITEM_STATUS, code, field="watch_items.status")
+
+
+def encode_source_routing(name: str) -> int:
+    return _encode(SOURCE_ROUTING, name, field="source_type_settings.routing")
+
+
+def decode_source_routing(code: int) -> str:
+    return _decode(SOURCE_ROUTING, code, field="source_type_settings.routing")
 
 
 def encode_scheduled_task_execution_target(name: str) -> int:

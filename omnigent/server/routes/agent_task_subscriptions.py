@@ -3,7 +3,8 @@
 A session follows a source, e.g. a pull request, with the ``event_subscriptions``
 tool or these routes; each event about the source then goes to the session. The
 custodian assigns each source type to the watcher whose manual covers it, and
-the fallback watcher checks the types without one. Include this router before
+the fallback watcher checks the types without one. The custodian also sets how
+each type routes its events. Include this router before
 the tasks router: ``/agent-tasks/{task_id}`` would otherwise match
 ``/agent-tasks/source-types``.
 """
@@ -11,6 +12,7 @@ the tasks router: ``/agent-tasks/{task_id}`` would otherwise match
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 
 from fastapi import APIRouter, Request
 
@@ -35,6 +37,8 @@ from omnigent.server.schemas import (
     SessionSubscriptionList,
     SessionSubscriptionRemoved,
     SessionSubscriptionResponse,
+    SetSourceTypeRoutingRequest,
+    SourceRouting,
     SourceTypeList,
     SourceTypeResponse,
 )
@@ -152,7 +156,7 @@ def create_agent_task_subscriptions_router(
 
     @router.get("/agent-tasks/source-types", response_model=SourceTypeList)
     async def list_source_types(request: Request) -> SourceTypeList:
-        """List the caller's source types in use, by name, each with its watcher."""
+        """List the caller's source types in use, by name, each with its watcher and routing."""
         user_id = require_user(request, auth_provider)
         return await asyncio.to_thread(source_type_list, user_id)
 
@@ -210,6 +214,49 @@ def create_agent_task_subscriptions_router(
 
         return await asyncio.to_thread(unassign)
 
+    @router.post(
+        "/agent-tasks/source-types/{source_type}/routing", response_model=SourceTypeResponse
+    )
+    async def set_source_type_routing(
+        request: Request, source_type: str, body: SetSourceTypeRoutingRequest
+    ) -> SourceTypeResponse:
+        """Set how the events of one of the caller's source types route.
+
+        Only the caller or their current custodian session may set it. With
+        ``broker``, each event of the type goes only to the broker; with
+        ``followers``, each event goes to the sessions that follow its source.
+        """
+        user_id = require_user(request, auth_provider)
+        await asyncio.to_thread(require_user_or_custodian, request, user_id)
+        kind = _source_type(source_type)
+
+        def route() -> SourceTypeResponse:
+            subscriptions.set_routing(
+                owner_user_id=user_id, source_type=kind, routing=body.routing
+            )
+            return source_type_entry(user_id, kind)
+
+        return await asyncio.to_thread(route)
+
+    @router.delete(
+        "/agent-tasks/source-types/{source_type}/routing", response_model=SourceTypeResponse
+    )
+    async def clear_source_type_routing(request: Request, source_type: str) -> SourceTypeResponse:
+        """Clear the routing of one of the caller's source types.
+
+        The type then routes like ``followers``. Only the caller or their current
+        custodian session may clear it.
+        """
+        user_id = require_user(request, auth_provider)
+        await asyncio.to_thread(require_user_or_custodian, request, user_id)
+        kind = _source_type(source_type)
+
+        def clear() -> SourceTypeResponse:
+            subscriptions.clear_routing(owner_user_id=user_id, source_type=kind)
+            return source_type_entry(user_id, kind)
+
+        return await asyncio.to_thread(clear)
+
     def require_user_or_custodian(request: Request, user_id: str | None) -> None:
         caller = runner_bound_caller(request, conversation_store)
         if caller is None:
@@ -221,7 +268,7 @@ def create_agent_task_subscriptions_router(
         )
         if custodian is None or custodian.id != caller.id:
             raise OmnigentError(
-                "only the custodian assigns source types to watchers",
+                "only the custodian assigns and routes source types",
                 code=ErrorCode.FORBIDDEN,
             )
 
@@ -236,6 +283,7 @@ def create_agent_task_subscriptions_router(
                     watcher_id=use.watcher_id,
                     watcher_name=names.get(use.watcher_id) if use.watcher_id else None,
                     subscriptions=use.subscriptions,
+                    routing=cast(SourceRouting | None, use.routing),
                 )
                 for use in subscriptions.source_types(owner_user_id=user_id)
             ]
