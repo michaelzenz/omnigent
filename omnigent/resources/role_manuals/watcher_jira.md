@@ -17,11 +17,11 @@ that sessions follow. This watcher covers the source type `jira.issue`.
    offset, to see whether it was reopened.
 5. Check the items that you already track: page through `watch_items` with
    `list`. For each ticket that steps 2 to 4 did not find, read its current
-   state: mark it `done` when it is resolved or closed, or when it is not
-   assigned to me and has no new comment for 7 days, with the reason as
-   `summary`. Else observe it again.
-6. Send all tickets in one `observe` call, with `source: "jira.issue"` and
-   `source_key` = the ticket key. For a change, write a one-line `summary`
+   state: mark it `done` when it is resolved or closed, with the reason as
+   `summary`. Else observe it again. The server marks a ticket done when
+   nothing about it changed for 14 days, and a change reopens it.
+6. Send the tickets in `observe` calls of at most 100 tickets each, with
+   `source: "jira.issue"` and `source_key` = the ticket key. For a change, write a one-line `summary`
    that names who made the change, and put the summary of the ticket and the
    text of a new comment in `details`.
 

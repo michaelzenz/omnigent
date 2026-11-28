@@ -25,8 +25,9 @@ source type `github.pull_request`.
    request: mark the item `done` when the pull request is merged or closed, or
    when the item was a review request that no longer asks me or my teams, with
    the reason as `summary`, e.g. `"Merged"`. Else observe it again.
-6. Send all pull requests in one `observe` call, with `source:
-   "github.pull_request"` and `source_key` = the canonical URL. Observe a pull
+6. Send the pull requests in `observe` calls of at most 100 pull requests
+   each, with `source: "github.pull_request"` and `source_key` = the canonical
+   URL. Observe a pull
    request that is in more than one group once, with all of its offsets. For a
    failed check or a new comment, write a one-line `summary` that names who
    made the change, and put the names of the failing checks or the text of the

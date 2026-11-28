@@ -76,8 +76,8 @@ DEFAULT_WATCHERS = (
     DefaultWatcher(
         name="Slack watcher",
         description=(
-            "Direct messages, mentions of me, the channels that sessions follow, and new "
-            "replies in the threads I follow."
+            "Direct messages, mentions of me, replies in the threads I am in, and the "
+            "channels and threads that sessions follow."
         ),
         watch_file="watcher_slack.md",
         rrule=DEFAULT_WATCHER_RRULE,

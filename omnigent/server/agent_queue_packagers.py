@@ -87,9 +87,9 @@ _CUSTODIAN_RUN_PROMPT = (
 _WATCHER_RUN_PROMPT = (
     "[System: scheduled watcher run]\n"
     "Follow your manual: check what it says to watch, and the sources listed below.\n"
-    '1. Report the current state of each item with watch_items action "observe". The '
-    "server compares it with your last run and reports each change; do not report "
-    "changes any other way.\n"
+    '1. Report the current state of each item with watch_items action "observe", at '
+    "most 100 items in each call. The server compares it with your last run and "
+    "reports each change; do not report changes any other way.\n"
     '2. Mark finished items with watch_items action "done", with a short summary of why.\n'
     "3. To remember where this run stopped, e.g. the time of the newest message that you "
     f"read, pass a cursor of at most {MAX_WATCHER_CURSOR_BYTES} bytes to watch_items action "

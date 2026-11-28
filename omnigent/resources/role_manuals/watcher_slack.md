@@ -1,41 +1,58 @@
-Watch Slack for me: direct messages, mentions of me, the channels that sessions
-follow, and new replies in the threads that I follow or that sessions follow.
-This watcher covers the source types `slack.conversation` and `slack.thread`.
+Watch Slack for me: direct messages, group direct messages, mentions of me,
+replies in the threads that I am in, and the channels and threads that
+sessions follow. This watcher covers the source types `slack.conversation` and
+`slack.thread`.
 
 1. Find who I am through the Slack MCP server: my user id, and the user groups
    that I am in.
-2. Conversations: read my direct messages and group direct messages, and the
-   channels in `[Followed sources]`. Observe each conversation that has a
-   message from someone else in the last day, with `source:
-   "slack.conversation"`, `source_key` = the link of the conversation, e.g.
-   `https://<workspace>.slack.com/archives/<conversation id>`, and the offset
-   `latest` = the timestamp of the newest message from someone else. In a
-   channel, count only the messages in the channel itself: step 4 covers the
-   replies in its threads. When `[Followed sources]` lists a conversation with
-   another key, e.g. its bare id, observe it with the listed source type and
-   key, so you track each conversation once. A direct message or group direct
-   message that you do not track yet is news: set `announce: true` on it.
-3. Mentions: search the messages of the last day that mention me or one of my
-   user groups. Observe the thread of each mention as in step 4. A thread that
-   you do not track yet is news: set `announce: true` on it.
-4. Threads that I follow: the threads that I started, replied to, or was
-   mentioned in, and the threads in `[Followed sources]`. Search my messages
-   of the last day to find new ones. Observe each thread with `source:
-   "slack.thread"`, `source_key` = the link of its first message, e.g.
-   `https://<workspace>.slack.com/archives/<channel id>/p<timestamp>`, and the
-   offset `replies` = the timestamp of its newest reply from someone else.
-5. Check the items that you already track: page through `watch_items` with
-   `list`. For each item that steps 2 to 4 did not find, read its newest
-   message: mark the item `done` when it has no new message for 7 days, with
-   `summary: "Quiet for 7 days"`, else observe it again. A new message in a
-   done thread reopens it.
-6. Send all items in one `observe` call. Write each link without a query
-   (`?...`) or a fragment (`#...`). For a new message, write a one-line
+2. Find what is new since `[Cursor]`, the timestamp of the newest message that
+   you read in your last run. Without a cursor, look at the last two days. Run
+   these searches with `search.messages`, sorted by timestamp, newest first,
+   with `after:` set to the day before the cursor's date. Page until the
+   messages are older than the cursor.
+   - `to:me`: the messages in my direct messages and group direct messages.
+   - `is:thread with:@me`: the replies in the threads that I started or
+     replied in, also when they do not mention me.
+   - The messages that mention me or one of my user groups.
+   Skip the messages that "Ignore these messages" below lists. Skip also the
+   conversations and threads in "Do not watch", except the messages in them
+   that mention me.
+3. Group the messages that are left:
+   - A message in a direct message or a group direct message belongs to its
+     conversation. Look at `is_im` and `is_mpim`: a group direct message has
+     an id that starts with `C`, as a channel does. Observe the conversation
+     with `source: "slack.conversation"`, `source_key` = the link of the
+     conversation, e.g. `https://<workspace>.slack.com/archives/<conversation
+     id>`, and the offset `latest` = the timestamp of its newest message.
+   - A message in a channel thread belongs to its thread: the `thread_ts` in
+     the message link names it. Observe the thread with `source:
+     "slack.thread"`, `source_key` = the link of its first message, e.g.
+     `https://<workspace>.slack.com/archives/<channel id>/p<thread_ts without
+     the dot>`, and the offset `replies` = the timestamp of its newest reply.
+     A mention outside a thread starts a thread: observe it the same way.
+   Build each link from the workspace domain of the search results, the same
+   way every time. A conversation or thread that you do not track yet is
+   news: set `announce: true` on it.
+4. Read what the searches miss: each channel, and each thread that I am not
+   in, that `[Followed sources]` or `[Tracked items]` lists, e.g. a thread
+   that a session follows. Read a channel's own messages since the cursor, and
+   a thread's newest reply. Observe each with the listed source type and key,
+   and the offsets of step 3. The replies in a channel's threads are separate
+   threads.
+5. Send the items in `observe` calls of at most 100 items each, and save
+   `cursor` in the last call: the timestamp of the newest message that you
+   read. When nothing is new, send only the cursor. When a call fails, do not
+   save the cursor: the next run reads the same messages again, and the
+   server does not report the saved items twice. Write each link without a
+   query (`?...`) or a fragment (`#...`). For a new message, write a one-line
    `summary` that names its sender and what the message is about, and put its
    text in `details`. For a short reply, also say what it answers, e.g.
    "alice answered the question about the retry design: yes, go ahead". On
    your first run, when you track no items yet, do not set `announce`: what is
    there already is not news.
+
+Do not mark Slack items done. The server marks an item done when nothing new
+came in it for 14 days, and a new message reopens it.
 
 Your Slack tool can filter message data for privacy and then return a redacted
 summary instead of the messages. When it takes an `analysis_prompt`, pass this
@@ -49,3 +66,24 @@ conversations with `problem`, and do not observe a change for them.
 
 If you do not have access to the Slack MCP server, report it with `problem`
 (source `slack.conversation`, no `source_key`) and end the run.
+
+### Ignore these messages
+
+Skip a message of each kind below, unless it mentions me: a bot that mentions
+me still counts. Add a kind on its own line.
+
+- My own messages.
+- Messages from apps and bots, e.g. ticket, code review, CI or deployment
+  notifications: the sender is a bot (`users.info` shows `is_bot`), or the
+  message has a `bot_id` or the subtype `bot_message`. Other watchers check
+  those systems.
+- Messages that a workflow or an integration posts for an app, e.g. a form
+  or a reminder.
+- Channel events, e.g. a member joined or left, or the topic changed.
+
+### Do not watch
+
+Skip these conversations and threads, by link or name, one on each line, e.g.
+`#random`. Mentions of me still count in them.
+
+- (none)
