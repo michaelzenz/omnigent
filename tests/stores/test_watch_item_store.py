@@ -245,6 +245,22 @@ def test_a_change_of_a_broker_routed_type_goes_only_to_the_broker_and_others_to_
     ] == [SLACK_THREAD_LINK]
 
 
+def test_quiet_items_are_the_active_ones_with_no_change_since_a_time(db_uri: str) -> None:
+    store = SqlAlchemyWatchItemStore(db_uri)
+    watcher = _watcher(db_uri)
+    store.observe(watcher, [_seen(PR), _seen(OTHER_PR), _seen(THIRD_PR)], session_id=None, now=100)
+    store.finish(watcher, [WatchFinish(SOURCE_TYPE, THIRD_PR)], session_id=None, now=150)
+    store.observe(
+        watcher, [_seen(OTHER_PR, offsets={"state": "merged"})], session_id=None, now=300
+    )
+    store.observe(watcher, [_seen(PR)], session_id=None, now=400)
+
+    quiet = store.list_quiet(watcher.id, owner_user_id=ALICE, before=200)
+
+    assert [item.source_key for item in quiet] == [PR]
+    assert store.list_quiet(watcher.id, owner_user_id=BOB, before=200) == []
+
+
 def test_marking_items_done_tells_their_other_followers_once_and_never_the_broker(
     db_uri: str,
 ) -> None:

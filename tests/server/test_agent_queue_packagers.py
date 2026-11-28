@@ -50,7 +50,11 @@ from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissi
 from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
 from omnigent.stores.subscription_store import sqlalchemy_store as subscription_tables
 from omnigent.stores.user_settings_store import GlobalHubPlacement, UserSettingsStore
-from omnigent.stores.watch_item_store import WatchFinish, WatchObservation
+from omnigent.stores.watch_item_store import (
+    WATCH_DONE_EVENT_TYPE,
+    WatchFinish,
+    WatchObservation,
+)
 
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
@@ -694,8 +698,10 @@ async def test_a_watcher_run_lists_its_items_and_drops_items_done_long_ago(
             offsets={"state": "open"},
             title=f"PR {n}",
         )
-        # 40 days ago, an hour apart, so the run lists them in this order.
-        board.watch_items.observe(watcher, [seen], session_id=None, now=now - 40 * day + n * 3_600)
+        # The first 40 days ago; the others 13 days ago, an hour apart, so the run lists them
+        # in this order.
+        at = now - 40 * day if n == 0 else now - 13 * day + n * 3_600
+        board.watch_items.observe(watcher, [seen], session_id=None, now=at)
     board.watch_items.finish(
         watcher,
         [WatchFinish(source=PULL_REQUEST, source_key="https://example.com/pr/0")],
@@ -718,7 +724,7 @@ async def test_a_watcher_run_lists_its_items_and_drops_items_done_long_ago(
     assert everything == 2
     pr_lines = [
         f'- {PULL_REQUEST} https://example.com/pr/{n} "PR {n}": state=open '
-        f"(checked 2026-12-06 {hour} UTC)"
+        f"(checked 2027-01-02 {hour} UTC)"
         for n, hour in ((1, "09:00"), (2, "10:00"))
     ]
     assert text.splitlines()[-3:] == [
@@ -903,6 +909,54 @@ async def test_a_watcher_run_ends_the_subscriptions_to_sources_done_for_a_week(
         done_lately,
         followed_after_done,
     ]
+
+
+async def test_a_watcher_run_finishes_the_items_that_did_not_change_for_two_weeks(
+    board: BoardStores, sessions: RoleSessionStores
+) -> None:
+    day = 86_400
+    now = int(time.time()) + 30 * day
+    watcher = board.watchers.create(uuid.uuid4().hex, owner_user_id=ALICE, name="PR watcher")
+    follower = uuid.uuid4().hex
+    quiet_followed, quiet, changed_lately, new = (
+        f"https://github.com/example-org/repo/pull/{n}" for n in range(1, 5)
+    )
+    _follow(board, follower, PULL_REQUEST, quiet_followed)
+
+    def observe(source_key: str, at: int, state: str = "open") -> None:
+        seen = WatchObservation(
+            source=PULL_REQUEST,
+            source_key=source_key,
+            offsets={"state": state},
+            title=f"PR {source_key[-1]}",
+        )
+        board.watch_items.observe(watcher, [seen], session_id=None, now=at)
+
+    observe(quiet_followed, now - 15 * day)
+    observe(quiet, now - 20 * day)
+    observe(changed_lately, now - 20 * day)
+    observe(changed_lately, now - day, state="closed")
+    observe(new, now - day)
+    board.role_schedules.save(
+        watcher.role_key, owner_user_id=ALICE, rrule="FREQ=HOURLY", timezone="UTC", next_run_at=now
+    )
+
+    await RoleSchedulePackager(board=board, sessions=sessions).package(now)
+
+    keys = [(PULL_REQUEST, key) for key in (quiet_followed, quiet, changed_lately, new)]
+    found = board.watch_items.find(watcher.id, keys, owner_user_id=ALICE)
+    assert {item.source_key: item.status for item in found} == {
+        quiet_followed: "done",
+        quiet: "done",
+        changed_lately: "active",
+        new: "active",
+    }
+    done = [
+        (event.target_session_id, event.title)
+        for event in board.events.list(owner_user_id=ALICE)
+        if event.event_type == WATCH_DONE_EVENT_TYPE
+    ]
+    assert done == [(follower, "Done: PR 1: No activity for 14 days")]
 
 
 def test_the_custodian_hears_of_the_source_types_without_a_watcher_or_a_routing(

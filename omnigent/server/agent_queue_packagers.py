@@ -56,6 +56,7 @@ from omnigent.entities import (
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.agent_task_delivery import SessionSendDeps, session_has_live_turn
 from omnigent.stores.subscription_store import BROKER_ROUTING
+from omnigent.stores.watch_item_store import WatchFinish
 
 _logger = logging.getLogger(__name__)
 
@@ -115,6 +116,8 @@ _RUN_ITEMS_SHOWN = 50
 _RUN_ITEMS_MAX_CHARS = 20_000
 # A done item stays this long, so a watcher that finds it again does not report it as new.
 _DONE_WATCH_ITEMS_KEPT_S = 30 * 24 * 60 * 60
+_QUIET_WATCH_ITEMS_FINISHED_AFTER_S = 14 * 24 * 60 * 60
+_QUIET_DONE_SUMMARY = "No activity for 14 days"
 _SUBSCRIPTIONS_KEPT_AFTER_DONE_S = 7 * 24 * 60 * 60
 _DONE_RECHECK_S = 24 * 60 * 60
 _SOURCE_TYPE_EXAMPLE_CHARS = 200
@@ -280,7 +283,22 @@ class RoleSchedulePackager:
         )
 
     def _tidy_watcher(self, watcher_id: str, owner: str | None, now: int) -> None:
-        """End the subscriptions to sources done for a week; delete old done items. Blocking."""
+        """Finish the items quiet for 14 days, end the subscriptions to sources done for a
+        week, and delete old done items. Blocking."""
+        quiet = self._board.watch_items.list_quiet(
+            watcher_id, owner_user_id=owner, before=now - _QUIET_WATCH_ITEMS_FINISHED_AFTER_S
+        )
+        watcher = self._board.watchers.get(watcher_id, owner_user_id=owner) if quiet else None
+        if watcher is not None:
+            self._board.watch_items.finish(
+                watcher,
+                [
+                    WatchFinish(item.source, item.source_key, summary=_QUIET_DONE_SUMMARY)
+                    for item in quiet
+                ],
+                session_id=None,
+                now=now,
+            )
         done = self._board.watch_items.list_done_before(
             watcher_id, owner_user_id=owner, before=now - _SUBSCRIPTIONS_KEPT_AFTER_DONE_S
         )

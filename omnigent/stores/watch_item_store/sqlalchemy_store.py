@@ -348,6 +348,22 @@ class SqlAlchemyWatchItemStore(WatchItemStore):
         with self._session("list_done_watch_items") as session:
             return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
 
+    def list_quiet(
+        self, watcher_id: str, *, owner_user_id: str | None, before: int
+    ) -> builtins.list[WatchItem]:
+        last_change = func.coalesce(SqlWatchItem.changed_at, SqlWatchItem.created_at)
+        stmt = (
+            select(SqlWatchItem)
+            .where(
+                _owned(watcher_id, owner_user_id),
+                SqlWatchItem.status == _ACTIVE,
+                last_change < before,
+            )
+            .order_by(asc(last_change), asc(SqlWatchItem.id))
+        )
+        with self._session("list_quiet_watch_items") as session:
+            return [_to_entity(row) for row in session.execute(stmt).scalars().all()]
+
     def purge_done(self, watcher_id: str, *, owner_user_id: str | None, before: int) -> int:
         """Delete the watcher's items marked done before ``before``; return how many."""
 

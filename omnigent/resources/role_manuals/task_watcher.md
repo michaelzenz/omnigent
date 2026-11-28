@@ -43,7 +43,8 @@ checked longest ago.
 - `done`: mark items finished, e.g. a merged pull request, with a `summary`
   of why, e.g. `"Merged"`. The sessions that follow an item hear that it is
   done. When an observation changes a done item's offsets, e.g. a reopened
-  pull request, the server reopens the item and tells them.
+  pull request, the server reopens the item and tells them. The server also
+  marks an item done when none of its offsets changed for 14 days.
 - `observe` can also save a `cursor`: at most 100 bytes for your next run,
   e.g. the time of the newest message that you read. The next run message
   shows it under `[Cursor]`. Send it with the items that it covers, or alone

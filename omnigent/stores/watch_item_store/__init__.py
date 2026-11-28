@@ -221,6 +221,12 @@ class WatchItemStore(ABC):
         """List the watcher's items marked done before ``before``, oldest first."""
 
     @abstractmethod
+    def list_quiet(
+        self, watcher_id: str, *, owner_user_id: str | None, before: int
+    ) -> builtins.list[WatchItem]:
+        """List the watcher's active items that last changed, or came, before ``before``."""
+
+    @abstractmethod
     def purge_done(self, watcher_id: str, *, owner_user_id: str | None, before: int) -> int:
         """Delete the watcher's items marked done before ``before``; return how many."""
 
