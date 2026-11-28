@@ -44,6 +44,10 @@ checked longest ago.
   of why, e.g. `"Merged"`. The sessions that follow an item hear that it is
   done. When an observation changes a done item's offsets, e.g. a reopened
   pull request, the server reopens the item and tells them.
+- `observe` can also save a `cursor`: at most 100 bytes for your next run,
+  e.g. the time of the newest message that you read. The next run message
+  shows it under `[Cursor]`. Send it with the items that it covers, or alone
+  when nothing changed.
 
 Write each `source_key` in its canonical form, the same way every time: a
 session gets your report only when it follows exactly that key. For a pull

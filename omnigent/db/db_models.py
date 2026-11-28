@@ -1492,6 +1492,8 @@ class SqlWatcher(OmnigentBase):
     :param updated_at: Unix epoch seconds of the last change.
     :param problem: JSON of what stopped the latest run from reading its sources,
         or ``None`` when the run worked.
+    :param cursor: What the watcher saved for its next run, at most 100 bytes, or
+        ``None``.
     """
 
     __tablename__ = "watchers"
@@ -1515,6 +1517,7 @@ class SqlWatcher(OmnigentBase):
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
     problem: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cursor: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     __table_args__ = (
         # One owner's watchers in creation order.

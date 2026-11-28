@@ -7260,7 +7260,7 @@
         "type": "object"
       },
       "GlobalHubWatcher": {
-        "description": "One of the caller's GlobalHub watchers, without its manual.\n\nA watcher is a role session that runs on its schedule and reports what\nchanged in the things its manual names. `model` is null while its session\nuses the watcher agent's own model. `customized` is `[\"manual\"]` when\nthe caller replaced the packaged template. `schedule` is null when the\nwatcher has none and so never runs. `session_id` is its current session,\nnull before its first run. `builtin` marks the fallback watcher, which\ncannot be deleted. `source_types` are the source types the custodian\nassigned to the watcher; for the fallback watcher, the types that sessions\nfollow and no other watcher covers.",
+        "description": "One of the caller's GlobalHub watchers, without its manual.\n\nA watcher is a role session that runs on its schedule and reports what\nchanged in the things its manual names. `model` is null while its session\nuses the watcher agent's own model. `customized` is `[\"manual\"]` when\nthe caller replaced the packaged template. `schedule` is null when the\nwatcher has none and so never runs. `session_id` is its current session,\nnull before its first run. `builtin` marks the fallback watcher, which\ncannot be deleted. `source_types` are the source types the custodian\nassigned to the watcher; for the fallback watcher, the types that sessions\nfollow and no other watcher covers. `cursor` is what the watcher saved for\nits next run, e.g. the time of the newest message that it read, or null.",
         "properties": {
           "builtin": {
             "title": "Builtin",
@@ -7270,6 +7270,17 @@
             "format": "int64",
             "title": "Created At",
             "type": "integer"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
           },
           "customized": {
             "items": {
@@ -7432,6 +7443,17 @@
             "format": "int64",
             "title": "Created At",
             "type": "integer"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
           },
           "customized": {
             "items": {
@@ -9784,27 +9806,45 @@
       },
       "ObserveWatchItemsRequest": {
         "additionalProperties": false,
-        "description": "What the calling watcher sees now, at most once per item in a call.",
+        "description": "What the calling watcher sees now, at most once per item in a call.\n\n`cursor` replaces what the watcher saved for its next run, after the items\nare saved: at most 100 bytes of UTF-8, e.g. the time of the newest message\nthat it read. An empty cursor clears it. A call holds items, a cursor or both.",
         "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/WatchItemObservation"
             },
             "maxItems": 100,
-            "minItems": 1,
             "title": "Items",
             "type": "array"
           }
         },
-        "required": [
-          "items"
-        ],
         "title": "ObserveWatchItemsRequest",
         "type": "object"
       },
       "ObserveWatchItemsResponse": {
-        "description": "One result per observed item, in the order of the request.",
+        "description": "One result per observed item, in the order of the request, and the watcher's cursor.",
         "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
           "data": {
             "items": {
               "$ref": "#/components/schemas/WatchItemObservationResult"
@@ -24713,7 +24753,7 @@
     },
     "/v1/agent-tasks/watchers/self/items/observe": {
       "post": {
-        "description": "Save what the calling watcher sees now; each change records task events.\n\nA new item is a silent baseline unless `announce` is set. Each session\nthat follows the item's key gets an event; when no session follows it,\nthe broker gets one. A done item whose offsets change is reopened. Every\nitem is checked before anything is saved, so a refused call changes\nnothing.",
+        "description": "Save what the calling watcher sees now; each change records task events.\n\nA new item is a silent baseline unless `announce` is set. Each session\nthat follows the item's key gets an event; when no session follows it,\nthe broker gets one. A done item whose offsets change is reopened. Every\nitem is checked before anything is saved, so a refused call changes\nnothing. A `cursor` replaces the watcher's cursor after the items are\nsaved, and an empty one clears it.",
         "operationId": "observe_own_items_v1_agent_tasks_watchers_self_items_observe_post",
         "requestBody": {
           "content": {

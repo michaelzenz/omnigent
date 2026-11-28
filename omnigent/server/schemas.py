@@ -50,6 +50,7 @@ from omnigent.entities.task import (
     MAX_MANAGER_DESCRIPTION_CHARS,
     MAX_TASK_INTERNAL_NOTE_CHARS,
     MAX_WATCH_ITEM_OFFSETS,
+    MAX_WATCHER_CURSOR_BYTES,
     MAX_WATCHER_PROBLEM_NOTE_WORDS,
 )
 from omnigent.inner.native_attachments import reject_authored_framework_notices
@@ -6521,7 +6522,8 @@ class GlobalHubWatcher(BaseModel):
     null before its first run. ``builtin`` marks the fallback watcher, which
     cannot be deleted. ``source_types`` are the source types the custodian
     assigned to the watcher; for the fallback watcher, the types that sessions
-    follow and no other watcher covers.
+    follow and no other watcher covers. ``cursor`` is what the watcher saved for
+    its next run, e.g. the time of the newest message that it read, or null.
     """
 
     object: Literal["agent.task.watcher"] = "agent.task.watcher"
@@ -6536,6 +6538,7 @@ class GlobalHubWatcher(BaseModel):
     updated_at: int
     builtin: bool
     source_types: list[str]
+    cursor: str | None = None
 
 
 class GlobalHubWatcherDetail(GlobalHubWatcher):
@@ -6682,11 +6685,32 @@ class WatchItemObservation(BaseModel):
 
 
 class ObserveWatchItemsRequest(BaseModel):
-    """What the calling watcher sees now, at most once per item in a call."""
+    """What the calling watcher sees now, at most once per item in a call.
 
-    items: list[WatchItemObservation] = Field(..., min_length=1, max_length=_WATCH_ITEMS_PER_CALL)
+    ``cursor`` replaces what the watcher saved for its next run, after the items
+    are saved: at most 100 bytes of UTF-8, e.g. the time of the newest message
+    that it read. An empty cursor clears it. A call holds items, a cursor or both.
+    """
+
+    items: list[WatchItemObservation] = Field(
+        default_factory=list, max_length=_WATCH_ITEMS_PER_CALL
+    )
+    cursor: str | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("cursor")
+    @classmethod
+    def _cursor_fits(cls, cursor: str | None) -> str | None:
+        if cursor is not None and len(cursor.encode("utf-8")) > MAX_WATCHER_CURSOR_BYTES:
+            raise ValueError(f"a cursor holds at most {MAX_WATCHER_CURSOR_BYTES} bytes")
+        return cursor
+
+    @model_validator(mode="after")
+    def _items_or_cursor(self) -> Self:
+        if not self.items and self.cursor is None:
+            raise ValueError("send items, a cursor or both")
+        return self
 
     @model_validator(mode="after")
     def _each_item_once(self) -> Self:
@@ -6722,10 +6746,11 @@ class WatchItemObservationResult(BaseModel):
 
 
 class ObserveWatchItemsResponse(BaseModel):
-    """One result per observed item, in the order of the request."""
+    """One result per observed item, in the order of the request, and the watcher's cursor."""
 
     object: Literal["list"] = "list"
     data: list[WatchItemObservationResult]
+    cursor: str | None = None
 
 
 class WatchItemKey(BaseModel):

@@ -53,18 +53,28 @@ async def test_each_action_calls_its_route_as_the_calling_session() -> None:
             {"action": "problem", "sources": [UNREADABLE], "note": "Sign in."}, client, SOURCE_ID
         ),
         await execute_watch_items({"action": "problem"}, client, SOURCE_ID),
+        await execute_watch_items(
+            {"action": "observe", "cursor": "1700000000.000100"}, client, SOURCE_ID
+        ),
+        await execute_watch_items(
+            {"action": "observe", "items": [ITEM], "cursor": ""}, client, SOURCE_ID
+        ),
     ]
 
-    assert [json.loads(output) for output in outputs] == [EMPTY] * 5
+    assert [json.loads(output) for output in outputs] == [EMPTY] * 7
     assert [(request.method, request.url.path) for request in requests] == [
         ("GET", ROUTE),
         ("POST", f"{ROUTE}/observe"),
         ("POST", f"{ROUTE}/done"),
         ("POST", PROBLEM_ROUTE),
         ("POST", PROBLEM_ROUTE),
+        ("POST", f"{ROUTE}/observe"),
+        ("POST", f"{ROUTE}/observe"),
     ]
     assert json.loads(requests[3].content) == {"sources": [UNREADABLE], "note": "Sign in."}
     assert json.loads(requests[4].content) == {"sources": []}
+    assert json.loads(requests[5].content) == {"items": [], "cursor": "1700000000.000100"}
+    assert json.loads(requests[6].content) == {"items": [ITEM], "cursor": ""}
     assert dict(requests[0].url.params) == {
         "status": "all",
         "source": "github.pull_request",
@@ -82,6 +92,7 @@ async def test_each_action_calls_its_route_as_the_calling_session() -> None:
         ({"action": "delete"}, SOURCE_ID),
         ({}, SOURCE_ID),
         ({"action": "observe"}, SOURCE_ID),
+        ({"action": "observe", "cursor": 1700000000}, SOURCE_ID),
         ({"action": "done", "items": []}, SOURCE_ID),
         ({"action": "list"}, None),
     ],

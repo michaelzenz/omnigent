@@ -23,8 +23,8 @@ async def execute_watch_items(
     tunnel token confirms.
 
     :param args: Tool arguments: ``action``; ``items`` for ``observe`` and
-        ``done``; ``status``, ``source``, ``limit`` and ``after`` for ``list``;
-        ``sources`` and ``note`` for ``problem``.
+        ``done``; ``cursor`` for ``observe``; ``status``, ``source``, ``limit``
+        and ``after`` for ``list``; ``sources`` and ``note`` for ``problem``.
     :param client: HTTP client pointed at the Omnigent server.
     :param source_id: The calling session.
     :returns: The server's JSON response, or JSON with an ``error``.
@@ -47,16 +47,35 @@ async def execute_watch_items(
             client, "POST", _PROBLEM_ROUTE, source_id, tool_name="watch_items", json_body=body
         )
     items = args.get("items")
+    if action == "observe":
+        cursor = args.get("cursor")
+        if cursor is not None and not isinstance(cursor, str):
+            return json.dumps({"error": "cursor must be a string"})
+        has_items = isinstance(items, list) and bool(items)
+        if not has_items and cursor is None:
+            return json.dumps({"error": "observe needs a non-empty items list, a cursor or both"})
+        observe_body: dict[str, Any] = {"items": items if has_items else []}
+        if cursor is not None:
+            observe_body["cursor"] = cursor
+        return await send_board_request(
+            client,
+            "POST",
+            f"{_ROUTE}/observe",
+            source_id,
+            tool_name="watch_items",
+            json_body=observe_body,
+        )
     if not isinstance(items, list) or not items:
         return json.dumps({"error": f"{action} needs a non-empty items list"})
-    if action == "observe":
-        path = f"{_ROUTE}/observe"
-    else:
-        path = f"{_ROUTE}/done"
-        # Only an item's key and summary count for 'done'; drop any offsets sent with it.
-        items = [_done_item(item) if isinstance(item, dict) else item for item in items]
+    # Only an item's key and summary count for 'done'; drop any offsets sent with it.
+    items = [_done_item(item) if isinstance(item, dict) else item for item in items]
     return await send_board_request(
-        client, "POST", path, source_id, tool_name="watch_items", json_body={"items": items}
+        client,
+        "POST",
+        f"{_ROUTE}/done",
+        source_id,
+        tool_name="watch_items",
+        json_body={"items": items},
     )
 
 

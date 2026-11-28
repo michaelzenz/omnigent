@@ -158,21 +158,34 @@ def create_agent_task_watch_items_router(
         that follows the item's key gets an event; when no session follows it,
         the broker gets one. A done item whose offsets change is reopened. Every
         item is checked before anything is saved, so a refused call changes
-        nothing.
+        nothing. A ``cursor`` replaces the watcher's cursor after the items are
+        saved, and an empty one clears it.
         """
         user_id = require_user(request, auth_provider)
         observations = [_observation(item) for item in body.items]
         _each_key_once([(item.source, item.source_key) for item in observations])
 
-        def observe() -> list[WatchObservationResult]:
+        def observe() -> tuple[list[WatchObservationResult], str | None]:
             watcher, session = calling_watcher(request, user_id)
-            try:
-                return items.observe(watcher, observations, session_id=session.id, now=now_epoch())
-            except WatchItemLimitError as exc:
-                raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
+            results: list[WatchObservationResult] = []
+            if observations:
+                try:
+                    results = items.observe(
+                        watcher, observations, session_id=session.id, now=now_epoch()
+                    )
+                except WatchItemLimitError as exc:
+                    raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
+            if body.cursor is None:
+                return results, watcher.cursor
+            saved = board.watchers.set_cursor(
+                watcher.id, body.cursor or None, owner_user_id=user_id
+            )
+            return results, saved.cursor if saved is not None else None
 
-        results = await asyncio.to_thread(observe)
-        return ObserveWatchItemsResponse(data=[_result(result) for result in results])
+        results, cursor = await asyncio.to_thread(observe)
+        return ObserveWatchItemsResponse(
+            data=[_result(result) for result in results], cursor=cursor
+        )
 
     @router.post("/agent-tasks/watchers/self/items/done", response_model=FinishWatchItemsResponse)
     async def finish_own_items(

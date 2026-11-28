@@ -94,6 +94,24 @@ def test_an_update_changes_only_the_fields_it_names(db_uri: str) -> None:
     assert store.get_by_conversation_id(SESSION_ID, owner_user_id=BOB) is None
 
 
+def test_a_cursor_stays_until_the_watcher_replaces_or_clears_it(db_uri: str) -> None:
+    store = SqlAlchemyWatcherStore(db_uri)
+    watcher = store.create(uuid.uuid4().hex, owner_user_id=ALICE, name="Slack watcher")
+
+    saved = store.set_cursor(watcher.id, "1700000000.000100", owner_user_id=ALICE)
+    by_bob = store.set_cursor(watcher.id, "mine", owner_user_id=BOB)
+    stored = store.get(watcher.id, owner_user_id=ALICE)
+    replaced = store.set_cursor(watcher.id, "1700000600.000200", owner_user_id=ALICE)
+    cleared = store.set_cursor(watcher.id, None, owner_user_id=ALICE)
+
+    assert watcher.cursor is None
+    assert saved is not None and saved.cursor == "1700000000.000100"
+    assert by_bob is None
+    assert stored is not None and stored.cursor == "1700000000.000100"
+    assert replaced is not None and replaced.cursor == "1700000600.000200"
+    assert cleared is not None and cleared.cursor is None
+
+
 def test_delete_removes_the_watcher_and_only_its_own_schedule_items_and_source_types(
     db_uri: str,
 ) -> None:

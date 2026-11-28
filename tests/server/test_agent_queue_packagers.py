@@ -799,6 +799,20 @@ def test_a_watcher_run_lists_the_followed_sources_new_to_it_and_done_ones_due_a_
     ]
 
 
+def test_a_watcher_run_shows_the_cursor_that_the_watcher_saved(board: BoardStores) -> None:
+    watcher = board.watchers.create(uuid.uuid4().hex, owner_user_id=ALICE, name="Slack watcher")
+    writer = ScheduledRunWriter(board=board)
+    run = _queue_item("scheduled_run", {"role_key": watcher.role_key})
+    before = writer.write(run)
+    board.watchers.set_cursor(watcher.id, "1700000000.000100", owner_user_id=ALICE)
+
+    after = writer.write(run)
+
+    no_items = "[Tracked items] (the least recently checked first)\n(none yet)"
+    assert (before or "").split("\n\n")[1:] == [no_items]
+    assert (after or "").split("\n\n")[1:] == ["[Cursor] 1700000000.000100", no_items]
+
+
 def test_the_fallback_watcher_run_checks_the_followed_sources_that_no_watcher_covers(
     board: BoardStores,
 ) -> None:

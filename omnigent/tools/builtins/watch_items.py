@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from omnigent.entities import MAX_WATCHER_PROBLEM_NOTE_WORDS
+from omnigent.entities import MAX_WATCHER_CURSOR_BYTES, MAX_WATCHER_PROBLEM_NOTE_WORDS
 from omnigent.tools.base import Tool
 
 WATCH_ITEMS_ACTIONS = ("list", "observe", "done", "problem")
@@ -108,7 +108,10 @@ class WatchItemsTool(Tool):
             "'observe' sends each item's current state as named offsets; the server compares "
             "them with the last run and reports each change to the sessions that follow the "
             "item's source_key, else to the broker, so do not report changes any other way. "
-            "A new item is a silent first look unless you set announce. 'list' returns a page "
+            "A new item is a silent first look unless you set announce. 'observe' can also "
+            f"save a cursor of at most {MAX_WATCHER_CURSOR_BYTES} bytes for your next run, e.g. "
+            "the time of the newest message that you read; your next run message shows it "
+            "under [Cursor]. 'list' returns a page "
             "of your items with the offsets you saw last, in the order you started to track "
             "them; while has_more is true, pass the page's last_id as after for the next "
             "page. 'done' marks items finished, e.g. merged pull requests, and tells the "
@@ -154,11 +157,20 @@ class WatchItemsTool(Tool):
                         "items": {
                             "type": "array",
                             "description": (
-                                "For 'observe', up to 100 items, each with its offsets. For "
-                                "'done', up to 100 items; only source, source_key and "
-                                "summary count."
+                                "For 'observe', up to 100 items, each with its offsets; leave "
+                                "it out to save only a cursor. For 'done', up to 100 items; "
+                                "only source, source_key and summary count."
                             ),
                             "items": _ITEM_SCHEMA,
+                        },
+                        "cursor": {
+                            "type": "string",
+                            "description": (
+                                f"For 'observe': at most {MAX_WATCHER_CURSOR_BYTES} bytes "
+                                "that your next run message shows under [Cursor], e.g. the "
+                                "time of the newest message that you read; an empty string "
+                                "clears it. Send it with the items that it covers, or alone."
+                            ),
                         },
                         "status": {
                             "type": "string",

@@ -32,6 +32,7 @@ WATCHER_ROLE_KEY_PREFIX = "watcher:"
 #: The most offsets one tracked item keeps.
 MAX_WATCH_ITEM_OFFSETS = 10
 MAX_WATCHER_PROBLEM_NOTE_WORDS = 30
+MAX_WATCHER_CURSOR_BYTES = 100
 #: The longest internal note a task keeps; managers read the notes of up to 10 tasks at once.
 MAX_TASK_INTERNAL_NOTE_CHARS = 2_000
 #: A manager with this many live tasks is full, so the broker's manager list leaves it out.
@@ -431,6 +432,8 @@ class Watcher:
         the source types with no assigned watcher. The user cannot delete it.
     :param problem: What stopped its latest run from reading its sources, or
         ``None`` when the run worked.
+    :param cursor: What the watcher saved for its next run, e.g. the time of the
+        newest message that it read, or ``None``.
     """
 
     id: str
@@ -444,6 +447,7 @@ class Watcher:
     conversation_id: str | None = None
     builtin: bool = False
     problem: WatcherProblem | None = None
+    cursor: str | None = None
 
     @property
     def role_key(self) -> str:

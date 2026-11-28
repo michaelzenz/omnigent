@@ -196,6 +196,34 @@ async def test_observe_refuses_a_bad_call_and_saves_nothing(
     assert (await auth_client.get(OWN_ITEMS, headers=own_runner)).json()["total"] == 0
 
 
+async def test_observe_saves_the_cursor_after_its_items_and_the_watcher_shows_it(
+    auth_client: httpx.AsyncClient, db_uri: str
+) -> None:
+    watcher_id, own_runner = await _watcher_session(auth_client, db_uri)
+    path = f"{OWN_ITEMS}/observe"
+
+    with_items = await auth_client.post(
+        path, json={"items": [_item()], "cursor": "1700000000.000100"}, headers=own_runner
+    )
+    refused = [
+        await auth_client.post(path, json={"cursor": "é" * 51}, headers=own_runner),
+        await auth_client.post(
+            path, json={"items": [_item(source="github")], "cursor": "later"}, headers=own_runner
+        ),
+    ]
+    alone = await auth_client.post(path, json={"cursor": "1700000600.000200"}, headers=own_runner)
+    shown = await auth_client.get(f"{WATCHERS}/{watcher_id}", headers=ALICE)
+    without = await auth_client.post(path, json={"items": [_item()]}, headers=own_runner)
+    cleared = await auth_client.post(path, json={"cursor": ""}, headers=own_runner)
+
+    assert (with_items.status_code, with_items.json()["cursor"]) == (200, "1700000000.000100")
+    assert [response.status_code for response in refused] == [422, 400]
+    assert (alone.json()["data"], alone.json()["cursor"]) == ([], "1700000600.000200")
+    assert shown.json()["cursor"] == "1700000600.000200"
+    assert without.json()["cursor"] == "1700000600.000200"
+    assert cleared.json()["cursor"] is None
+
+
 async def test_a_watcher_pages_through_any_number_of_items(
     auth_client: httpx.AsyncClient, db_uri: str
 ) -> None:

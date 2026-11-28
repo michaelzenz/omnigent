@@ -75,6 +75,7 @@ def _to_entity(row: SqlWatcher) -> Watcher:
         conversation_id=row.conversation_id,
         builtin=row.builtin,
         problem=_decode_problem(row.problem),
+        cursor=row.cursor,
     )
 
 
@@ -236,6 +237,19 @@ class SqlAlchemyWatcherStore(WatcherStore):
             return _to_entity(row)
 
         return run_write_transaction(self._session_immediate, "set_watcher_problem", write)
+
+    def set_cursor(
+        self, watcher_id: str, cursor: str | None, *, owner_user_id: str | None
+    ) -> Watcher | None:
+        def write(session: Session) -> Watcher | None:
+            require_active_account(session, owner_user_id)
+            row = _owned_row(session, watcher_id, owner_user_id)
+            if row is None:
+                return None
+            row.cursor = cursor
+            return _to_entity(row)
+
+        return run_write_transaction(self._session_immediate, "save_watcher_cursor", write)
 
     def clear_problems(self, watcher_ids: Collection[str], *, owner_user_id: str | None) -> int:
         ids = list(dict.fromkeys(watcher_ids))

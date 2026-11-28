@@ -98,6 +98,11 @@ class WatcherStore(ABC):
     ) -> Watcher | None: ...
 
     @abstractmethod
+    def set_cursor(
+        self, watcher_id: str, cursor: str | None, *, owner_user_id: str | None
+    ) -> Watcher | None: ...
+
+    @abstractmethod
     def clear_problems(
         self, watcher_ids: Collection[str], *, owner_user_id: str | None
     ) -> int: ...

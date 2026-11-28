@@ -291,6 +291,7 @@ def _watcher(
         updated_at=watcher.updated_at,
         builtin=watcher.builtin,
         source_types=source_types,
+        cursor=watcher.cursor,
     )
 
 

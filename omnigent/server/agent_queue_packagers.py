@@ -42,6 +42,7 @@ from omnigent.db.db_models import workspace_scope
 from omnigent.db.utils import now_epoch
 from omnigent.entities import (
     LIVE_TASK_STATES,
+    MAX_WATCHER_CURSOR_BYTES,
     WATCHER_ROLE_KEY_PREFIX,
     AgentQueueItem,
     Conversation,
@@ -89,6 +90,9 @@ _WATCHER_RUN_PROMPT = (
     "server compares it with your last run and reports each change; do not report "
     "changes any other way.\n"
     '2. Mark finished items with watch_items action "done", with a short summary of why.\n'
+    "3. To remember where this run stopped, e.g. the time of the newest message that you "
+    f"read, pass a cursor of at most {MAX_WATCHER_CURSOR_BYTES} bytes to watch_items action "
+    '"observe". Your next run message shows it under [Cursor].\n'
     "Do not start sessions or change anything."
 )
 _SOURCE_TYPES_PROMPT = "[System: assign source types to watchers]"
@@ -588,8 +592,9 @@ class ScheduledRunWriter:
         """
         Return the run message for the role the item names. Blocking.
 
-        A watcher's message lists its active items with the offsets it saw
-        last, then the sources that sessions follow and that it should check:
+        A watcher's message shows the cursor that it saved, if any, then lists
+        its active items with the offsets it saw last, then the sources that
+        sessions follow and that it should check:
         those of its source types, or for the fallback watcher, those of the
         types without a watcher. Each followed source carries its note, e.g.
         how to read a source that is hard to read. The custodian's message also
@@ -614,7 +619,10 @@ class ScheduledRunWriter:
         if watcher.builtin and not followed:
             return None
         notes = _note_by_source(followed)
-        parts = [_WATCHER_RUN_PROMPT, self._tracked_items_text(watcher, notes)]
+        parts = [_WATCHER_RUN_PROMPT]
+        if watcher.cursor:
+            parts.append(f"[Cursor] {watcher.cursor}")
+        parts.append(self._tracked_items_text(watcher, notes))
         sources = self._followed_sources_text(watcher, followed, notes)
         if sources is not None:
             parts.append(sources)
