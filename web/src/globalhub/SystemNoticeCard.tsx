@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { XIcon } from "lucide-react";
-import { MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -15,6 +14,7 @@ import {
   useDismissSystemNotice,
   useSystemNotice,
 } from "@/hooks/useGlobalHubNotice";
+import { BoardMarkdown } from "./BoardMarkdown";
 import { BOARD_COLUMN_CLASS } from "./boardLayout";
 import { HtmlNoticeBody } from "./HtmlNoticeBody";
 import { OpenSessionLink } from "./OpenSessionLink";
@@ -79,7 +79,7 @@ export function SystemNoticeCard() {
             <>
               {notice.body && (
                 <div className="text-ui break-words">
-                  <MessageResponse allowGitHubAttachmentImages>{notice.body}</MessageResponse>
+                  <BoardMarkdown>{notice.body}</BoardMarkdown>
                 </div>
               )}
               {notice.actions.map((action) => (

@@ -85,7 +85,7 @@ exactly this format, with the four parts in this order:
 **Status:** <question>? <Yes or No>, <reason> (one line, at most 20 words)
 
 **Recent Activities**
-- <at most 3 bullets: the most important recent activity, each within 20 words>
+- [<worker title>](/c/<session_id>) <the worker's recent work, at most 25 words, human readable, avoid abbreviations>
 
 **Suggested Next Step**
 - <at most 3 bullets: the most important next steps, each within 20 words>
@@ -96,8 +96,13 @@ exactly this format, with the four parts in this order:
   finished or the fix verified. Answer with yes or no, then the reason, e.g.
   "Fix verified? No, the canary run starts tomorrow." When no yes-or-no
   question fits, write the status in one short sentence.
-- Pick only the important activities and next steps. When a list is full,
-  drop the oldest or least important bullet.
+- Recent Activities has exactly one line per worker on the task, from the
+  worker roster (`GET /v1/agent-tasks/<task_id>/workers`). Start the line
+  with the session link `[<worker title>](/c/<session_id>)`; the card shows
+  it as a button that opens the session. When the task has no workers, keep
+  the heading and write no lines.
+- Pick only the important next steps. When the list is full, drop the least
+  important bullet.
 - Rewrite the whole Overview on each update, the Status line included.
 
 ## The task title

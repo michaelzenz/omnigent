@@ -262,7 +262,7 @@ function WorkspacePathInlineCode({
 // slot replaces its link component wholesale, so both must be reproduced here:
 // index.css keys the pointer cursor and the table-cell `overflow-wrap` rule
 // (which stops a link-only table column collapsing to ~2ch) on the attribute.
-const STREAMDOWN_LINK_CLASS = "wrap-anywhere font-medium text-link underline";
+export const STREAMDOWN_LINK_CLASS = "wrap-anywhere font-medium text-link underline";
 
 function githubPullRequest(href: string | undefined): string | null {
   if (!href) return null;

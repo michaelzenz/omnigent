@@ -1,6 +1,5 @@
 import { memo, type ReactNode, useState } from "react";
 import { CheckIcon, MessageSquareIcon, XIcon } from "lucide-react";
-import { MessageResponse } from "@/components/ai-elements/message";
 import { RunningDot } from "@/components/RunningDot";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +20,7 @@ import {
 import { getSessionState } from "@/hooks/useSessionState";
 import { relativeTime } from "@/lib/relativeTime";
 import { cn } from "@/lib/utils";
+import { BoardMarkdown } from "./BoardMarkdown";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ChatButton } from "./GlobalHubChat";
 import { PRIORITY_COLORS } from "./priorityColors";
@@ -190,7 +190,7 @@ export const TaskCard = memo(function TaskCard({
             </h3>
             {task.description ? (
               <div className="text-ui break-words" data-board-search-text>
-                <MessageResponse allowGitHubAttachmentImages>{task.description}</MessageResponse>
+                <BoardMarkdown>{task.description}</BoardMarkdown>
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">No overview yet.</p>

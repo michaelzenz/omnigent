@@ -103,6 +103,21 @@ describe("SystemNoticeCard", () => {
     expect(localStorage.getItem(globalHubStorageKey("seen-notice-id") ?? "")).toBe("n1");
   });
 
+  it("opens a session link in the body in the app, and another link in a new tab", async () => {
+    serveNotice(
+      systemNotice("n1", {
+        body: "Delete [Old run](/c/s-old). See [docs](https://example.com/d).",
+      }),
+    );
+
+    renderCard();
+
+    const session = await screen.findByRole("link", { name: "Old run" });
+    expect(session).toHaveAttribute("href", "/c/s-old");
+    expect(session).not.toHaveAttribute("target");
+    expect(screen.getByRole("link", { name: "docs" })).toHaveAttribute("target", "_blank");
+  });
+
   it("switches a group's toggles, or all of an action's, together", async () => {
     serveNotice(
       systemNotice("n2", {

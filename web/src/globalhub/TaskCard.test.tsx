@@ -103,6 +103,19 @@ describe("TaskCard", () => {
     );
   });
 
+  it("opens a worker's session from its activity line in the app", async () => {
+    renderCard(
+      agentTask("t1", {
+        description: "**Recent Activities**\n- [Retry fix](/c/s-w1) Fixing S3 retry flakiness",
+      }),
+    );
+
+    const pill = await screen.findByRole("link", { name: "Retry fix" });
+    expect(pill).toHaveAttribute("href", "/c/s-w1");
+    expect(pill).not.toHaveAttribute("target");
+    expect(pill.closest("li")).toHaveTextContent("Retry fix Fixing S3 retry flakiness");
+  });
+
   it("marks the title when a search finds the task by the meaning of its title", () => {
     const match = { hits: 0, asset_ids: [], worker_ids: [] };
     renderCard(agentTask("t1", { match: { ...match, title_match: true } }));
@@ -139,7 +152,11 @@ describe("TaskCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Chat with Storage" }));
     fireEvent.click(screen.getByTestId("task-card-move-to-end-t1"));
 
-    expect(await sentRequest()).toEqual(["/v1/agent-tasks/t1/move-to-queue-end", "POST", undefined]);
+    expect(await sentRequest()).toEqual([
+      "/v1/agent-tasks/t1/move-to-queue-end",
+      "POST",
+      undefined,
+    ]);
     expect(screen.getByText("Has update")).toBeInTheDocument();
   });
 
